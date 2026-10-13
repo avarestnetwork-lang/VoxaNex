@@ -117,11 +117,7 @@ export const RoomDirectoryPage: React.FC = () => {
   }, [rooms, searchQuery, selectedCategory, selectedMode, selectedLanguage, selectedRegion, language]);
 
   const handleJoin = (room: Room) => {
-    if (room.is18Plus && !is18Verified) {
-      navigate('/age-gate');
-      return;
-    }
-    navigate('/chat', { roomId: room.slug });
+    navigate('/guest-entry', { targetRoom: room.slug });
   };
 
   return (

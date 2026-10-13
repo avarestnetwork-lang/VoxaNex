@@ -10,7 +10,6 @@ import { BackToTop } from './components/ui/BackToTop';
 
 // Page Views
 import { LandingPage } from './pages/LandingPage';
-import { AgeGatePage } from './pages/AgeGatePage';
 import { GuestEntryPage } from './pages/GuestEntryPage';
 import { RoomDirectoryPage } from './pages/RoomDirectoryPage';
 import { PublicChatPage } from './pages/PublicChatPage';
@@ -40,7 +39,7 @@ const AppRoutes: React.FC = () => {
       case '/':
         return <LandingPage />;
       case '/age-gate':
-        return <AgeGatePage />;
+        return <GuestEntryPage />;
       case '/guest-entry':
         return <GuestEntryPage />;
       case '/rooms':
