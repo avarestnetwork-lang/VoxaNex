@@ -1,0 +1,589 @@
+import React, { useState } from 'react';
+import { useRouter } from '../context/RouterContext';
+import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import {
+  MessageSquare,
+  Shuffle,
+  Compass,
+  Video,
+  Mic,
+  Shield,
+  Lock,
+  Globe2,
+  MapPin,
+  ChevronRight,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
+  Sparkles,
+  Zap,
+  Radio,
+  AlertTriangle,
+  UserCheck,
+  Heart,
+  Smile,
+  CheckCircle2,
+  Plus,
+  Minus,
+  ArrowRight,
+  Tv,
+  Smartphone,
+  Users,
+  MessageCircle
+} from 'lucide-react';
+
+export const LandingPage: React.FC = () => {
+  const { navigate } = useRouter();
+  const { language, t } = useLanguage();
+  const { user } = useAuth();
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
+
+  const topRooms = [
+    { name: language === 'bn' ? 'সেক্স চ্যাট' : 'Sex Chat', subtitle: language === 'bn' ? 'সবচেয়ে জনপ্রিয়' : 'Most popular', icon: MessageSquare, route: '/chat/sex' },
+    { name: language === 'bn' ? 'ভারতীয় চ্যাট' : 'Indian Chat', subtitle: language === 'bn' ? 'আঞ্চলিক রুম' : 'Regional room', flag: 'https://flagcdn.com/w40/in.png', route: '/chat/indian' },
+    { name: language === 'bn' ? 'বাংলাদেশি চ্যাট' : 'Bangladeshi Chat', subtitle: language === 'bn' ? 'আঞ্চলিক রুম' : 'Regional room', flag: 'https://flagcdn.com/w40/bd.png', route: '/chat/bangladeshi' },
+    { name: language === 'bn' ? 'জার্মান চ্যাট' : 'German Chat', subtitle: language === 'bn' ? 'আঞ্চলিক রুম' : 'Regional room', flag: 'https://flagcdn.com/w40/de.png', route: '/chat/german' },
+    { name: language === 'bn' ? 'ভিডিও চ্যাট' : 'Video Chat', subtitle: language === 'bn' ? 'ক্যাম টু ক্যাম' : 'Cam to cam', icon: Video, route: '/chat/video' },
+    { name: language === 'bn' ? 'রুলেট চ্যাট' : 'Roulette Chat', subtitle: language === 'bn' ? 'র‍্যান্ডম পেয়ারিং' : 'Random pairing', icon: Shuffle, route: '/random' },
+  ];
+
+  const mainRooms = [
+    {
+      title: language === 'bn' ? 'সেক্স চ্যাট' : 'Sex Chat',
+      desc: language === 'bn' 
+        ? 'আমাদের প্রধান প্রাপ্তবয়স্ক রুম এবং সাইটের সবচেয়ে ব্যস্ততম রুম। এটি অপরিচিতদের সাথে উন্মুক্ত গ্রুপ চ্যাটের জন্য তৈরি। রিয়েল-টাইম ওয়েবক্যাম, ভয়েস এবং টেক্সট...' 
+        : 'Our main adult room, and the busiest one on the site. It is built for open group chat with strangers. Real-time webcam, voice and text with people from...',
+      badge: language === 'bn' ? 'সবচেয়ে জনপ্রিয়' : 'Most popular',
+      badgeColor: 'bg-orange-100 text-orange-700 border-orange-200',
+      icon: MessageSquare,
+      route: '/chat/sex'
+    },
+    {
+      title: language === 'bn' ? 'এডাল্ট চ্যাট' : 'Adult Chat',
+      desc: language === 'bn'
+        ? 'প্রাপ্তবয়স্কদের সাধারণ কথোপকথনের জন্য একটি রুম। মূল সেক্স চ্যাটের তুলনায় শান্ত এবং আলাপচারিতাপূর্ণ।'
+        : 'A general room for grown-up conversation. Less focused than the main sex chat room and usually a slower, more talkative crowd. Good if you want...',
+      badge: language === 'bn' ? '২৪/৭ খোলা' : 'Open 24/7',
+      badgeColor: 'bg-amber-100 text-amber-700 border-amber-200',
+      icon: Users,
+      route: '/chat/sex'
+    },
+    {
+      title: language === 'bn' ? 'ভিডিও চ্যাট' : 'Video Chat',
+      desc: language === 'bn'
+        ? 'ক্যাম-কেন্দ্রিক রুম। এখানে প্রত্যেকে ভিডিওর জন্য প্রস্তুত, তাই আপনি পাবলিকলি বা প্রাইভেটে ক্যাম-টু-ক্যাম কথা বলতে পারেন।'
+        : 'The cam-first room. Everyone here is set up for video, so you can go cam-to-cam in public or take it to a private window without asking around first.',
+      badge: language === 'bn' ? 'ক্যাম টু ক্যাম' : 'Cam to cam',
+      badgeColor: 'bg-purple-100 text-purple-700 border-purple-200',
+      icon: Video,
+      route: '/chat/asian'
+    },
+    {
+      title: language === 'bn' ? 'রুলেট চ্যাট' : 'Roulette Chat',
+      desc: language === 'bn'
+        ? 'র‍্যান্ডম ভিডিও চ্যাট, একের পর এক। কানেক্টে ক্লিক করুন এবং একজন অপরিচিত ব্যক্তির সাথে যুক্ত হন; পছন্দ না হলে স্কিপ করুন।'
+        : 'Random video chat, one to one. Click connect and you are paired with a stranger; if it is not going anywhere, skip and you get the next person. No...',
+      badge: language === 'bn' ? 'র‍্যান্ডম পেয়ারিং' : 'Random pairing',
+      badgeColor: 'bg-blue-100 text-blue-700 border-blue-200',
+      icon: Shuffle,
+      route: '/random'
+    },
+    {
+      title: language === 'bn' ? 'গে চ্যাট' : 'Gay Chat',
+      desc: language === 'bn'
+        ? 'গে এবং বাই পুরুষদের জন্য একটি নিরাপদ রুম। টেক্সট, ভয়েস এবং ক্যাম সম্পূর্ণ বিনামূল্যে এবং নিবন্ধন ছাড়াই।'
+        : 'A room for gay and bi men, with the moderation to keep it that way. Text, voice and cam, free and without registration.',
+      badge: 'LGBTQ+',
+      badgeColor: 'bg-pink-100 text-pink-700 border-pink-200',
+      icon: Heart,
+      route: '/chat/gay'
+    },
+    {
+      title: language === 'bn' ? 'লেসবিয়ান চ্যাট' : 'Lesbian Chat',
+      desc: language === 'bn'
+        ? 'লেসবিয়ান এবং বাই নারীদের জন্য বিশেষভাবে সংরক্ষিত এবং কঠোরভাবে মডারেটেড রুম।'
+        : 'A women-only room for lesbian and bi women, moderated more tightly than the rest of the site precisely because rooms like this attract people wh...',
+      badge: language === 'bn' ? 'শুধুমাত্র নারীদের জন্য' : 'Women only',
+      badgeColor: 'bg-rose-100 text-rose-700 border-rose-200',
+      icon: Heart,
+      route: '/chat/lesbian'
+    },
+    {
+      title: language === 'bn' ? 'দম্পতি চ্যাট' : 'Couples Chat',
+      desc: language === 'bn'
+        ? 'দম্পতিদের একসাথে চ্যাট করার জন্য এবং যারা তাদের সাথে কথা বলতে চান তাদের জন্য।'
+        : 'For couples chatting together, and for singles who want to talk to them. The pace here is slower and more conversational than the main room.',
+      badge: language === 'bn' ? 'দম্পতি ও একক' : 'Couples & singles',
+      badgeColor: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+      icon: Users,
+      route: '/chat/couples'
+    },
+    {
+      title: language === 'bn' ? 'রোলপ্লে চ্যাট' : 'Roleplay Chat',
+      desc: language === 'bn'
+        ? 'টেক্সট-ভিত্তিক এবং গল্প-চালিত রুম। কিছু দৃশ্য এক সন্ধ্যা স্থায়ী হয়, আবার কিছু সপ্তাহ ধরে চলে।'
+        : 'Text-led and story-driven. Some scenes run for an evening, others carry on across weeks with the same partner.',
+      badge: language === 'bn' ? 'গল্পভিত্তিক' : 'Story-driven',
+      badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+      icon: Sparkles,
+      route: '/chat/roleplay'
+    },
+    {
+      title: language === 'bn' ? 'বিডিএসএম চ্যাট' : 'BDSM Chat',
+      desc: language === 'bn'
+        ? 'সম্মতিকে গুরুত্ব দেওয়া প্রাপ্তবয়স্কদের মধ্যে কিন্ক এবং ফেটিশ আলোচনা।'
+        : 'Kink and fetish talk between adults who take consent seriously. Dominants, submissives, switches and the plainly curious all use the room.',
+      badge: language === 'bn' ? 'সম্মতি প্রথম' : 'Consent first',
+      badgeColor: 'bg-violet-100 text-violet-700 border-violet-200',
+      icon: Lock,
+      route: '/chat/bdsm'
+    },
+  ];
+
+  const featuresList = [
+    {
+      title: language === 'bn' ? 'এইচডি ক্যাম ও ভয়েস' : 'HD cam & voice',
+      desc: language === 'bn' ? 'পাবলিক এবং প্রাইভেট চ্যাটে ওয়েবআরটিসি ভিডিও ও ভয়েস, সাথে আনলিমিটেড ভয়েস মেসেজ।' : 'WebRTC video and voice in public rooms and private chat, with unlimited voice messages.',
+      icon: Video
+    },
+    {
+      title: language === 'bn' ? 'কোনো নিবন্ধন নেই' : 'No registration',
+      desc: language === 'bn' ? 'একটি নিকনেম বাছাই করুন এবং প্রবেশ করুন। পরে সংরক্ষণ করতে চাইলে নিবন্ধন করতে পারেন।' : 'Pick a nickname and you are in. Register later if you want to keep it reserved.',
+      icon: UserCheck
+    },
+    {
+      title: language === 'bn' ? 'পপ-আপ প্রাইভেট চ্যাট' : 'Pop-up private chats',
+      desc: language === 'bn' ? 'রুমের বাইরে না গিয়ে পাশপাশি একাধিক ব্যক্তিগত কথোপকথন চালিয়ে যান।' : 'Run several private conversations side by side without losing your place in the room.',
+      icon: MessageCircle
+    },
+    {
+      title: language === 'bn' ? '২৪/৭ মডারেটেড' : 'Moderated 24/7',
+      desc: language === 'bn' ? 'মডারেটর ও অ্যাডমিনরা ২৪ ঘণ্টা প্রতিটি রুম পাহারা দেন। হয়রানি করলে ব্যান করা হয়।' : 'Moderators and admins cover every room around the clock. Harassment gets you removed.',
+      icon: Shield
+    },
+    {
+      title: language === 'bn' ? 'মোবাইলের জন্য উপযোগী' : 'Built for mobile',
+      desc: language === 'bn' ? 'HTML5 চ্যাট যা অ্যান্ড্রয়েড, আইফোন এবং ট্যাবলেটে flawlessly কাজ করে। কোনো অ্যাপ ইন্সটল করতে হয় না।' : 'HTML5 chat that works on Android, iPhone and tablets. No app to install.',
+      icon: Smartphone
+    },
+    {
+      title: language === 'bn' ? 'ইমোজি, জিআইএফ, ইউটিউব' : 'Emojis, GIFs, YouTube',
+      desc: language === 'bn' ? 'পরিচিত ইমোজি সেট, গিপসি সার্চ এবং ইনলাইন ইউটিউব ভিডিও প্লেব্যাক।' : 'The emoji set you already know, Giphy search, and YouTube links that play inline.',
+      icon: Smile
+    },
+  ];
+
+  const regionalRooms = [
+    { name: language === 'bn' ? 'ভারতীয় চ্যাট' : 'Indian Chat', code: 'in' },
+    { name: language === 'bn' ? 'ইউকে চ্যাট' : 'UK Chat', code: 'gb' },
+    { name: language === 'bn' ? 'কানাডিয়ান চ্যাট' : 'Canadian Chat', code: 'ca' },
+    { name: language === 'bn' ? 'অস্ট্রেলিয়ান চ্যাট' : 'Australian Chat', code: 'au' },
+    { name: language === 'bn' ? 'আরব চ্যাট' : 'Arab Chat', code: 'ae' },
+    { name: language === 'bn' ? 'ব্রাজিলিয়ান চ্যাট' : 'Brazilian Chat', code: 'br' },
+    { name: language === 'bn' ? 'বুলগেরিয়ান চ্যাট' : 'Bulgarian Chat', code: 'bg' },
+    { name: language === 'bn' ? 'চেক চ্যাট' : 'Czech Chat', code: 'cz' },
+    { name: language === 'bn' ? 'চাইনিজ চ্যাট' : 'Chinese Chat', code: 'cn' },
+    { name: language === 'bn' ? 'ফ্রেঞ্চ চ্যাট' : 'French Chat', code: 'fr' },
+    { name: language === 'bn' ? 'জার্মান চ্যাট' : 'German Chat', code: 'de' },
+    { name: language === 'bn' ? 'হাঙ্গেরিয়ান চ্যাট' : 'Hungarian Chat', code: 'hu' },
+    { name: language === 'bn' ? 'ইন্ডোনেশিয়ান চ্যাট' : 'Indonesian Chat', code: 'id' },
+    { name: language === 'bn' ? 'ইতালিয়ান চ্যাট' : 'Italian Chat', code: 'it' },
+    { name: language === 'bn' ? 'ল্যাটিনো চ্যাট' : 'Latino Chat', code: 'mx' },
+    { name: language === 'bn' ? 'মালয়েশিয়ান চ্যাট' : 'Malaysian Chat', code: 'my' },
+    { name: language === 'bn' ? 'শ্রীলঙ্কান চ্যাট' : 'Sri Lankan Chat', code: 'lk' },
+    { name: language === 'bn' ? 'পাকিস্তানি চ্যাট' : 'Pakistani Chat', code: 'pk' },
+    { name: language === 'bn' ? 'ফিলিপিনো চ্যাট' : 'Filipino Chat', code: 'ph' },
+    { name: language === 'bn' ? 'পোলিশ চ্যাট' : 'Polish Chat', code: 'pl' },
+    { name: language === 'bn' ? 'রোমানিয়ান চ্যাট' : 'Romanian Chat', code: 'ro' },
+    { name: language === 'bn' ? 'রাশিয়ান চ্যাট' : 'Russian Chat', code: 'ru' },
+  ];
+
+  const faqs = [
+    {
+      q: language === 'bn' ? 'এটি কি বিনামূল্যে এবং নিবন্ধন কি বাধ্যতামূলক?' : 'Is it free, and do I have to register?',
+      a: language === 'bn'
+        ? 'হ্যাঁ, ভক্সানেক্স সম্পূর্ণ বিনামূল্যে ব্যবহার করা যায়। পাবলিক চ্যাট রুম বা র‍্যান্ডম ম্যাচিংয়ের জন্য কোনো নিবন্ধনের প্রয়োজন নেই; কেবল একটি নিকনেম বেছে নিয়ে চ্যাট শুরু করুন।'
+        : 'Yes, VoxaNex is completely free to use. No registration is required to join public chat rooms or use random matching; simply pick a nickname and start chatting immediately.'
+    },
+    {
+      q: language === 'bn' ? 'আমার বয়স কত হতে হবে?' : 'How old do I have to be?',
+      a: language === 'bn'
+        ? 'প্রাপ্তবয়স্কদের রুম, ভিডিও চ্যাট এবং ম্যাচিউর আলোচনায় প্রবেশের জন্য আপনার বয়স কমপক্ষে ১৮ বছর হতে হবে।'
+        : 'You must be at least 18 years old to access adult rooms, video chat, and mature discussion spaces on VoxaNex. Age verification is enforced upon entering adult sections.'
+    },
+    {
+      q: language === 'bn' ? 'আমি কি মোবাইল ফোনে এটি ব্যবহার করতে পারি?' : 'Can I use it on a phone?',
+      a: language === 'bn'
+        ? 'হ্যাঁ, ভক্সানেক্স রেসপন্সিভ HTML5 প্রযুক্তিতে তৈরি যা অ্যান্ড্রয়েড, আইফোন এবং ট্যাবলেটের ব্রাউজারে অ্যাপ ইনস্টল ছাড়াই চলে।'
+        : 'Yes, VoxaNex is built with responsive HTML5 technology that works seamlessly in mobile browsers on Android, iPhone, and tablets with zero downloads or app installs required.'
+    },
+    {
+      q: language === 'bn' ? 'কোন ভাষায় চ্যাট করতে পারব?' : 'Which language should I chat in?',
+      a: language === 'bn'
+        ? 'আপনি ইংরেজি, বাংলা, হিন্দি, উর্দু, জার্মান এবং অন্যান্য ২০টিরও বেশি আঞ্চলিক ও আন্তর্জাতিক ভাষার রুমে চ্যাট করতে পারেন।'
+        : 'You can chat in English, Bangla, Hindi, Urdu, German, and over 20 other regional and international language rooms tailored to your community preferences.'
+    },
+    {
+      q: language === 'bn' ? 'কী ধরনের ছবি শেয়ার করা যাবে?' : 'What kind of pictures can I send?',
+      a: language === 'bn'
+        ? 'পাবলিক ও প্রাইভেট চ্যাটে শেয়ারকৃত ছবি আমাদের কঠোর কমিউনিটি মান ও নিরাপত্তা নীতি মেনে চলতে হবে।'
+        : 'Images shared in public and private chats must adhere to our strict community standards and safety policies. Unsolicited explicit media in general rooms is prohibited.'
+    },
+  ];
+
+  return (
+    <div className="bg-[#F8FAFC] dark:bg-slate-950 text-[#0F172A] dark:text-slate-100 min-h-screen font-sans selection:bg-orange-500 selection:text-white transition-colors">
+      {/* Hero Section */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-16">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Left Hero Column */}
+          <div className="lg:col-span-7 space-y-6 pt-4">
+            {/* Open 24/7 Pill */}
+            <div className="inline-flex items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 px-3.5 py-1.5 rounded-full">
+              <span className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
+              <span>{t.landing.openPill}</span>
+            </div>
+
+            {/* Headline */}
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-[#0F172A] dark:text-white leading-[1.12]">
+              {t.landing.headline}
+            </h1>
+
+            {/* Description */}
+            <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed max-w-2xl">
+              {t.landing.sub}
+            </p>
+
+            {/* CTA Button */}
+            <div>
+              <button
+                onClick={() => navigate('/rooms')}
+                className="inline-flex items-center justify-center bg-[#FF7A00] hover:bg-[#E06D00] text-white text-lg font-bold px-8 py-4 rounded-xl shadow-lg shadow-orange-500/25 transition-all transform hover:-translate-y-0.5 cursor-pointer"
+              >
+                <span>{t.landing.startChatting}</span>
+                <ArrowRight className="w-5 h-5 ml-2" />
+              </button>
+            </div>
+
+            {/* Checklist */}
+            <div className="flex flex-wrap items-center gap-y-2 gap-x-6 text-sm text-slate-600 dark:text-slate-400 pt-2 font-medium">
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>{t.landing.check1}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>{t.landing.check2}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>{t.landing.check3}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>{t.landing.check4}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column: TOP ROOMS Card */}
+          <div className="lg:col-span-5">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.landing.topRooms}</h3>
+                <span className="text-xs font-medium text-slate-400 dark:text-slate-500">{t.landing.active}</span>
+              </div>
+
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                {topRooms.map((room, idx) => {
+                  const Icon = room.icon as any;
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => navigate(room.route)}
+                      className="py-3.5 flex items-center justify-between group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 px-2 rounded-lg transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 font-bold text-sm">
+                          {room.flag ? <img src={room.flag} alt={room.name} className="w-6 h-6 rounded-sm" /> : (Icon && <Icon className="w-4 h-4 text-orange-500" />)}
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-900 dark:text-white group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">
+                            {room.name}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">{room.subtitle}</div>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                <span>{t.landing.countryRooms}</span>
+                <button
+                  onClick={() => navigate('/rooms')}
+                  className="font-bold text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <span>{t.landing.allRooms}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* CHAT ROOMS Section */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 border-t border-slate-200/60 dark:border-slate-800">
+        <div className="mb-8">
+          <div className="text-xs font-bold uppercase tracking-wider text-orange-600 dark:text-orange-400 mb-1">{t.landing.chatRoomsHeading}</div>
+          <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{t.landing.pickARoom}</h2>
+          <p className="text-slate-600 dark:text-slate-300 mt-1">{t.landing.pickARoomSub}</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {mainRooms.map((room, idx) => {
+            const Icon = room.icon as any;
+            return (
+              <div
+                key={idx}
+                onClick={() => navigate(room.route)}
+                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between"
+              >
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between">
+                    <div className="w-11 h-11 rounded-xl bg-orange-50 dark:bg-orange-950/50 text-orange-600 dark:text-orange-400 flex items-center justify-center font-bold">
+                      {Icon && <Icon className="w-5 h-5" />}
+                    </div>
+                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${room.badgeColor}`}>
+                      {room.badge}
+                    </span>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">
+                      {room.title}
+                    </h3>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-2 line-clamp-3 leading-relaxed">
+                      {room.desc}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-6 mt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end">
+                  <span className="text-xs font-bold text-orange-600 dark:text-orange-400 group-hover:translate-x-1 transition-transform inline-flex items-center gap-1">
+                    <span>{t.landing.join}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* FEATURES Section */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 border-t border-slate-200/60 dark:border-slate-800">
+        <div className="mb-8">
+          <div className="text-xs font-bold uppercase tracking-wider text-orange-600 dark:text-orange-400 mb-1">{t.landing.featuresHeading}</div>
+          <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{t.landing.whatYouGet}</h2>
+          <p className="text-slate-600 dark:text-slate-300 mt-1">{t.landing.whatYouGetSub}</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {featuresList.map((feat, idx) => {
+            const Icon = feat.icon as any;
+            return (
+              <div key={idx} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm">
+                <div className="w-10 h-10 rounded-xl bg-orange-50 dark:bg-orange-950/50 text-orange-600 dark:text-orange-400 flex items-center justify-center mb-4 font-bold">
+                  {Icon && <Icon className="w-5 h-5" />}
+                </div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1.5">{feat.title}</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{feat.desc}</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* REGIONAL ROOMS Section */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 border-t border-slate-200/60 dark:border-slate-800">
+        <div className="mb-8">
+          <div className="text-xs font-bold uppercase tracking-wider text-orange-600 dark:text-orange-400 mb-1">{t.landing.regionalHeading}</div>
+          <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{t.landing.chatInLanguage}</h2>
+          <p className="text-slate-600 dark:text-slate-300 mt-1">{t.landing.regionalSub}</p>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {regionalRooms.map((room, idx) => (
+            <button
+              key={idx}
+              onClick={() => navigate('/rooms')}
+              className="bg-white dark:bg-slate-900 hover:bg-orange-50 dark:hover:bg-orange-950/30 border border-slate-200/80 dark:border-slate-800 hover:border-orange-200 dark:hover:border-orange-800 rounded-xl p-3.5 text-left flex items-center gap-3 transition-all group shadow-sm cursor-pointer"
+            >
+              <img src={`https://flagcdn.com/w40/${room.code}.png`} alt={room.name} className="w-6 h-6 rounded-sm object-cover" />
+              <span className="text-sm font-bold text-slate-800 dark:text-slate-200 group-hover:text-orange-600 dark:group-hover:text-orange-400 truncate">
+                {room.name}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* Editorial Information & Sidebar Section */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 border-t border-slate-200/60 dark:border-slate-800">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+          {/* Left Editorial Articles */}
+          <div className="lg:col-span-8 space-y-8 text-slate-700 dark:text-slate-300 text-sm leading-relaxed">
+            <div className="space-y-3">
+              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">{t.landing.editorialTitle1}</h3>
+              <p>
+                {language === 'bn' 
+                  ? 'ভক্সানেক্স একটি ফ্রি এডাল্ট চ্যাট কমিউনিটি যা একটি সাধারণ ধারণার উপর নির্মিত: আপনি পেজ খোলার ৩০ সেকেন্ডের মধ্যে কারো সাথে কথা বলতে পারবেন। এখানে কোনো রেজিস্ট্রেশন ওয়াল বা ডাউনলোড নেই।'
+                  : 'VoxaNex is a free adult chat community built around one idea: you should be able to open a page and be talking to somebody thirty seconds later. There is no registration wall, no email confirmation and no download. Enter a nickname and the room is there.'}
+              </p>
+              <p>
+                {language === 'bn' ? 'রুমগুলোতে রয়েছে বৈচিত্র্য।' : 'The rooms cover a wide range. The '}
+                <span className="text-orange-600 dark:text-orange-400 font-semibold cursor-pointer" onClick={() => navigate('/rooms')}>{language === 'bn' ? 'মূল প্রাপ্তবয়স্ক রুম' : 'main adult room'}</span>
+                {language === 'bn' ? ' সবচেয়ে ব্যস্ততম; ' : ' is the busiest and the most general; '}
+                <span className="text-orange-600 dark:text-orange-400 font-semibold cursor-pointer" onClick={() => navigate('/av-chat')}>{language === 'bn' ? 'ভিডিও চ্যাট' : 'video chat'}</span>
+                {language === 'bn' ? ' ক্যাম ব্যবহারের জন্য; ' : ' is for people who want to be on cam; '}
+                <span className="text-orange-600 dark:text-orange-400 font-semibold cursor-pointer" onClick={() => navigate('/random')}>{language === 'bn' ? 'রুলেট' : 'roulette'}</span>
+                {language === 'bn' ? ' আপনাকে একের পর এক অপরিচিতের সাথে সংযুক্ত করে।' : ' pairs you with one stranger at a time and lets you skip.'}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">{t.landing.editorialTitle2}</h3>
+              <p>
+                {language === 'bn'
+                  ? 'প্রতিটি রুম মডারেটর এবং অ্যাডমিনদের দ্বারা চব্বিশ ঘণ্টা পর্যবেক্ষণ করা হয়। হয়রানি বা স্প্যাম করলে তাৎক্ষণিক অপসারণ করা হয়।'
+                  : 'Every room is covered by moderators and administrators at all hours. Harassment, spam and advertising get you removed; anything involving minors gets a permanent ban and a report to the authorities. Respecting a "no" is not optional here, and reports are acted on rather than filed.'}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">{t.landing.editorialTitle3}</h3>
+              <p>
+                {language === 'bn'
+                  ? 'চ্যাটটি HTML5 প্রযুক্তির এবং মোবাইল ব্রাউজারে অ্যান্ড্রয়েড ও আইওএস উভয় ডিভাইসে ক্যামেরা ও মাইক্রোফোনসহ কাজ করে।'
+                  : 'The chat is HTML5 and runs in the mobile browser, including camera and microphone on both Android and iOS, with nothing to install. Video is WebRTC and peer-to-peer, so it stays responsive on a normal mobile connection, and voice-only mode keeps a conversation going when the signal will not carry video.'}
+              </p>
+            </div>
+          </div>
+
+          {/* Right Sidebar Cards */}
+          <div className="lg:col-span-4 space-y-6">
+            {/* New here? Card */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm space-y-4">
+              <h4 className="font-bold text-slate-900 dark:text-white text-base">{t.landing.newHere}</h4>
+              <ol className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
+                <li className="flex items-start gap-3">
+                  <span className="w-5 h-5 rounded-full bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">1</span>
+                  <span>{t.landing.step1}</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="w-5 h-5 rounded-full bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">2</span>
+                  <span>{t.landing.step2}</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="w-5 h-5 rounded-full bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">3</span>
+                  <span>{t.landing.step3}</span>
+                </li>
+              </ol>
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  onClick={() => navigate('/safety')}
+                  className="text-xs font-bold text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <span>{t.landing.readChatHelp}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Before you start Card */}
+            <div className="bg-amber-50/60 dark:bg-amber-950/30 rounded-2xl border border-amber-200/80 dark:border-amber-800 p-6 space-y-3">
+              <div className="flex items-center gap-2 text-amber-800 dark:text-amber-400 font-bold text-sm">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <span>{t.landing.beforeYouStart}</span>
+              </div>
+              <p className="text-xs text-amber-900/80 dark:text-amber-200/80 leading-relaxed">
+                {t.landing.beforeYouStartDesc}
+              </p>
+              <div>
+                <button
+                  onClick={() => navigate('/safety')}
+                  className="text-xs font-bold text-amber-800 dark:text-amber-400 hover:text-amber-950 dark:hover:text-amber-300 inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <span>{t.landing.publicAwareness}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* The short version of the rules Card */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm space-y-3">
+              <h4 className="font-bold text-slate-900 dark:text-white text-base">{t.landing.rulesShort}</h4>
+              <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
+                <li>• {t.landing.rules1}</li>
+                <li>• {t.landing.rules2}</li>
+                <li>• {t.landing.rules3}</li>
+                <li>• {t.landing.rules4}</li>
+              </ul>
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs font-bold">
+                <button onClick={() => navigate('/safety')} className="text-orange-600 dark:text-orange-400 hover:text-orange-700 cursor-pointer">{t.landing.allChatRules}</button>
+                <button onClick={() => navigate('/profile')} className="text-orange-600 dark:text-orange-400 hover:text-orange-700 cursor-pointer">{t.landing.userLevels}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ Section */}
+      <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 border-t border-slate-200/60 dark:border-slate-800">
+        <div className="text-center mb-10">
+          <div className="text-xs font-bold uppercase tracking-wider text-orange-600 dark:text-orange-400 mb-1">{t.landing.faqHeading}</div>
+          <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{t.landing.commonQuestions}</h2>
+        </div>
+
+        <div className="space-y-4">
+          {faqs.map((faq, idx) => {
+            const isOpen = openFaq === idx;
+            return (
+              <div key={idx} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 overflow-hidden shadow-sm">
+                <button
+                  onClick={() => setOpenFaq(isOpen ? null : idx)}
+                  className="w-full px-6 py-4 text-left font-bold text-slate-900 dark:text-white flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                >
+                  <span className="text-base">{faq.q}</span>
+                  {isOpen ? <Minus className="w-5 h-5 text-orange-500 shrink-0" /> : <Plus className="w-5 h-5 text-slate-400 shrink-0" />}
+                </button>
+                {isOpen && (
+                  <div className="px-6 pb-5 text-sm text-slate-600 dark:text-slate-300 leading-relaxed border-t border-slate-100 dark:border-slate-800 pt-3">
+                    {faq.a}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Chat by Country Ticker at bottom */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 border-t border-slate-200/60 dark:border-slate-800">
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-3">{t.landing.chatByCountry}</div>
+        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500 dark:text-slate-400">
+          {regionalRooms.map((r, i) => (
+            <span key={i} onClick={() => navigate('/rooms')} className="hover:text-orange-600 dark:hover:text-orange-400 cursor-pointer transition-colors">
+              {r.name}{i < regionalRooms.length - 1 ? ',' : ''}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};

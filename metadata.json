@@ -1,0 +1,11 @@
+{
+  "name": "Remix Remix VoxaNex",
+  "description": "Connect Freely. Talk Beyond Boundaries. Real-time text, voice, and webcam platform for Bangladesh and global communities.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
