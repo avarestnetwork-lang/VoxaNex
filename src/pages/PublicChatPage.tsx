@@ -49,17 +49,21 @@ interface ExtendedChatMessage extends ChatMessage {
 export const PublicChatPage: React.FC = () => {
   const { params, navigate } = useRouter();
   const { language, t } = useLanguage();
-  const { user, is18Verified } = useAuth();
+  const { user, hasActiveSession, is18Verified } = useAuth();
 
   const currentRoomSlug = params.roomId || 'bangla';
   const activeRoom = ROOMS_CONFIG.find((r) => r.slug === currentRoomSlug) || ROOMS_CONFIG[0];
 
-  // 18+ Access Gate enforcement
+  // Mandatory Sign-In Gateway & 18+ Access Gate enforcement
   useEffect(() => {
-    if (activeRoom.is18Plus && !is18Verified) {
-      navigate('/age-gate', { targetRoom: activeRoom.slug });
+    if (!hasActiveSession) {
+      navigate('/guest-entry', { targetRoom: activeRoom.slug });
+      return;
     }
-  }, [activeRoom, is18Verified, navigate]);
+    if (activeRoom.is18Plus && (!is18Verified || !user.is18Verified)) {
+      navigate('/guest-entry', { targetRoom: activeRoom.slug });
+    }
+  }, [hasActiveSession, activeRoom, is18Verified, user.is18Verified, navigate]);
 
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputText, setInputText] = useState('');

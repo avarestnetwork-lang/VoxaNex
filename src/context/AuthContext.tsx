@@ -6,6 +6,7 @@ import { isSupabaseConfigured } from '../lib/supabaseClient';
 
 interface AuthContextType {
   user: UserProfile;
+  hasActiveSession: boolean;
   is18Verified: boolean;
   verify18: () => void;
   revoke18: () => void;
@@ -45,6 +46,10 @@ function getRandomGuestNickname(): string {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [hasActiveSession, setHasActiveSession] = useState<boolean>(() => {
+    return Boolean(guestSessionService.getStoredToken() || localStorage.getItem('voxanex_user_profile'));
+  });
+
   const [user, setUser] = useState<UserProfile>(() => {
     try {
       const saved = localStorage.getItem('voxanex_user_profile');
@@ -55,9 +60,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore
     }
 
-    // Default guest session
+    // Default visitor profile (unauthenticated until explicit sign-in or guest entry)
     return {
-      id: `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `visitor_${Date.now()}`,
       nickname: getRandomGuestNickname(),
       isGuest: true,
       is18Verified: false,
@@ -78,6 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const restoredProfile = await authService.restoreSession();
         if (restoredProfile) {
           setUser(restoredProfile);
+          setHasActiveSession(true);
           return;
         }
       }
@@ -93,19 +99,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             avatar: check.session?.avatar || prev.avatar,
             is18Verified: Boolean(check.session?.is18Verified),
           }));
+          setHasActiveSession(true);
+        } else {
+          setHasActiveSession(false);
         }
+      } else {
+        setHasActiveSession(false);
       }
     }
     restore();
   }, [isSupabaseActive]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('voxanex_user_profile', JSON.stringify(user));
-    } catch {
-      // ignore
+    if (hasActiveSession) {
+      try {
+        localStorage.setItem('voxanex_user_profile', JSON.stringify(user));
+      } catch {
+        // ignore
+      }
     }
-  }, [user]);
+  }, [user, hasActiveSession]);
 
   const verify18 = () => {
     setUser(prev => {
@@ -163,7 +176,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const chosenNick = nickname?.trim() || getRandomGuestNickname();
     const chosenAvatar = GUEST_AVATARS[Math.floor(Math.random() * GUEST_AVATARS.length)];
 
-    // Request server-issued cryptographic guest token
     const res = await guestSessionService.createSession({
       nickname: chosenNick,
       avatar: chosenAvatar,
@@ -183,8 +195,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         notificationSounds: true,
         createdAt: new Date().toISOString(),
       });
+      setHasActiveSession(true);
     } else {
-      // Local fallback
       setUser({
         id: `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         nickname: chosenNick,
@@ -196,6 +208,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         notificationSounds: true,
         createdAt: new Date().toISOString(),
       });
+      setHasActiveSession(true);
     }
   };
 
@@ -203,6 +216,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await authService.login(email, password);
     if (res.success && res.user) {
       setUser(res.user);
+      setHasActiveSession(true);
       return { success: true };
     }
     return { success: false, error: res.error || 'Authentication failed' };
@@ -212,6 +226,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await authService.register(email, password, nickname, user.languagePreference);
     if (res.success && res.user) {
       setUser(res.user);
+      setHasActiveSession(true);
       return { success: true };
     }
     return { success: false, error: res.error || 'Registration failed' };
@@ -233,9 +248,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       await guestSessionService.revokeSession();
     }
+    try {
+      localStorage.removeItem('voxanex_user_profile');
+    } catch {
+      // ignore
+    }
 
+    setHasActiveSession(false);
     setUser({
-      id: `guest_${Date.now()}`,
+      id: `visitor_${Date.now()}`,
       nickname: getRandomGuestNickname(),
       isGuest: true,
       is18Verified: false,
@@ -261,6 +282,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         user,
+        hasActiveSession,
         is18Verified: user.is18Verified,
         verify18,
         revoke18,
