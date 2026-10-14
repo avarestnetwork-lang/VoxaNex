@@ -27,7 +27,7 @@ import { useTheme, ThemeMode } from '../../context/ThemeContext';
 export const Navbar: React.FC = () => {
   const { currentRoute, navigate } = useRouter();
   const { language, toggleLanguage, t } = useLanguage();
-  const { user, is18Verified, logout } = useAuth();
+  const { user, is18Verified, logout, hasActiveSession } = useAuth();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
@@ -180,24 +180,31 @@ export const Navbar: React.FC = () => {
             </button>
 
             {/* User / Profile button */}
-            <button
-              onClick={() => handleNav('/profile')}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium transition-colors cursor-pointer"
-            >
-              <span className="text-sm select-none" aria-hidden="true">{user.avatar}</span>
-              <span className="font-bold max-w-[90px] truncate hidden sm:inline text-slate-800 dark:text-slate-200">
-                {user.nickname}
-              </span>
-              <Settings className="w-3 h-3 text-slate-400" />
-            </button>
+            {hasActiveSession && !user.isGuest && (
+              <button
+                onClick={() => handleNav('/profile')}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium transition-colors cursor-pointer"
+              >
+                <span className="text-sm select-none" aria-hidden="true">{user.avatar}</span>
+                <span className="font-bold max-w-[90px] truncate hidden sm:inline text-slate-800 dark:text-slate-200">
+                  {user.nickname}
+                </span>
+                <Settings className="w-3 h-3 text-slate-400" />
+              </button>
+            )}
 
             {/* Logout button */}
-            <button
-              onClick={logout}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-xs font-medium transition-colors cursor-pointer"
-            >
-              <span>Logout</span>
-            </button>
+            {hasActiveSession && (
+              <button
+                onClick={async () => {
+                  await logout();
+                  handleNav('/');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-xs font-medium transition-colors cursor-pointer"
+              >
+                <span>Logout</span>
+              </button>
+            )}
 
             {/* Mobile Hamburger Toggle */}
             <button
@@ -253,12 +260,14 @@ export const Navbar: React.FC = () => {
             >
               18+ Verification Status
             </button>
-            <button
-              onClick={() => handleNav('/profile')}
-              className="text-xs font-bold text-orange-600 dark:text-orange-400 px-3 py-1.5 rounded-lg bg-orange-50 dark:bg-orange-950/40"
-            >
-              Profile & Settings
-            </button>
+            {!user.isGuest && (
+              <button
+                onClick={() => handleNav('/profile')}
+                className="text-xs font-bold text-orange-600 dark:text-orange-400 px-3 py-1.5 rounded-lg bg-orange-50 dark:bg-orange-950/40"
+              >
+                Profile & Settings
+              </button>
+            )}
           </div>
         </div>
       )}

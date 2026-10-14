@@ -7,6 +7,7 @@ import { isSupabaseConfigured } from '../lib/supabaseClient';
 interface AuthContextType {
   user: UserProfile;
   hasActiveSession: boolean;
+  isLoading: boolean;
   is18Verified: boolean;
   verify18: () => void;
   revoke18: () => void;
@@ -49,6 +50,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [hasActiveSession, setHasActiveSession] = useState<boolean>(() => {
     return Boolean(guestSessionService.getStoredToken() || localStorage.getItem('voxanex_user_profile'));
   });
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const [user, setUser] = useState<UserProfile>(() => {
     try {
@@ -60,13 +62,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore
     }
 
-    // Default visitor profile (unauthenticated until explicit sign-in or guest entry)
+    // Initial state: No user logged in
     return {
-      id: `visitor_${Date.now()}`,
-      nickname: getRandomGuestNickname(),
+      id: '',
+      nickname: 'Visitor',
       isGuest: true,
       is18Verified: false,
-      avatar: GUEST_AVATARS[0],
+      avatar: '',
       languagePreference: 'en',
       safeFilterEnabled: true,
       notificationSounds: true,
@@ -109,6 +111,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
     restore();
+    setIsLoading(false);
   }, [isSupabaseActive]);
 
   useEffect(() => {
@@ -260,11 +263,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setHasActiveSession(false);
     setUser({
-      id: `visitor_${Date.now()}`,
-      nickname: getRandomGuestNickname(),
+      id: '',
+      nickname: 'Visitor',
       isGuest: true,
       is18Verified: false,
-      avatar: GUEST_AVATARS[0],
+      avatar: '',
       languagePreference: 'en',
       safeFilterEnabled: true,
       notificationSounds: true,
@@ -287,6 +290,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         user,
         hasActiveSession,
+        isLoading,
         is18Verified: user.is18Verified,
         verify18,
         revoke18,

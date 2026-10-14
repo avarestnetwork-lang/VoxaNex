@@ -1,6 +1,6 @@
 import React from 'react';
 import { LanguageProvider } from './context/LanguageContext';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './context/CallContext';
 import { RouterProvider, useRouter } from './context/RouterContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -33,6 +33,15 @@ import { IndianChatLandingPage } from './pages/IndianChatLandingPage';
 
 const AppRoutes: React.FC = () => {
   const { currentRoute } = useRouter();
+  const { isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-slate-500">Loading VoxaNex...</div>
+      </div>
+    );
+  }
 
   const renderCurrentPage = () => {
     switch (currentRoute) {
