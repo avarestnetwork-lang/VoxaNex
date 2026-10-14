@@ -76,28 +76,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isSupabaseActive = isSupabaseConfigured();
 
-  // Inactivity tracking
-  const [lastActivity, setLastActivity] = useState(Date.now());
-  
-  useEffect(() => {
-    const resetTimer = () => setLastActivity(Date.now());
-    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
-    events.forEach(event => window.addEventListener(event, resetTimer));
-    
-    return () => {
-      events.forEach(event => window.removeEventListener(event, resetTimer));
-    };
-  }, []);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (Date.now() - lastActivity > 60 * 60 * 1000) { // 60 minutes
-        logout();
-        alert('You have been logged out due to 1 hour of inactivity.');
-      }
-    }, 60000); // Check every minute
-    return () => clearInterval(interval);
-  }, [lastActivity]);
 
   // Restore authenticated session on initial mount
   useEffect(() => {
