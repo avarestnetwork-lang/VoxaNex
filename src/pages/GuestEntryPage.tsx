@@ -82,7 +82,7 @@ export const GuestEntryPage: React.FC = () => {
     }
 
     // Perform guest login with verified age & gender
-    await loginGuest(cleanNick, language);
+    await loginGuest(cleanNick, language, gender);
     setAvatar(selectedAvatar);
 
     // Navigate to target room or room directory

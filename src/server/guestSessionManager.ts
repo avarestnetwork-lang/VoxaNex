@@ -8,6 +8,7 @@ export interface ServerGuestSession {
   avatar: string;
   languagePref: 'en' | 'bn';
   is18Verified: boolean;
+  gender: string;
   issuedAt: number;
   expiresAt: number;
   isRevoked: boolean;
@@ -36,6 +37,7 @@ export function createGuestSession(params: {
   languagePref: 'en' | 'bn';
   is18Verified: boolean;
   ipAddress: string;
+  gender: string;
 }): { success: boolean; session?: ServerGuestSession; error?: string } {
   const cleanIp = params.ipAddress || '127.0.0.1';
   const ipHash = crypto.createHash('sha256').update(cleanIp).digest('hex');
@@ -71,6 +73,7 @@ export function createGuestSession(params: {
     av: params.avatar,
     lng: params.languagePref,
     v18: params.is18Verified,
+    gen: params.gender,
     iat: issuedAt,
     exp: expiresAt,
   });
@@ -88,6 +91,7 @@ export function createGuestSession(params: {
     avatar: params.avatar,
     languagePref: params.languagePref,
     is18Verified: params.is18Verified,
+    gender: params.gender,
     issuedAt,
     expiresAt,
     isRevoked: false,
@@ -181,6 +185,7 @@ export function validateGuestToken(token: string): {
         avatar: payload.av,
         languagePref: payload.lng,
         is18Verified: payload.v18,
+        gender: payload.gen,
         issuedAt: payload.iat,
         expiresAt: payload.exp,
       },

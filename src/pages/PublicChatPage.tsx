@@ -46,6 +46,26 @@ interface ExtendedChatMessage extends ChatMessage {
   errorReason?: string;
 }
 
+const GenderBadge = ({ gender }: { gender?: string }) => {
+  if (!gender || gender === 'prefer_not_to_say') return null;
+
+  const config: Record<string, { label: string; icon: string; color: string }> = {
+    male: { label: 'Male', icon: '♂', color: 'text-[#3498DB]' },
+    female: { label: 'Female', icon: '♀', color: 'text-[#FF69B4]' },
+    couple: { label: 'Couple', icon: '♡', color: 'text-[#9B59B6]' },
+    other: { label: 'Non-binary', icon: '⚧', color: 'text-[#20B2AA]' },
+  };
+
+  const g = config[gender];
+  if (!g) return null;
+
+  return (
+    <span className={`text-[10px] font-bold ${g.color} ml-1`}>
+      {g.icon} {g.label}
+    </span>
+  );
+};
+
 export const PublicChatPage: React.FC = () => {
   const { params, navigate } = useRouter();
   const { language, t } = useLanguage();
@@ -694,6 +714,7 @@ export const PublicChatPage: React.FC = () => {
                       <div className="truncate">
                         <span className="font-medium text-slate-200 truncate block">
                           {member.nickname}
+                          <GenderBadge gender={member.gender} />
                         </span>
                         <span className="text-[10px] text-slate-500">
                           {member.isGuest ? 'Guest Session' : 'Member'}

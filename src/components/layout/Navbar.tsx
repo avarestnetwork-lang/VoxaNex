@@ -27,7 +27,7 @@ import { useTheme, ThemeMode } from '../../context/ThemeContext';
 export const Navbar: React.FC = () => {
   const { currentRoute, navigate } = useRouter();
   const { language, toggleLanguage, t } = useLanguage();
-  const { user, is18Verified } = useAuth();
+  const { user, is18Verified, logout } = useAuth();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
@@ -189,6 +189,14 @@ export const Navbar: React.FC = () => {
                 {user.nickname}
               </span>
               <Settings className="w-3 h-3 text-slate-400" />
+            </button>
+
+            {/* Logout button */}
+            <button
+              onClick={logout}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-xs font-medium transition-colors cursor-pointer"
+            >
+              <span>Logout</span>
             </button>
 
             {/* Mobile Hamburger Toggle */}

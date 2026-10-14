@@ -279,7 +279,7 @@ async function startServer() {
   // Post presence / heartbeat
   app.post('/api/chat/rooms/:roomId/presence', (req, res) => {
     const { roomId } = req.params;
-    const { id, nickname, avatar, isGuest } = req.body || {};
+    const { id, nickname, avatar, isGuest, gender } = req.body || {};
 
     if (id && nickname) {
       updateRoomPresence(roomId, {
@@ -287,6 +287,7 @@ async function startServer() {
         nickname,
         avatar: avatar || '👤',
         isGuest: Boolean(isGuest),
+        gender,
         lastSeen: Date.now(),
       });
     }

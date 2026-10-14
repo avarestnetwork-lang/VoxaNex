@@ -40,6 +40,7 @@ export interface PresenceMember {
   avatar: string;
   isGuest: boolean;
   lastSeen: number;
+  gender?: string;
 }
 
 // In-memory data stores

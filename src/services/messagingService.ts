@@ -7,6 +7,7 @@ export interface RealtimePresenceMember {
   avatar: string;
   isGuest: boolean;
   lastSeen: number;
+  gender?: string;
 }
 
 export interface LinkPreviewData {
@@ -195,7 +196,7 @@ export const messagingService = {
    */
   async sendPresence(
     roomId: string,
-    member: { id: string; nickname: string; avatar: string; isGuest: boolean }
+    member: { id: string; nickname: string; avatar: string; isGuest: boolean; gender?: string }
   ): Promise<RealtimePresenceMember[]> {
     try {
       const res = await fetch(`/api/chat/rooms/${roomId}/presence`, {

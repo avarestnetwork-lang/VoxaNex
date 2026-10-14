@@ -12,7 +12,7 @@ interface AuthContextType {
   revoke18: () => void;
   setNickname: (nickname: string) => void;
   setAvatar: (avatar: string) => void;
-  loginGuest: (nickname?: string, lang?: AppLanguage) => Promise<void>;
+  loginGuest: (nickname?: string, lang?: AppLanguage, gender?: string) => Promise<void>;
   loginWithAccount: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   registerWithAccount: (email: string, password: string, nickname: string) => Promise<{ success: boolean; error?: string }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
@@ -75,6 +75,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const isSupabaseActive = isSupabaseConfigured();
+
+  // Inactivity tracking
+  const [lastActivity, setLastActivity] = useState(Date.now());
+  
+  useEffect(() => {
+    const resetTimer = () => setLastActivity(Date.now());
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+    events.forEach(event => window.addEventListener(event, resetTimer));
+    
+    return () => {
+      events.forEach(event => window.removeEventListener(event, resetTimer));
+    };
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (Date.now() - lastActivity > 60 * 60 * 1000) { // 60 minutes
+        logout();
+        alert('You have been logged out due to 1 hour of inactivity.');
+      }
+    }, 60000); // Check every minute
+    return () => clearInterval(interval);
+  }, [lastActivity]);
 
   // Restore authenticated session on initial mount
   useEffect(() => {
@@ -172,7 +195,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const loginGuest = async (nickname?: string, lang: AppLanguage = 'en') => {
+  const loginGuest = async (nickname?: string, lang: AppLanguage = 'en', gender?: string) => {
     const chosenNick = nickname?.trim() || getRandomGuestNickname();
     const chosenAvatar = GUEST_AVATARS[Math.floor(Math.random() * GUEST_AVATARS.length)];
 
@@ -181,8 +204,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       avatar: chosenAvatar,
       languagePref: lang,
       is18Verified: user.is18Verified,
+      gender,
     });
-
+    
     if (res.success && res.session) {
       setUser({
         id: res.session.id,
@@ -190,6 +214,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isGuest: true,
         is18Verified: res.session.is18Verified,
         avatar: res.session.avatar,
+        gender: gender as UserGender,
         languagePreference: res.session.languagePref,
         safeFilterEnabled: true,
         notificationSounds: true,
@@ -203,6 +228,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isGuest: true,
         is18Verified: user.is18Verified,
         avatar: chosenAvatar,
+        gender: gender as UserGender,
         languagePreference: lang,
         safeFilterEnabled: true,
         notificationSounds: true,

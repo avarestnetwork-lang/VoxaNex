@@ -51,6 +51,8 @@ export interface Room {
   backendStatus: 'ready_local_demo' | 'phase2_realtime_pending';
 }
 
+export type UserGender = 'male' | 'female' | 'couple' | 'other' | 'prefer_not_to_say';
+
 export interface UserProfile {
   id: string;
   nickname: string;
@@ -61,6 +63,7 @@ export interface UserProfile {
   verificationMethod?: 'self_declaration' | 'third_party_id' | 'pending';
   ageVerificationStatus?: AgeVerificationStatus;
   avatar: string;
+  gender?: UserGender;
   bio?: string;
   interests?: string[];
   onlineVisibility?: 'online' | 'away' | 'stealth_invisible';
