@@ -135,7 +135,7 @@ export const databaseService = {
     if (!supabase) return () => {};
 
     const channelName = `room_chan_${roomId}_${Math.random().toString(36).slice(2, 6)}`;
-    console.log(`[Realtime] Attempting subscription to ${channelName} for room ${roomId}`);
+    console.log(`[VX-RT] Attempting Supabase subscription: ${channelName} for room ${roomId}`);
     
     const channel = supabase
       .channel(channelName)
@@ -149,7 +149,7 @@ export const databaseService = {
         },
         (payload: any) => {
           const row = payload?.new;
-          console.log(`[Realtime] INSERT event received for room ${roomId}:`, row?.id);
+          console.log(`[VX-RT] Event received for room ${roomId}:`, row);
           if (row && row.room_id === roomId) {
             onMessage({
               id: row.id,
@@ -164,14 +164,11 @@ export const databaseService = {
         }
       )
       .subscribe((status, err) => {
-        console.log(`[Realtime] Subscription status for room ${roomId}: ${status}`);
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn(`[Realtime] Subscription error for room ${roomId}:`, err || '');
-        }
+        console.log(`[VX-RT] Subscription status for room ${roomId}: ${status}`, err || '');
       });
 
     return () => {
-      console.log(`[Realtime] Unsubscribing from channel ${channelName}`);
+      console.log(`[VX-RT] Unsubscribing: ${channelName}`);
       supabase.removeChannel(channel);
     };
   },
