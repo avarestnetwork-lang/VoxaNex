@@ -165,9 +165,15 @@ export const PublicChatPage: React.FC = () => {
       const res = await messagingService.fetchRoomHistory(activeRoom.id, 50);
       if (!cancel) {
         if (res.success && res.messages.length > 0) {
-          setMessages(res.messages.map((m) => ({ ...m, status: 'delivered' })));
-        } else {
-          // Provide friendly room entrance system notice
+          const fetchedMessages = res.messages.map((m) => ({ ...m, status: 'delivered' as const }));
+          setMessages((prev) => {
+            const combined = [...fetchedMessages, ...prev];
+            // Deduplicate by ID and sort chronologically
+            const unique = Array.from(new Map(combined.map((m) => [m.id, m])).values());
+            return unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          });
+        } else if (res.messages.length === 0) {
+          // Provide friendly room entrance system notice if empty
           setMessages([
             {
               id: 'sys-welcome',
@@ -372,7 +378,13 @@ export const PublicChatPage: React.FC = () => {
 
     const res = await messagingService.fetchRoomHistory(activeRoom.id, 30, oldestTimestamp);
     if (res.success && res.messages.length > 0) {
-      setMessages((prev) => [...res.messages.map((m) => ({ ...m, status: 'delivered' as const })), ...prev]);
+      const fetchedMessages = res.messages.map((m) => ({ ...m, status: 'delivered' as const }));
+      setMessages((prev) => {
+        const combined = [...fetchedMessages, ...prev];
+        // Deduplicate by ID and sort chronologically
+        const unique = Array.from(new Map(combined.map((m) => [m.id, m])).values());
+        return unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      });
     } else {
       setHasMoreHistory(false);
     }
