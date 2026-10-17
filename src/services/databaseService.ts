@@ -177,6 +177,38 @@ export const databaseService = {
   },
 
   /**
+   * Broadcast presence update via Supabase Realtime
+   */
+  broadcastPresence(roomId: string, presence: any) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    supabase.channel(`room_presence:${roomId}`).send({
+      type: 'broadcast',
+      event: 'presence',
+      payload: presence,
+    });
+  },
+
+  /**
+   * Subscribe to presence updates via Supabase Realtime broadcast
+   */
+  subscribePresence(roomId: string, onUpdate: (presence: any) => void) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return () => {};
+
+    const channel = supabase.channel(`room_presence:${roomId}`);
+    channel
+      .on('broadcast', { event: 'presence' }, (payload) => {
+        onUpdate(payload.payload);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
+
+  /**
    * Submit an incident report to the database
    */
   async submitReport(report: {

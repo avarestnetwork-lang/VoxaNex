@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { ChatMessage, Room } from '../types';
 import { formatDhakaTime } from '../utils/date';
+import { databaseService } from '../services/databaseService';
 import { BanglishHelperBar } from '../components/layout/BanglishHelperBar';
 import { EmojiPicker } from '../components/chat/EmojiPicker';
 import { GifPicker } from '../components/chat/GifPicker';
@@ -28,6 +29,7 @@ import {
   Image as ImageIcon,
   AlertTriangle,
   RotateCcw,
+  LogOut,
   Wifi,
   WifiOff,
   ShieldCheck,
@@ -195,6 +197,13 @@ export const PublicChatPage: React.FC = () => {
 
   // 2. Realtime SSE stream subscription
   useEffect(() => {
+    // Supabase Broadcast presence subscription
+    const unsubPresence = databaseService.subscribePresence(activeRoom.id, (presence) => {
+      if (presence.payload.status === 'offline') {
+        setOnlineMembers(prev => prev.filter(m => m.id !== presence.payload.id));
+      }
+    });
+
     const unsubscribe = messagingService.subscribeToRoom(activeRoom.id, {
       onMessage: (newMsg) => {
         console.log(`[Chat] Incoming message for ${activeRoom.id}:`, newMsg.id);
@@ -224,6 +233,7 @@ export const PublicChatPage: React.FC = () => {
 
     return () => {
       unsubscribe();
+      unsubPresence();
     };
   }, [activeRoom.id, user.nickname, scrollToBottom]);
 
@@ -384,6 +394,11 @@ export const PublicChatPage: React.FC = () => {
   };
 
   const handleLeaveRoom = () => {
+    // Notify others of departure
+    databaseService.broadcastPresence(activeRoom.id, {
+      type: 'presence',
+      payload: { id: user.id, status: 'offline' }
+    });
     navigate('/rooms');
   };
 
@@ -476,6 +491,14 @@ export const PublicChatPage: React.FC = () => {
             title="Report channel or abuse"
           >
             <AlertTriangle className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            onClick={handleLeaveRoom}
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800/60 rounded-lg border border-slate-800 bg-[#101729] transition-colors cursor-pointer"
+            title="Leave room"
+          >
+            <LogOut className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
