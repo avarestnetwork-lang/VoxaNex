@@ -249,14 +249,33 @@ export default {
             return jsonResponse({ success: false, error: 'Message content or media is required.' }, 400);
           }
 
+          let verifiedSenderId = senderId;
+          let verifiedNickname = senderNickname;
+          let verifiedAvatar = senderAvatar || '👤';
+
+          if (senderType === 'guest') {
+            const guestToken = body?.guestToken;
+            if (!guestToken || !guestSessions.has(guestToken)) {
+              return jsonResponse({ success: false, error: 'Unauthorized: Invalid or missing guest session token.' }, 401);
+            }
+            const session = guestSessions.get(guestToken)!;
+            if (Date.now() > session.expiresAt) {
+              guestSessions.delete(guestToken);
+              return jsonResponse({ success: false, error: 'Unauthorized: Guest session has expired.' }, 401);
+            }
+            verifiedSenderId = session.id;
+            verifiedNickname = session.nickname;
+            verifiedAvatar = session.avatar;
+          }
+
           const cleanContent = sanitizeContent(content || '');
 
           const message: HubMessage = {
             id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             roomId,
-            senderId,
-            senderNickname,
-            senderAvatar: senderAvatar || '👤',
+            senderId: verifiedSenderId,
+            senderNickname: verifiedNickname,
+            senderAvatar: verifiedAvatar,
             senderType,
             content: cleanContent,
             rawContent: content,
@@ -282,6 +301,32 @@ export default {
           list.push(message);
           if (list.length > 500) {
             list.shift();
+          }
+
+          // Secure server-side Supabase persistence using service-role key if configured
+          if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
+            try {
+              await fetch(`${env.SUPABASE_URL}/rest/v1/messages`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+                  'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+                  'Prefer': 'return=minimal',
+                },
+                body: JSON.stringify({
+                  room_id: roomId,
+                  sender_guest_id: senderType === 'guest' ? verifiedSenderId : null,
+                  sender_user_id: senderType === 'registered' ? verifiedSenderId : null,
+                  sender_nickname: verifiedNickname,
+                  sender_avatar: verifiedAvatar,
+                  content: cleanContent,
+                  client_nonce: clientNonce,
+                }),
+              });
+            } catch (dbErr) {
+              console.warn('Supabase service-role persistence warning:', dbErr);
+            }
           }
 
           // Broadcast to all active SSE subscribers in this room

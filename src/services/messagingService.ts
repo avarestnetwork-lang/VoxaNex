@@ -78,21 +78,6 @@ export const messagingService = {
     options: SendMessageOptions
   ): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
     try {
-      // Single Authoritative Persistence Path: Supabase if configured, otherwise Worker API
-      if (isSupabaseConfigured()) {
-        const dbMsg = await databaseService.sendRoomMessage({
-          roomId,
-          senderUserId: options.senderType === 'registered' ? options.senderId : undefined,
-          senderGuestId: options.senderType === 'guest' ? options.senderId : undefined,
-          senderNickname: options.senderNickname,
-          senderAvatar: options.senderAvatar,
-          content: options.content,
-        });
-        if (dbMsg) {
-          return { success: true, message: dbMsg };
-        }
-      }
-
       let guestToken =
         options.senderType === 'guest' ? guestSessionService.getStoredToken() : undefined;
       if (options.senderType === 'guest' && !guestToken) {
