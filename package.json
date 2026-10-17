@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild src/worker.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dist/_worker.js",
+    "build": "vite build && esbuild src/worker.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=build/worker.js",
     "start": "tsx server.ts",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist build server.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
