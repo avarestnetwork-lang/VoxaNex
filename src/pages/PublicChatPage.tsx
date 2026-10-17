@@ -197,10 +197,15 @@ export const PublicChatPage: React.FC = () => {
   useEffect(() => {
     const unsubscribe = messagingService.subscribeToRoom(activeRoom.id, {
       onMessage: (newMsg) => {
+        console.log(`[Chat] Incoming message for ${activeRoom.id}:`, newMsg.id);
         setMessages((prev) => {
           // Deduplicate if already present by ID or nonce
           const exists = prev.some((m) => m.id === newMsg.id);
-          if (exists) return prev;
+          if (exists) {
+            console.log(`[Chat] Message ${newMsg.id} already exists, skipping.`);
+            return prev;
+          }
+          console.log(`[Chat] Updating state with new message:`, newMsg.id);
           return [...prev, { ...newMsg, status: 'delivered' }];
         });
         setTimeout(scrollToBottom, 50);
