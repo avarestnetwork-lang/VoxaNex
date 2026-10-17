@@ -134,8 +134,9 @@ export const databaseService = {
     const supabase = getSupabaseClient();
     if (!supabase) return () => {};
 
+    const channelName = `room_chan_${roomId}_${Math.random().toString(36).slice(2, 6)}`;
     const channel = supabase
-      .channel(`room:${roomId}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
@@ -145,19 +146,27 @@ export const databaseService = {
           filter: `room_id=eq.${roomId}`,
         },
         (payload: any) => {
-          const row = payload.new;
-          onMessage({
-            id: row.id,
-            roomId: row.room_id,
-            senderId: row.sender_user_id || row.sender_guest_id || 'usr',
-            senderNickname: row.sender_nickname,
-            senderAvatar: row.sender_avatar,
-            content: row.content,
-            timestamp: row.created_at,
-          });
+          const row = payload?.new;
+          if (row && row.room_id === roomId) {
+            onMessage({
+              id: row.id,
+              roomId: row.room_id,
+              senderId: row.sender_user_id || row.sender_guest_id || 'usr',
+              senderNickname: row.sender_nickname,
+              senderAvatar: row.sender_avatar,
+              content: row.content,
+              timestamp: row.created_at,
+            });
+          }
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          // Connected successfully
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn(`[SupabaseRealtime] Room ${roomId} subscription status: ${status}`, err || '');
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
