@@ -272,7 +272,7 @@ export default {
           const cleanContent = sanitizeContent(content || '');
 
           const message: HubMessage = {
-            id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            id: crypto.randomUUID(),
             roomId,
             senderId: verifiedSenderId,
             senderNickname: verifiedNickname,
@@ -316,6 +316,7 @@ export default {
                   'Prefer': 'return=minimal',
                 },
                 body: JSON.stringify({
+                  id: message.id,
                   room_id: roomId,
                   sender_guest_id: senderType === 'guest' ? verifiedSenderId : null,
                   sender_user_id: senderType === 'registered' ? verifiedSenderId : null,
