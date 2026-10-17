@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserProfile, AppLanguage } from '../types';
+import { UserProfile, AppLanguage, UserGender } from '../types';
 import { authService } from '../services/authService';
 import { guestSessionService } from '../services/guestSessionService';
 import { isSupabaseConfigured } from '../lib/supabaseClient';

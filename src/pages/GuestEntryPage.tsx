@@ -10,7 +10,7 @@ import { User, Shuffle, ArrowRight, Check, Lock, Mail, ShieldAlert, AlertTriangl
 export const GuestEntryPage: React.FC = () => {
   const { navigate, params } = useRouter();
   const { language, setLanguage, t } = useLanguage();
-  const { user, loginGuest, setAvatar, loginWithAccount, registerWithAccount, isSupabaseActive } = useAuth();
+  const { user, loginGuest, setAvatar, loginWithAccount, registerWithAccount, isSupabaseActive, verify18 } = useAuth();
 
   // Determine target room from params
   const targetRoomSlug = params.targetRoom || params.roomId;
@@ -85,6 +85,10 @@ export const GuestEntryPage: React.FC = () => {
     await loginGuest(cleanNick, language, gender);
     setAvatar(selectedAvatar);
 
+    if (targetRoom?.is18Plus || adultConfirmed) {
+      verify18();
+    }
+
     // Navigate to target room or room directory
     if (targetRoom) {
       navigate('/chat', { roomId: targetRoom.slug });
@@ -106,6 +110,15 @@ export const GuestEntryPage: React.FC = () => {
       return;
     }
 
+    if (targetRoom?.is18Plus && !adultConfirmed) {
+      setAccountError(
+        language === 'bn'
+          ? 'প্রাপ্তবয়স্ক রুমে প্রবেশের জন্য ১৮+ নিশ্চিতকরণ চেকবাক্সটি সিলেক্ট করুন।'
+          : 'You must confirm you are 18 or older to enter adult rooms.'
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       if (activeTab === 'register') {
@@ -122,6 +135,10 @@ export const GuestEntryPage: React.FC = () => {
           setLoading(false);
           return;
         }
+      }
+
+      if (targetRoom?.is18Plus || adultConfirmed) {
+        verify18();
       }
 
       setLoading(false);
@@ -413,6 +430,30 @@ export const GuestEntryPage: React.FC = () => {
                 />
               </div>
             </div>
+
+            {/* Adult Confirmation Checkbox if target room is 18+ */}
+            {targetRoom?.is18Plus && (
+              <div className="p-3.5 rounded-xl border border-rose-950 bg-rose-950/20 space-y-2">
+                <div className="flex items-center gap-1.5 text-rose-300 text-xs font-semibold">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>18+ Age Eligibility Requirement</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Self-reported age is required. You must be 18 or older to join adult chatrooms. Minors are strictly prohibited.
+                </p>
+                <label className="flex items-start gap-2.5 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={adultConfirmed}
+                    onChange={(e) => setAdultConfirmed(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-rose-600 focus:ring-rose-500"
+                  />
+                  <span className="text-xs text-slate-200">
+                    I confirm under penalty of platform ban that I am 18 years of age or older.
+                  </span>
+                </label>
+              </div>
+            )}
 
             {accountError && (
               <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900 text-xs text-rose-300">

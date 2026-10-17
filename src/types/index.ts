@@ -14,9 +14,11 @@ export type RoomCategory =
   | 'regional'
   | 'international'
   | 'english'
-  | 'gaming-tech';
+  | 'gaming-tech'
+  | 'adult'
+  | 'social';
 
-export type RoomLanguage = 'bn' | 'en' | 'mixed' | 'hi' | 'ur' | 'de' | 'other';
+export type RoomLanguage = 'bn' | 'en' | 'mixed' | 'hi' | 'ur' | 'de' | 'ta' | 'other';
 
 export interface RoomRules {
   en: string[];
@@ -45,7 +47,8 @@ export interface Room {
   requiresAccount: boolean;
   region?: string;
   country?: string;
-  rules: RoomRules;
+  flagUrl?: string;
+  rules?: RoomRules;
   activeParticipants?: number;
   /** Status indicates readiness or Phase 2 Supabase connection requirement */
   backendStatus: 'ready_local_demo' | 'phase2_realtime_pending';

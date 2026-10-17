@@ -4,17 +4,21 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
-import { Lock, Mail, User, ArrowRight, ShieldCheck, Github, Globe, KeyRound, CheckCircle2 } from 'lucide-react';
+import { Lock, Mail, User, ArrowRight, ShieldCheck, Github, Globe, KeyRound, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 export const AuthPage: React.FC = () => {
-  const { navigate } = useRouter();
+  const { navigate, params } = useRouter();
   const { language, t } = useLanguage();
-  const { loginWithAccount, registerWithAccount, requestPasswordReset, isSupabaseActive } = useAuth();
+  const { loginWithAccount, registerWithAccount, requestPasswordReset, isSupabaseActive, verify18 } = useAuth();
+
+  const targetRoomSlug = params.targetRoom || params.roomId;
+  const isTargetAdult = targetRoomSlug && (targetRoomSlug.includes('adult') || targetRoomSlug.includes('sex') || targetRoomSlug.includes('mature') || targetRoomSlug.includes('video') || targetRoomSlug.includes('roulette') || targetRoomSlug.includes('bdsm'));
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
+  const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -38,6 +42,11 @@ export const AuthPage: React.FC = () => {
       return;
     }
 
+    if (isTargetAdult && !adultConfirmed) {
+      setErrorMsg('You must confirm you are 18 or older to join adult chatrooms.');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -57,8 +66,16 @@ export const AuthPage: React.FC = () => {
         }
       }
 
+      if (isTargetAdult || adultConfirmed) {
+        verify18();
+      }
+
       setLoading(false);
-      navigate('/profile');
+      if (targetRoomSlug) {
+        navigate('/chat', { roomId: targetRoomSlug });
+      } else {
+        navigate('/profile');
+      }
     } catch (err: any) {
       setLoading(false);
       setErrorMsg(err.message || 'An unexpected authentication error occurred.');
@@ -202,6 +219,29 @@ export const AuthPage: React.FC = () => {
               />
             </div>
           </div>
+
+          {isTargetAdult && (
+            <div className="p-3.5 rounded-xl border border-rose-950 bg-rose-950/20 space-y-2">
+              <div className="flex items-center gap-1.5 text-rose-300 text-xs font-semibold">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>18+ Age Eligibility Requirement</span>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                Self-reported age is required. You must be 18 or older to join adult chatrooms. Minors are strictly prohibited.
+              </p>
+              <label className="flex items-start gap-2.5 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={adultConfirmed}
+                  onChange={(e) => setAdultConfirmed(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-rose-600 focus:ring-rose-500"
+                />
+                <span className="text-xs text-slate-200">
+                  I confirm under penalty of platform ban that I am 18 years of age or older.
+                </span>
+              </label>
+            </div>
+          )}
 
           {errorMsg && (
             <div className="text-xs text-rose-400 font-medium p-2.5 rounded-lg bg-rose-950/30 border border-rose-900/50">

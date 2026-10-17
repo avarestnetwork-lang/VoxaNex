@@ -46,6 +46,16 @@ interface ExtendedChatMessage extends ChatMessage {
   errorReason?: string;
 }
 
+const getGenderColor = (gender?: string): string => {
+  if (!gender || gender === 'prefer_not_to_say') return 'text-slate-200';
+  const norm = gender.toLowerCase();
+  if (norm === 'male') return 'text-[#3498DB]';
+  if (norm === 'female') return 'text-[#FF69B4]';
+  if (norm === 'couple') return 'text-[#9B59B6]';
+  if (norm === 'other' || norm === 'non_binary') return 'text-[#20B2AA]';
+  return 'text-slate-200';
+};
+
 const GenderBadge = ({ gender }: { gender?: string }) => {
   if (!gender || gender === 'prefer_not_to_say') return null;
 
@@ -54,14 +64,16 @@ const GenderBadge = ({ gender }: { gender?: string }) => {
     female: { label: 'Female', icon: '♀', color: 'text-[#FF69B4]' },
     couple: { label: 'Couple', icon: '♡', color: 'text-[#9B59B6]' },
     other: { label: 'Non-binary', icon: '⚧', color: 'text-[#20B2AA]' },
+    non_binary: { label: 'Non-binary', icon: '⚧', color: 'text-[#20B2AA]' },
   };
 
-  const g = config[gender];
+  const g = config[gender.toLowerCase()];
   if (!g) return null;
 
   return (
-    <span className={`text-[10px] font-bold ${g.color} ml-1`}>
-      {g.icon} {g.label}
+    <span className={`text-[10px] font-bold ${g.color} ml-1.5 inline-flex items-center gap-0.5`}>
+      <span>{g.icon}</span>
+      <span>{g.label}</span>
     </span>
   );
 };
@@ -87,7 +99,7 @@ export const PublicChatPage: React.FC = () => {
 
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected'>('connecting');
   const [onlineMembers, setOnlineMembers] = useState<RealtimePresenceMember[]>([]);
   const [typers, setTypers] = useState<string[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -186,6 +198,7 @@ export const PublicChatPage: React.FC = () => {
         nickname: user.nickname,
         avatar: user.avatar,
         isGuest: user.isGuest,
+        gender: user.gender,
       });
     };
 
@@ -376,6 +389,8 @@ export const PublicChatPage: React.FC = () => {
             className={`hidden sm:flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-md border ${
               connectionStatus === 'connected'
                 ? 'border-emerald-800/60 bg-emerald-950/20 text-emerald-300'
+                : connectionStatus === 'connecting'
+                ? 'border-cyan-800/60 bg-cyan-950/20 text-cyan-300'
                 : connectionStatus === 'reconnecting'
                 ? 'border-amber-800/60 bg-amber-950/20 text-amber-300'
                 : 'border-rose-800/60 bg-rose-950/20 text-rose-300'
@@ -384,12 +399,22 @@ export const PublicChatPage: React.FC = () => {
             {connectionStatus === 'connected' ? (
               <>
                 <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Live Stream</span>
+                <span>Connected</span>
               </>
-            ) : (
+            ) : connectionStatus === 'connecting' ? (
+              <>
+                <Wifi className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                <span>Connecting...</span>
+              </>
+            ) : connectionStatus === 'reconnecting' ? (
               <>
                 <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
                 <span>Reconnecting...</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-3.5 h-3.5 text-rose-400" />
+                <span>Disconnected</span>
               </>
             )}
           </div>
@@ -432,8 +457,27 @@ export const PublicChatPage: React.FC = () => {
           {/* Data retention & safety notice banner */}
           <div className="p-2 bg-[#0c1324] border-b border-slate-800 text-[11px] text-slate-400 font-mono flex items-center justify-between px-4 shrink-0">
             <div className="flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Real-Time SSE Channel Active · Rolling 30-Day Retention · Zero-Harassment Rules</span>
+              {connectionStatus === 'connected' ? (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Real-Time SSE Channel Active · Rolling 30-Day Retention · Zero-Harassment Rules</span>
+                </>
+              ) : connectionStatus === 'connecting' ? (
+                <>
+                  <Wifi className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                  <span className="text-cyan-300">Connecting to Real-Time SSE Channel... · Rolling 30-Day Retention</span>
+                </>
+              ) : connectionStatus === 'reconnecting' ? (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                  <span className="text-amber-300">Reconnecting to Real-Time Channel... · Auto-retrying</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="text-rose-300">Real-Time Channel Disconnected</span>
+                </>
+              )}
             </div>
             <span className="text-slate-500 hidden md:inline">Asia/Dhaka</span>
           </div>
@@ -697,7 +741,10 @@ export const PublicChatPage: React.FC = () => {
                 <div className="flex items-center gap-2 p-2 rounded-lg bg-violet-950/20 border border-violet-900/40">
                   <span className="text-base select-none">{user.avatar}</span>
                   <div className="truncate">
-                    <span className="font-medium text-white truncate block">{user.nickname}</span>
+                    <span className={`font-medium truncate block ${getGenderColor(user.gender)}`}>
+                      {user.nickname}
+                      <GenderBadge gender={user.gender} />
+                    </span>
                     <span className="text-[10px] text-violet-300">You ({user.isGuest ? 'Guest' : 'Member'})</span>
                   </div>
                 </div>
@@ -712,7 +759,7 @@ export const PublicChatPage: React.FC = () => {
                     >
                       <span className="text-base select-none">{member.avatar}</span>
                       <div className="truncate">
-                        <span className="font-medium text-slate-200 truncate block">
+                        <span className={`font-medium truncate block ${getGenderColor(member.gender)}`}>
                           {member.nickname}
                           <GenderBadge gender={member.gender} />
                         </span>

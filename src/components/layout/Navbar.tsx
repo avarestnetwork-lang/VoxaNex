@@ -193,18 +193,6 @@ export const Navbar: React.FC = () => {
               </button>
             )}
 
-            {/* Logout button */}
-            {hasActiveSession && (
-              <button
-                onClick={async () => {
-                  await logout();
-                  handleNav('/');
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-xs font-medium transition-colors cursor-pointer"
-              >
-                <span>Logout</span>
-              </button>
-            )}
 
             {/* Mobile Hamburger Toggle */}
             <button

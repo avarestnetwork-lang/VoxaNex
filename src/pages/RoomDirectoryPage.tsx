@@ -358,7 +358,9 @@ export const RoomDirectoryPage: React.FC = () => {
                 {language === 'bn' ? 'কমিউনিটি আচরণবিধি' : 'Channel Rules & Expectations'}
               </h4>
               <ul className="space-y-2 text-xs text-slate-400">
-                {(inspectingRoom.rules[language] || inspectingRoom.rules.en).map((rule, idx) => (
+                {((inspectingRoom.rules && (inspectingRoom.rules[language] || inspectingRoom.rules.en)) || [
+                  language === 'bn' ? 'কমিউনিটি আচরণবিধি মেনে চলুন।' : 'Respect community conduct standards.',
+                ]).map((rule, idx) => (
                   <li key={idx} className="flex items-start gap-2">
                     <span className="text-cyan-400 font-mono select-none">#{idx + 1}</span>
                     <span>{rule}</span>

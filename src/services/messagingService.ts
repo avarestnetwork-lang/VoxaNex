@@ -36,6 +36,8 @@ export interface SendMessageOptions {
   clientNonce?: string;
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+
 export const messagingService = {
   /**
    * Fetch paginated message history for a public room
@@ -46,13 +48,18 @@ export const messagingService = {
     before?: string
   ): Promise<{ success: boolean; messages: ChatMessage[]; error?: string }> {
     try {
-      const url = new URL(`/api/chat/rooms/${roomId}/messages`, window.location.origin);
+      const endpoint = `${API_BASE}/api/chat/rooms/${roomId}/messages`;
+      const url = new URL(endpoint, window.location.origin);
       url.searchParams.set('limit', limit.toString());
       if (before) url.searchParams.set('before', before);
 
       const res = await fetch(url.toString());
       if (!res.ok) {
-        return { success: false, messages: [], error: 'Failed to retrieve messages' };
+        return { success: false, messages: [], error: `Failed to retrieve messages (status ${res.status})` };
+      }
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return { success: false, messages: [], error: 'Unexpected non-JSON response from server.' };
       }
       const data = await res.json();
       return { success: true, messages: data.messages || [] };
@@ -80,7 +87,7 @@ export const messagingService = {
         }
       }
 
-      const res = await fetch(`/api/chat/rooms/${roomId}/messages`, {
+      const res = await fetch(`${API_BASE}/api/chat/rooms/${roomId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -90,9 +97,17 @@ export const messagingService = {
         }),
       });
 
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return {
+          success: false,
+          error: `Server route unavailable or returned invalid response (status ${res.status}).`,
+        };
+      }
+
       const data = await res.json();
       if (!res.ok || !data.success) {
-        return { success: false, error: data.error || 'Failed to send message' };
+        return { success: false, error: data.error || `Failed to send message (HTTP ${res.status})` };
       }
 
       return { success: true, message: data.message };
@@ -110,18 +125,24 @@ export const messagingService = {
       onMessage: (msg: ChatMessage) => void;
       onPresence?: (members: RealtimePresenceMember[]) => void;
       onTyping?: (typers: string[]) => void;
-      onStatusChange?: (status: 'connected' | 'reconnecting' | 'disconnected') => void;
+      onStatusChange?: (status: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void;
     }
   ): () => void {
     let eventSource: EventSource | null = null;
     let isClosed = false;
     let retryDelay = 1000;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
 
     const connect = () => {
       if (isClosed) return;
-      callbacks.onStatusChange?.('reconnecting');
+      callbacks.onStatusChange?.('connecting');
 
-      eventSource = new EventSource(`/api/chat/rooms/${roomId}/events`);
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+
+      eventSource = new EventSource(`${API_BASE}/api/chat/rooms/${roomId}/events`);
 
       eventSource.addEventListener('connected', () => {
         retryDelay = 1000;
@@ -157,9 +178,11 @@ export const messagingService = {
 
       eventSource.onerror = () => {
         eventSource?.close();
+        eventSource = null;
         if (!isClosed) {
-          callbacks.onStatusChange?.('disconnected');
-          setTimeout(() => {
+          callbacks.onStatusChange?.('reconnecting');
+          if (reconnectTimeout) clearTimeout(reconnectTimeout);
+          reconnectTimeout = setTimeout(() => {
             retryDelay = Math.min(retryDelay * 1.5, 10000);
             connect();
           }, retryDelay);
@@ -171,7 +194,9 @@ export const messagingService = {
 
     return () => {
       isClosed = true;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
       eventSource?.close();
+      eventSource = null;
       callbacks.onStatusChange?.('disconnected');
     };
   },
@@ -181,7 +206,7 @@ export const messagingService = {
    */
   async sendTyping(roomId: string, memberId: string, nickname: string, isTyping: boolean) {
     try {
-      await fetch(`/api/chat/rooms/${roomId}/typing`, {
+      await fetch(`${API_BASE}/api/chat/rooms/${roomId}/typing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ memberId, nickname, isTyping }),
@@ -199,7 +224,7 @@ export const messagingService = {
     member: { id: string; nickname: string; avatar: string; isGuest: boolean; gender?: string }
   ): Promise<RealtimePresenceMember[]> {
     try {
-      const res = await fetch(`/api/chat/rooms/${roomId}/presence`, {
+      const res = await fetch(`${API_BASE}/api/chat/rooms/${roomId}/presence`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(member),

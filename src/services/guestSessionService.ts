@@ -5,6 +5,7 @@ export interface ValidatedGuestSession {
   token: string;
   nickname: string;
   avatar: string;
+  gender?: string;
   languagePref: AppLanguage;
   is18Verified: boolean;
   expiresAt: number;
@@ -19,6 +20,7 @@ export const guestSessionService = {
   async createSession(params: {
     nickname: string;
     avatar: string;
+    gender?: string;
     languagePref: AppLanguage;
     is18Verified: boolean;
   }): Promise<{ success: boolean; session?: ValidatedGuestSession; error?: string }> {

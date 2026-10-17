@@ -123,6 +123,17 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Cross-Origin Resource Sharing (CORS) for Cloudflare Workers & external web clients
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+    next();
+  });
+
   // ---------------------------------------------------------------------------
   // SECURE BACKEND API ROUTES
   // ---------------------------------------------------------------------------
@@ -145,7 +156,7 @@ async function startServer() {
   // GUEST SESSION ENDPOINTS
   // ---------------------------------------------------------------------------
   app.post('/api/guest/session', (req, res) => {
-    const { nickname, avatar, languagePref, is18Verified } = req.body || {};
+    const { nickname, avatar, languagePref, is18Verified, gender } = req.body || {};
 
     if (!nickname || typeof nickname !== 'string' || nickname.trim().length < 2) {
       return res.status(400).json({
@@ -165,6 +176,7 @@ async function startServer() {
       languagePref: languagePref === 'bn' ? 'bn' : 'en',
       is18Verified: Boolean(is18Verified),
       ipAddress,
+      gender: gender || 'prefer_not_to_say',
     });
 
     if (!result.success || !result.session) {

@@ -37,7 +37,7 @@ export function createGuestSession(params: {
   languagePref: 'en' | 'bn';
   is18Verified: boolean;
   ipAddress: string;
-  gender: string;
+  gender?: string;
 }): { success: boolean; session?: ServerGuestSession; error?: string } {
   const cleanIp = params.ipAddress || '127.0.0.1';
   const ipHash = crypto.createHash('sha256').update(cleanIp).digest('hex');
@@ -73,7 +73,7 @@ export function createGuestSession(params: {
     av: params.avatar,
     lng: params.languagePref,
     v18: params.is18Verified,
-    gen: params.gender,
+    gen: params.gender || 'prefer_not_to_say',
     iat: issuedAt,
     exp: expiresAt,
   });
@@ -91,7 +91,7 @@ export function createGuestSession(params: {
     avatar: params.avatar,
     languagePref: params.languagePref,
     is18Verified: params.is18Verified,
-    gender: params.gender,
+    gender: params.gender || 'prefer_not_to_say',
     issuedAt,
     expiresAt,
     isRevoked: false,
