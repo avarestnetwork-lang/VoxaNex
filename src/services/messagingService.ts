@@ -1,5 +1,7 @@
 import { ChatMessage } from '../types';
 import { guestSessionService } from './guestSessionService';
+import { databaseService } from './databaseService';
+import { isSupabaseConfigured } from '../lib/supabaseClient';
 
 export interface RealtimePresenceMember {
   id: string;
@@ -76,6 +78,21 @@ export const messagingService = {
     options: SendMessageOptions
   ): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
     try {
+      // Single Authoritative Persistence Path: Supabase if configured, otherwise Worker API
+      if (isSupabaseConfigured()) {
+        const dbMsg = await databaseService.sendRoomMessage({
+          roomId,
+          senderUserId: options.senderType === 'registered' ? options.senderId : undefined,
+          senderGuestId: options.senderType === 'guest' ? options.senderId : undefined,
+          senderNickname: options.senderNickname,
+          senderAvatar: options.senderAvatar,
+          content: options.content,
+        });
+        if (dbMsg) {
+          return { success: true, message: dbMsg };
+        }
+      }
+
       let guestToken =
         options.senderType === 'guest' ? guestSessionService.getStoredToken() : undefined;
       if (options.senderType === 'guest' && !guestToken) {
@@ -117,7 +134,7 @@ export const messagingService = {
   },
 
   /**
-   * Subscribe to live room events via Server-Sent Events (SSE) with auto-reconnection
+   * Subscribe to live room events via SSE and Supabase Realtime with auto-reconnection
    */
   subscribeToRoom(
     roomId: string,
@@ -132,6 +149,14 @@ export const messagingService = {
     let isClosed = false;
     let retryDelay = 1000;
     let reconnectTimeout: NodeJS.Timeout | null = null;
+
+    // Subscribe to Supabase Realtime if configured
+    let unsubSupabase = () => {};
+    if (isSupabaseConfigured()) {
+      unsubSupabase = databaseService.subscribeToRoom(roomId, (msg) => {
+        callbacks.onMessage(msg);
+      });
+    }
 
     const connect = () => {
       if (isClosed) return;
@@ -197,6 +222,7 @@ export const messagingService = {
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       eventSource?.close();
       eventSource = null;
+      unsubSupabase();
       callbacks.onStatusChange?.('disconnected');
     };
   },
