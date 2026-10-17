@@ -152,7 +152,8 @@ export default {
     // -------------------------------------------------------------------------
     // 1. SSE LIVE EVENT STREAM: /api/chat/rooms/:roomId/events
     // -------------------------------------------------------------------------
-    const sseMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)\/events$/);
+    const sseMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)\/events\/?$/);
+    console.log(`[Worker] Incoming request: ${request.method} ${url.pathname}, matched SSE: ${!!sseMatch}`);
     if (sseMatch && request.method === 'GET') {
       const roomId = decodeURIComponent(sseMatch[1]);
 
