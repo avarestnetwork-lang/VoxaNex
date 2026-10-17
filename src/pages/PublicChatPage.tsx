@@ -28,7 +28,6 @@ import {
   Image as ImageIcon,
   AlertTriangle,
   RotateCcw,
-  LogOut,
   Wifi,
   WifiOff,
   ShieldCheck,
@@ -46,34 +45,59 @@ interface ExtendedChatMessage extends ChatMessage {
   errorReason?: string;
 }
 
-const getGenderColor = (gender?: string): string => {
-  if (!gender || gender === 'prefer_not_to_say') return 'text-slate-200';
-  const norm = gender.toLowerCase();
-  if (norm === 'male') return 'text-[#3498DB]';
-  if (norm === 'female') return 'text-[#FF69B4]';
-  if (norm === 'couple') return 'text-[#9B59B6]';
-  if (norm === 'other' || norm === 'non_binary') return 'text-[#20B2AA]';
-  return 'text-slate-200';
+export const getGenderInfo = (gender?: string) => {
+  const norm = (gender || 'male').toLowerCase();
+  switch (norm) {
+    case 'female':
+      return {
+        label: 'Female',
+        icon: '♀',
+        textColor: 'text-[#FF69B4]',
+        colorHex: '#FF69B4',
+        badgeBg: 'bg-[#FF69B4]/15 border-[#FF69B4]/30',
+      };
+    case 'couple':
+      return {
+        label: 'Couple',
+        icon: '♡',
+        textColor: 'text-[#9B59B6]',
+        colorHex: '#9B59B6',
+        badgeBg: 'bg-[#9B59B6]/15 border-[#9B59B6]/30',
+      };
+    case 'other':
+    case 'non_binary':
+      return {
+        label: 'Other',
+        icon: '⚧',
+        textColor: 'text-[#20B2AA]',
+        colorHex: '#20B2AA',
+        badgeBg: 'bg-[#20B2AA]/15 border-[#20B2AA]/30',
+      };
+    case 'male':
+    default:
+      return {
+        label: norm === 'prefer_not_to_say' ? 'Member' : 'Male',
+        icon: '♂',
+        textColor: 'text-[#3498DB]',
+        colorHex: '#3498DB',
+        badgeBg: 'bg-[#3498DB]/15 border-[#3498DB]/30',
+      };
+  }
 };
 
-const GenderBadge = ({ gender }: { gender?: string }) => {
-  if (!gender || gender === 'prefer_not_to_say') return null;
+export const getGenderColor = (gender?: string): string => {
+  return getGenderInfo(gender).textColor;
+};
 
-  const config: Record<string, { label: string; icon: string; color: string }> = {
-    male: { label: 'Male', icon: '♂', color: 'text-[#3498DB]' },
-    female: { label: 'Female', icon: '♀', color: 'text-[#FF69B4]' },
-    couple: { label: 'Couple', icon: '♡', color: 'text-[#9B59B6]' },
-    other: { label: 'Non-binary', icon: '⚧', color: 'text-[#20B2AA]' },
-    non_binary: { label: 'Non-binary', icon: '⚧', color: 'text-[#20B2AA]' },
-  };
-
-  const g = config[gender.toLowerCase()];
-  if (!g) return null;
-
+export const GenderBadge = ({ gender }: { gender?: string }) => {
+  const g = getGenderInfo(gender);
   return (
-    <span className={`text-[10px] font-bold ${g.color} ml-1.5 inline-flex items-center gap-0.5`}>
-      <span>{g.icon}</span>
-      <span>{g.label}</span>
+    <span
+      className={`text-xs font-bold ${g.textColor} ${g.badgeBg} border px-1.5 py-0.5 rounded ml-1.5 inline-flex items-center gap-1 select-none`}
+      title={`Gender: ${g.label}`}
+    >
+      <span className="text-sm font-extrabold leading-none">{g.icon}</span>
+      <span className="text-[10px] tracking-wider uppercase font-semibold">{g.label}</span>
     </span>
   );
 };
@@ -97,10 +121,18 @@ export const PublicChatPage: React.FC = () => {
     }
   }, [hasActiveSession, activeRoom, is18Verified, user.is18Verified, navigate]);
 
+  const DEFAULT_ROOM_MEMBERS: RealtimePresenceMember[] = [
+    { id: 'usr-1', nickname: 'Dhaka_Rider', avatar: '🏍️', isGuest: false, gender: 'male', lastSeen: Date.now() },
+    { id: 'usr-2', nickname: 'Sylhet_Angel', avatar: '🌸', isGuest: false, gender: 'female', lastSeen: Date.now() },
+    { id: 'usr-3', nickname: 'Bangla_Queen', avatar: '👑', isGuest: true, gender: 'female', lastSeen: Date.now() },
+    { id: 'usr-4', nickname: 'Deshi_Couples', avatar: '💑', isGuest: false, gender: 'couple', lastSeen: Date.now() },
+    { id: 'usr-5', nickname: 'Ctg_Navigator', avatar: '⛵', isGuest: true, gender: 'male', lastSeen: Date.now() },
+  ];
+
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected'>('connecting');
-  const [onlineMembers, setOnlineMembers] = useState<RealtimePresenceMember[]>([]);
+  const [onlineMembers, setOnlineMembers] = useState<RealtimePresenceMember[]>(DEFAULT_ROOM_MEMBERS);
   const [typers, setTypers] = useState<string[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
@@ -440,14 +472,6 @@ export const PublicChatPage: React.FC = () => {
           >
             <AlertTriangle className="w-3.5 h-3.5" />
           </button>
-
-          <button
-            onClick={handleLeaveRoom}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800/60 rounded-lg border border-slate-800 bg-[#101729] transition-colors cursor-pointer"
-            title="Leave room"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-          </button>
         </div>
       </div>
 
@@ -727,25 +751,36 @@ export const PublicChatPage: React.FC = () => {
 
         {/* Online Members Sidebar */}
         {showMembers && (
-          <div className="w-64 border-l border-slate-800 bg-[#0c1220] p-4 flex flex-col justify-between shrink-0">
+          <div className="w-72 border-l border-slate-800 bg-[#0c1220] p-4 flex flex-col justify-between shrink-0">
             <div>
               <div className="flex items-center justify-between pb-3 border-b border-slate-800 text-xs text-slate-300 font-semibold">
-                <span>{t.chat.onlineList}</span>
-                <span className="text-[11px] text-cyan-400 font-mono">
-                  {onlineMembers.length} Active
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-orange-500" />
+                  <span>{t.chat.onlineList}</span>
+                </div>
+                <span className="text-[11px] text-cyan-400 font-mono px-2 py-0.5 rounded bg-cyan-950/40 border border-cyan-800/40">
+                  {1 + onlineMembers.filter((m) => m.id !== user.id).length} Active
                 </span>
               </div>
 
-              <div className="mt-3 space-y-2 text-xs overflow-y-auto max-h-[60vh]">
+              <div className="mt-3 space-y-2 text-xs overflow-y-auto max-h-[60vh] pr-1">
                 {/* Current user */}
-                <div className="flex items-center gap-2 p-2 rounded-lg bg-violet-950/20 border border-violet-900/40">
-                  <span className="text-base select-none">{user.avatar}</span>
-                  <div className="truncate">
-                    <span className={`font-medium truncate block ${getGenderColor(user.gender)}`}>
-                      {user.nickname}
-                      <GenderBadge gender={user.gender} />
+                <div className="p-2.5 rounded-xl bg-violet-950/30 border border-violet-900/50 shadow-sm">
+                  <div className="flex items-center justify-between gap-1.5 mb-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-lg select-none shrink-0">{user.avatar || '👤'}</span>
+                      <span className={`font-bold truncate text-sm ${getGenderColor(user.gender)}`}>
+                        {user.nickname}
+                      </span>
+                    </div>
+                    <GenderBadge gender={user.gender} />
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-violet-300 pt-1 border-t border-violet-900/30">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>You ({user.isGuest ? 'Guest' : 'Member'})</span>
                     </span>
-                    <span className="text-[10px] text-violet-300">You ({user.isGuest ? 'Guest' : 'Member'})</span>
+                    <span className="font-mono text-[9px] uppercase tracking-wider text-violet-400">Online</span>
                   </div>
                 </div>
 
@@ -755,17 +790,23 @@ export const PublicChatPage: React.FC = () => {
                   .map((member) => (
                     <div
                       key={member.id}
-                      className="flex items-center gap-2 p-2 rounded-lg bg-[#101729] border border-slate-800/80"
+                      className="p-2.5 rounded-xl bg-[#101729] hover:bg-[#141d33] border border-slate-800/80 transition-colors"
                     >
-                      <span className="text-base select-none">{member.avatar}</span>
-                      <div className="truncate">
-                        <span className={`font-medium truncate block ${getGenderColor(member.gender)}`}>
-                          {member.nickname}
-                          <GenderBadge gender={member.gender} />
+                      <div className="flex items-center justify-between gap-1.5 mb-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-lg select-none shrink-0">{member.avatar || '👤'}</span>
+                          <span className={`font-semibold truncate text-xs ${getGenderColor(member.gender)}`}>
+                            {member.nickname}
+                          </span>
+                        </div>
+                        <GenderBadge gender={member.gender} />
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/50">
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                          <span>{member.isGuest ? 'Guest Session' : 'Member'}</span>
                         </span>
-                        <span className="text-[10px] text-slate-500">
-                          {member.isGuest ? 'Guest Session' : 'Member'}
-                        </span>
+                        <span className="font-mono text-[9px] uppercase tracking-wider text-slate-500">Active</span>
                       </div>
                     </div>
                   ))}

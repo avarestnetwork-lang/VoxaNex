@@ -13,7 +13,6 @@ import {
   ShieldAlert,
   Bell,
   Sliders,
-  LogOut,
   Save,
   CheckCircle,
   Clock,
@@ -217,19 +216,6 @@ export const ProfileSettingsPage: React.FC = () => {
           <Button variant="outline" size="sm" onClick={handleExportData} disabled={exporting}>
             <Download className="w-4 h-4 mr-1.5 text-cyan-400" />
             <span>{exporting ? 'Exporting...' : 'Export Data (JSON)'}</span>
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              logout();
-              navigate('/');
-            }}
-            className="text-rose-400 hover:border-rose-800"
-          >
-            <LogOut className="w-4 h-4 mr-1.5" />
-            <span>{language === 'bn' ? 'লগআউট' : 'Reset Session'}</span>
           </Button>
         </div>
       </div>

@@ -18,7 +18,8 @@ export const AuthPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
-  const [adultConfirmed, setAdultConfirmed] = useState(false);
+  const [selfReportedAge, setSelfReportedAge] = useState<string>('21');
+  const [adultConfirmed, setAdultConfirmed] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -42,9 +43,16 @@ export const AuthPage: React.FC = () => {
       return;
     }
 
-    if (isTargetAdult && !adultConfirmed) {
-      setErrorMsg('You must confirm you are 18 or older to join adult chatrooms.');
-      return;
+    if (isTargetAdult && mode === 'register') {
+      const ageNum = parseInt(selfReportedAge, 10);
+      if (isNaN(ageNum) || ageNum < 18) {
+        setErrorMsg('Self-reported age is required. You must be 18 or older to join adult chatrooms. Minors are strictly prohibited.');
+        return;
+      }
+      if (!adultConfirmed) {
+        setErrorMsg('You must confirm under penalty of platform ban that you are 18 years of age or older.');
+        return;
+      }
     }
 
     setLoading(true);
@@ -221,14 +229,38 @@ export const AuthPage: React.FC = () => {
           </div>
 
           {isTargetAdult && (
-            <div className="p-3.5 rounded-xl border border-rose-950 bg-rose-950/20 space-y-2">
-              <div className="flex items-center gap-1.5 text-rose-300 text-xs font-semibold">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                <span>18+ Age Eligibility Requirement</span>
+            <div className="p-3.5 rounded-xl border border-rose-950 bg-rose-950/20 space-y-2.5">
+              <div className="flex items-center justify-between text-rose-300 text-xs font-semibold">
+                <div className="flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>18+ Age Eligibility Requirement</span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-rose-900/40 border border-rose-800 text-rose-300 font-mono">
+                  18+ Verified
+                </span>
               </div>
               <p className="text-[11px] text-slate-300 leading-relaxed">
                 Self-reported age is required. You must be 18 or older to join adult chatrooms. Minors are strictly prohibited.
               </p>
+
+              {mode === 'register' && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                    Self-Reported Age (Years)
+                  </label>
+                  <input
+                    type="number"
+                    min={18}
+                    max={120}
+                    required
+                    value={selfReportedAge}
+                    onChange={(e) => setSelfReportedAge(e.target.value)}
+                    className="w-full bg-[#101729] border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-rose-500"
+                    placeholder="18+"
+                  />
+                </div>
+              )}
+
               <label className="flex items-start gap-2.5 cursor-pointer pt-1">
                 <input
                   type="checkbox"
