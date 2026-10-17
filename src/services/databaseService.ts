@@ -138,7 +138,7 @@ export const databaseService = {
     console.log(`[VX-RT] Attempting Supabase subscription: ${channelName} for room ${roomId}`);
     
     const channel = supabase
-      .channel(channelName)
+      .channel(channelName, { config: { broadcast: { self: true } } })
       .on(
         'postgres_changes',
         {
@@ -149,7 +149,7 @@ export const databaseService = {
         },
         (payload: any) => {
           const row = payload?.new;
-          console.log(`[VX-RT] Event received for room ${roomId}:`, row);
+          console.log(`[VX-RT] INSERT event received for channel ${channelName}, room ${roomId}:`, row?.id);
           if (row && row.room_id === roomId) {
             onMessage({
               id: row.id,
@@ -164,7 +164,7 @@ export const databaseService = {
         }
       )
       .subscribe((status, err) => {
-        console.log(`[VX-RT] Subscription status for room ${roomId}: ${status}`, err || '');
+        console.log(`[VX-RT] Subscription status for channel ${channelName} (room ${roomId}): ${status}`, err || '');
       });
 
     return () => {
