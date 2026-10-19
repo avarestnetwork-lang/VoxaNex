@@ -1,5 +1,5 @@
 /**
- * VoxaNex Cloudflare Workers Edge Entrypoint
+ * ChatLustora Cloudflare Workers Edge Entrypoint
  * Handles full-featured Edge SSE streaming, message persistence, presence tracking,
  * guest session authorization, and falls back to static assets.
  */
@@ -713,7 +713,7 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({
         success: true,
-        message: 'Endpoint acknowledged by VoxaNex Edge Worker',
+        message: 'Endpoint acknowledged by ChatLustora Edge Worker',
         path: url.pathname,
       });
     }

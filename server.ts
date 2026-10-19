@@ -1473,6 +1473,14 @@ async function startServer() {
     cleanupExpiredSessions();
   }, 15 * 60 * 1000);
 
+  // Serve robots.txt and sitemap.xml
+  app.get('/robots.txt', (req, res) => {
+    res.sendFile(path.resolve(__dirname, 'public', 'robots.txt'));
+  });
+  app.get('/sitemap.xml', (req, res) => {
+    res.type('application/xml').sendFile(path.resolve(__dirname, 'public', 'sitemap.xml'));
+  });
+
   // ---------------------------------------------------------------------------
   // VITE DEV MIDDLEWARE
   // ---------------------------------------------------------------------------
@@ -1490,11 +1498,11 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[VoxaNex Backend] Server operational on http://0.0.0.0:${PORT}`);
+    console.log(`[ChatLustora Backend] Server operational on http://0.0.0.0:${PORT}`);
   });
 }
 
 startServer().catch((err) => {
-  console.error('[VoxaNex Backend] Fatal startup error:', err);
+  console.error('[ChatLustora Backend] Fatal startup error:', err);
   process.exit(1);
 });

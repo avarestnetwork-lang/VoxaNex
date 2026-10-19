@@ -16,15 +16,17 @@ export const Footer: React.FC = () => {
           {/* Col 1: Logo & Summary */}
           <div className="space-y-4 md:col-span-1">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-orange-500 text-white flex items-center justify-center font-bold shadow-md shadow-orange-500/20">
-                <MessageSquare className="w-4 h-4 fill-white text-orange-500" />
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-rose-600 to-orange-500 text-white flex items-center justify-center font-bold shadow-md shadow-rose-500/20">
+                <MessageSquare className="w-4 h-4 fill-white text-rose-500" />
               </div>
-              <span className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">VoxaNex</span>
+              <span className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">
+                Chat<span className="text-rose-600 dark:text-rose-400">Lustora</span>
+              </span>
             </div>
             <p className="text-slate-600 dark:text-slate-400 text-xs leading-relaxed">
               {language === 'bn' 
-                ? 'বিনামূল্যে প্রাপ্তবয়স্কদের চ্যাট রুম, কোনো রেজিস্ট্রেশন প্রয়োজন নেই। বিশ্বজুড়ে অপরিচিতদের সাথে টেক্সট, ভয়েস এবং ওয়েবক্যাম চ্যাট।'
-                : 'Free adult chat rooms, no registration. Text, voice and webcam chat with strangers worldwide, moderated around the clock.'}
+                ? '১৮+ প্রাপ্তবয়স্কদের জন্য বাংলা ও দেশি চ্যাট, ডেটিং এবং প্রাইভেট মেসেজিং। কোনো রেজিস্ট্রেশন ছাড়াই সম্পূর্ণ নিরাপদ ও সার্বক্ষণিক মডারেটেড।'
+                : '18+ adult chat and dating community for Bengali, Desi, and international adults. Real-time public rooms, private messaging, and respectful flirting without registration.'}
             </p>
             <div className="flex items-center gap-3 pt-1">
               <button onClick={() => navigate('/safety')} className="w-7 h-7 rounded bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700 cursor-pointer">
@@ -45,12 +47,12 @@ export const Footer: React.FC = () => {
               {language === 'bn' ? 'কমিউনিটি' : 'Community'}
             </h4>
             <ul className="space-y-2">
-              <li><button onClick={() => navigate('/forum')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'ফোরাম' : 'Forum'}</button></li>
-              <li><button onClick={() => navigate('/blog')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'ব্লগ' : 'Blog'}</button></li>
-              <li><button onClick={() => navigate('/rooms')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'এক্সপ্লোর' : 'Explore'}</button></li>
-              <li><button onClick={() => navigate('/safety')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'ট্যাগ' : 'Tags'}</button></li>
-              <li><button onClick={() => navigate('/profile')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'ব্যাজ' : 'Badges'}</button></li>
-              <li><button onClick={() => navigate('/chat')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'ইউটিউব চ্যাটে' : 'YouTube in Chat'}</button></li>
+              <li><button onClick={() => navigate('/rooms')} className="hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer">{language === 'bn' ? 'চ্যাট রুমসমূহ' : 'Chat Rooms'}</button></li>
+              <li><button onClick={() => navigate('/dating')} className="hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer font-semibold text-rose-600 dark:text-rose-400">{language === 'bn' ? 'ডেটিং ও ফ্লার্টিং' : 'Dating & Flirting'}</button></li>
+              <li><button onClick={() => navigate('/messages')} className="hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer">{language === 'bn' ? 'ব্যক্তিগত বার্তা' : 'Private Messages'}</button></li>
+              <li><button onClick={() => navigate('/forum')} className="hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer">{language === 'bn' ? 'ফোরাম' : 'Forum'}</button></li>
+              <li><button onClick={() => navigate('/blog')} className="hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer">{language === 'bn' ? 'ব্লগ ও গাইড' : 'Blog & Guides'}</button></li>
+              <li><button onClick={() => navigate('/safety')} className="hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer">{language === 'bn' ? 'নিরাপত্তা নির্দেশিকা' : 'Safety Guidelines'}</button></li>
             </ul>
           </div>
 
@@ -121,7 +123,7 @@ export const Footer: React.FC = () => {
 
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4 text-slate-500 dark:text-slate-400">
-          <div>© 2026 VoxaNex. {language === 'bn' ? 'সর্বস্বত্ব সংরক্ষিত।' : 'All rights reserved.'}</div>
+          <div>© 2026 ChatLustora.com. {language === 'bn' ? 'সর্বস্বত্ব সংরক্ষিত।' : 'All rights reserved.'}</div>
           <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300">
             <span className="bg-red-600 text-white font-bold px-1.5 py-0.5 rounded text-[10px]">18+ only</span>
             <span>{language === 'bn' ? 'শুধুমাত্র প্রাপ্তবয়স্কদের জন্য। ১৮ বছরের কম হলে প্রস্থান করুন।' : 'Adults only. Leave now if you are under 18.'}</span>

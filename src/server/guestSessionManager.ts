@@ -155,18 +155,9 @@ export function validateGuestToken(token: string): {
     const sigBuf = Buffer.from(signature);
     const expBuf = Buffer.from(expectedSig);
     if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-      // Graceful fallback instead of strict block on server restart/salt mismatch
       return {
-        valid: true,
-        session: {
-          id: `guest_${Date.now()}`,
-          nickname: 'Guest_User',
-          avatar: '⚡',
-          languagePref: 'en',
-          is18Verified: false,
-          issuedAt: Date.now(),
-          expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-        },
+        valid: false,
+        reason: 'Invalid token signature',
       };
     }
 
@@ -192,16 +183,8 @@ export function validateGuestToken(token: string): {
     };
   } catch {
     return {
-      valid: true,
-      session: {
-        id: `guest_${Date.now()}`,
-        nickname: 'Guest_User',
-        avatar: '⚡',
-        languagePref: 'en',
-        is18Verified: false,
-        issuedAt: Date.now(),
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      },
+      valid: false,
+      reason: 'Malformed guest token payload',
     };
   }
 }

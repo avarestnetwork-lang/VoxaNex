@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
+import { SEOHead } from '../components/common/SEOHead';
 import {
   MessageSquare,
   Shuffle,
@@ -203,66 +204,96 @@ export const LandingPage: React.FC = () => {
     {
       q: language === 'bn' ? 'এটি কি বিনামূল্যে এবং নিবন্ধন কি বাধ্যতামূলক?' : 'Is it free, and do I have to register?',
       a: language === 'bn'
-        ? 'হ্যাঁ, ভক্সানেক্স সম্পূর্ণ বিনামূল্যে ব্যবহার করা যায়। পাবলিক চ্যাট রুম বা র‍্যান্ডম ম্যাচিংয়ের জন্য কোনো নিবন্ধনের প্রয়োজন নেই; কেবল একটি নিকনেম বেছে নিয়ে চ্যাট শুরু করুন।'
-        : 'Yes, VoxaNex is completely free to use. No registration is required to join public chat rooms or use random matching; simply pick a nickname and start chatting immediately.'
+        ? 'হ্যাঁ, চ্যাটলাস্টোরা (ChatLustora) সম্পূর্ণ বিনামূল্যে ব্যবহার করা যায়। পাবলিক চ্যাট রুম বা ১-অন-১ প্রাইভেট চ্যাটের জন্য কোনো বাধ্যতামূলক নিবন্ধনের প্রয়োজন নেই; কেবল একটি নিকনেম বেছে নিয়ে নিরাপদে চ্যাট শুরু করুন।'
+        : 'Yes, ChatLustora is completely free to use. No registration is required to join public chat rooms or private direct messaging; simply pick a nickname and start chatting immediately.'
     },
     {
       q: language === 'bn' ? 'আমার বয়স কত হতে হবে?' : 'How old do I have to be?',
       a: language === 'bn'
-        ? 'প্রাপ্তবয়স্কদের রুম, ভিডিও চ্যাট এবং ম্যাচিউর আলোচনায় প্রবেশের জন্য আপনার বয়স কমপক্ষে ১৮ বছর হতে হবে।'
-        : 'You must be at least 18 years old to access adult rooms, video chat, and mature discussion spaces on VoxaNex. Age verification is enforced upon entering adult sections.'
+        ? 'চ্যাটলাস্টোরার সমস্ত প্রাপ্তবয়স্ক রুম, ডেটিং ফিচার এবং প্রাইভেট মেসেজিংয়ে প্রবেশের জন্য আপনার বয়স কমপক্ষে ১৮ বছর হতে হবে। ১৮ বছরের কম বয়সীদের প্রবেশ সম্পূর্ণ নিষিদ্ধ।'
+        : 'You must be at least 18 years old to access adult rooms, dating features, and private messaging spaces on ChatLustora. Strict 18+ verification applies.'
     },
     {
       q: language === 'bn' ? 'আমি কি মোবাইল ফোনে এটি ব্যবহার করতে পারি?' : 'Can I use it on a phone?',
       a: language === 'bn'
-        ? 'হ্যাঁ, ভক্সানেক্স রেসপন্সিভ HTML5 প্রযুক্তিতে তৈরি যা অ্যান্ড্রয়েড, আইফোন এবং ট্যাবলেটের ব্রাউজারে অ্যাপ ইনস্টল ছাড়াই চলে।'
-        : 'Yes, VoxaNex is built with responsive HTML5 technology that works seamlessly in mobile browsers on Android, iPhone, and tablets with zero downloads or app installs required.'
+        ? 'হ্যাঁ, ChatLustora রেসপন্সিভ HTML5 প্রযুক্তিতে তৈরি যা অ্যান্ড্রয়েড, আইফোন এবং ট্যাবলেটের ব্রাউজারে অ্যাপ ইনস্টল ছাড়াই স্বাচ্ছন্দ্যে চলে।'
+        : 'Yes, ChatLustora is built with modern responsive HTML5 technology that works seamlessly in mobile browsers on Android, iPhone, and tablets with zero app installs required.'
     },
     {
       q: language === 'bn' ? 'কোন ভাষায় চ্যাট করতে পারব?' : 'Which language should I chat in?',
       a: language === 'bn'
-        ? 'আপনি ইংরেজি, বাংলা, হিন্দি, উর্দু, জার্মান এবং অন্যান্য ২০টিরও বেশি আঞ্চলিক ও আন্তর্জাতিক ভাষার রুমে চ্যাট করতে পারেন।'
-        : 'You can chat in English, Bangla, Hindi, Urdu, German, and over 20 other regional and international language rooms tailored to your community preferences.'
+        ? 'আপনি বাংলা, ইংরেজি, হিন্দি, উর্দু এবং অন্যান্য আঞ্চলিক ও আন্তর্জাতিক ভাষার রুমে অবাধে চ্যাট ও ফ্লার্টিং করতে পারেন।'
+        : 'You can chat in Bangla, English, Hindi, Urdu, and over 20 other regional and international language rooms tailored to Desi and global communities.'
     },
     {
-      q: language === 'bn' ? 'কী ধরনের ছবি শেয়ার করা যাবে?' : 'What kind of pictures can I send?',
+      q: language === 'bn' ? 'কী ধরনের ছবি বা বার্তা শেয়ার করা যাবে?' : 'What kind of pictures can I send?',
       a: language === 'bn'
-        ? 'পাবলিক ও প্রাইভেট চ্যাটে শেয়ারকৃত ছবি আমাদের কঠোর কমিউনিটি মান ও নিরাপত্তা নীতি মেনে চলতে হবে।'
-        : 'Images shared in public and private chats must adhere to our strict community standards and safety policies. Unsolicited explicit media in general rooms is prohibited.'
+        ? 'পাবলিক ও প্রাইভেট চ্যাটে শেয়ারকৃত কন্টেন্ট পারস্পরিক সম্মতি এবং আমাদের কঠোর কমিউনিটি মান ও নিরাপত্তা নীতি মেনে চলতে হবে। অনুমতিহীন স্প্যাম বা হয়রানি নিষিদ্ধ।'
+        : 'Content shared must adhere to mutual consent and our community guidelines. Harassment, spam, and non-consensual media sharing result in immediate permanent bans.'
     },
   ];
 
   return (
-    <div className="bg-[#F8FAFC] dark:bg-slate-950 text-[#0F172A] dark:text-slate-100 min-h-screen font-sans selection:bg-orange-500 selection:text-white transition-colors">
+    <div className="bg-[#F8FAFC] dark:bg-slate-950 text-[#0F172A] dark:text-slate-100 min-h-screen font-sans selection:bg-rose-500 selection:text-white transition-colors">
+      <SEOHead
+        title="ChatLustora – Bangla & Desi Adult Chat, Dating and Private Messaging"
+        description="Discover ChatLustora, an 18+ chat and dating community for adults interested in Bangla and desi chat, private messaging, flirting and meeting new people online. Connect respectfully and protect your privacy."
+        canonicalPath="/"
+        jsonLd={{
+          '@context': 'https://schema.org',
+          '@type': 'WebSite',
+          name: 'ChatLustora',
+          url: 'https://chatlustora.com',
+          description: 'Bangla & Desi Adult Chat, Dating and Private Messaging Community for adults aged 18+.',
+        }}
+      />
+
       {/* Hero Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-16">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           {/* Left Hero Column */}
           <div className="lg:col-span-7 space-y-6 pt-4">
             {/* Open 24/7 Pill */}
-            <div className="inline-flex items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 px-3.5 py-1.5 rounded-full">
-              <span className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
-              <span>{t.landing.openPill}</span>
+            <div className="inline-flex items-center gap-2 text-xs font-semibold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 px-3.5 py-1.5 rounded-full">
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+              <span>{language === 'bn' ? '১৮+ প্রাপ্তবয়স্ক কমিউনিটি · ২৪/৭ লাইভ' : '18+ Adult Community · Open 24/7'}</span>
             </div>
 
-            {/* Headline */}
+            {/* Suggested Phase 5.A H1 */}
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-[#0F172A] dark:text-white leading-[1.12]">
-              {t.landing.headline}
+              {language === 'bn' ? (
+                <>
+                  প্রাপ্তবয়স্কদের জন্য <span className="text-rose-600 dark:text-rose-400">বাংলা ও দেশি চ্যাট</span>
+                </>
+              ) : (
+                <>
+                  Bangla & Desi <span className="text-rose-600 dark:text-rose-400">Chat for Adults</span>
+                </>
+              )}
             </h1>
 
-            {/* Description */}
+            {/* Suggested Phase 5.A Introduction */}
             <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed max-w-2xl">
-              {t.landing.sub}
+              {language === 'bn'
+                ? 'চ্যাটলাস্টোরায় (ChatLustora) স্বাগতম — প্রাপ্তবয়স্কদের চ্যাট, ফ্লার্টিং এবং সংযোগ স্থাপনের আধুনিক স্থান। বাংলা চ্যাট, বাঙালি আড্ডা, দেশি চ্যাট কমিউনিটি এবং প্রাইভেট মেসেজিং উপভোগ করুন এক প্ল্যাটফর্মে। নতুন মানুষের সাথে পরিচিত হোন, আড্ডায় যোগ দিন এবং একটি সম্মানজনক, প্রাপ্তবয়স্কদের উপযুক্ত পরিবেশে সংযোগ আবিষ্কার করুন। উপলব্ধ সুবিধাসমূহ চ্যাটলাস্টোরার বর্তমান পরিষেবার ওপর নির্ভরশীল। ব্যবহারকারীদের অবশ্যই ১৮ বা তার বেশি বয়সী হতে হবে।'
+                : 'Welcome to ChatLustora — a place for adults to chat, flirt and connect. Explore Bangla chat, Bengali conversations, desi chat communities and private messaging in one convenient platform. Meet new people, join conversations and discover connections in a respectful, adults-only environment. Available features depend on the services currently offered by ChatLustora. Users must be 18 or older.'}
             </p>
 
-            {/* CTA Button */}
-            <div>
+            {/* CTA Buttons */}
+            <div className="flex flex-wrap items-center gap-3 pt-1">
               <button
                 onClick={() => navigate('/rooms')}
-                className="inline-flex items-center justify-center bg-[#FF7A00] hover:bg-[#E06D00] text-white text-lg font-bold px-8 py-4 rounded-xl shadow-lg shadow-orange-500/25 transition-all transform hover:-translate-y-0.5 cursor-pointer"
+                className="inline-flex items-center justify-center bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white text-base sm:text-lg font-bold px-7 py-3.5 rounded-xl shadow-lg shadow-rose-600/25 transition-all transform hover:-translate-y-0.5 cursor-pointer"
               >
-                <span>{t.landing.startChatting}</span>
+                <span>{language === 'bn' ? 'চ্যাট রুমে প্রবেশ করুন' : 'Enter Public Rooms'}</span>
                 <ArrowRight className="w-5 h-5 ml-2" />
+              </button>
+              <button
+                onClick={() => navigate('/dating')}
+                className="inline-flex items-center justify-center bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-base font-bold px-6 py-3.5 rounded-xl transition-all cursor-pointer"
+              >
+                <Heart className="w-4 h-4 mr-2 text-rose-500 fill-rose-500" />
+                <span>{language === 'bn' ? 'ডেটিং ও ফ্লার্টিং' : 'Dating & Flirting'}</span>
               </button>
             </div>
 

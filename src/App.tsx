@@ -30,6 +30,7 @@ import { HelpPage } from './pages/HelpPage';
 import { FaqPage } from './pages/FaqPage';
 import { SitemapPage } from './pages/SitemapPage';
 import { IndianChatLandingPage } from './pages/IndianChatLandingPage';
+import { DatingLandingPage } from './pages/DatingLandingPage';
 
 const AppRoutes: React.FC = () => {
   const { currentRoute } = useRouter();
@@ -38,7 +39,7 @@ const AppRoutes: React.FC = () => {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="text-slate-500">Loading VoxaNex...</div>
+        <div className="text-slate-500 font-medium">Loading ChatLustora...</div>
       </div>
     );
   }
@@ -89,6 +90,8 @@ const AppRoutes: React.FC = () => {
         return <SitemapPage />;
       case '/chat/indian':
         return <IndianChatLandingPage />;
+      case '/dating':
+        return <DatingLandingPage />;
       default:
         return <LandingPage />;
     }

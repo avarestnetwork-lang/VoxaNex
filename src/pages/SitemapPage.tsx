@@ -1,6 +1,7 @@
 import React from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLanguage } from '../context/LanguageContext';
+import { SEOHead } from '../components/common/SEOHead';
 
 export const SitemapPage: React.FC = () => {
   const { navigate } = useRouter();
@@ -9,7 +10,8 @@ export const SitemapPage: React.FC = () => {
   const routes = [
     { name: language === 'bn' ? 'হোম' : 'Home', path: '/' },
     { name: language === 'bn' ? 'রুম ডিরেক্টরি' : 'Room Directory', path: '/rooms' },
-    { name: language === 'bn' ? 'র‍্যান্ডম সঙ্গী' : 'Random Partner', path: '/random' },
+    { name: language === 'bn' ? 'ডেটিং ও ফ্লার্টিং' : 'Dating & Flirting', path: '/dating' },
+    { name: language === 'bn' ? 'র‍্যান্ডম পার্টনার' : 'Random Partner Roulette', path: '/random' },
     { name: language === 'bn' ? 'ভয়েস ও ভিডিও' : 'Voice & Video', path: '/av-chat' },
     { name: language === 'bn' ? 'ফোরাম' : 'Forum', path: '/forum' },
     { name: language === 'bn' ? 'ব্লগ' : 'Blog', path: '/blog' },
@@ -23,6 +25,11 @@ export const SitemapPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-12 px-4 sm:px-6 lg:px-8 transition-colors">
+      <SEOHead
+        title={language === 'bn' ? 'সাইটম্যাপ – ChatLustora' : 'HTML Sitemap & Public Navigation – ChatLustora'}
+        description="Public navigation sitemap of ChatLustora. Easily discover adult chatrooms, Bengali community lounges, dating information, and safety guidelines."
+        canonicalPath="/sitemap"
+      />
       <div className="max-w-4xl mx-auto space-y-10">
         <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight text-center">
           {language === 'bn' ? 'সাইটম্যাপ' : 'Sitemap'}
@@ -33,7 +40,7 @@ export const SitemapPage: React.FC = () => {
               <li key={idx}>
                 <button
                   onClick={() => navigate(route.path)}
-                  className="text-slate-600 dark:text-slate-300 hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer"
+                  className="text-slate-600 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer text-sm font-medium"
                 >
                   {route.name}
                 </button>

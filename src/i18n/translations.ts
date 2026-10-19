@@ -1,10 +1,10 @@
 export const translations = {
   en: {
     brand: {
-      name: 'VoxaNex',
-      tagline: 'Connect Freely. Talk Beyond Boundaries.',
-      description: 'A modern, privacy-first communication platform offering public rooms, random 1-on-1 matchmaking, and crystal-clear voice/video chat for Bangladesh and international communities.',
-      copyright: 'VoxaNex Platform. All rights reserved.',
+      name: 'ChatLustora',
+      tagline: 'Bangla & Desi Adult Chat, Dating and Private Messaging',
+      description: 'An 18+ adult chat and dating community for Bengali, Desi, and international adults. Discover respectful public rooms, one-on-one private messaging, flirting, and live online connections.',
+      copyright: 'ChatLustora.com. All rights reserved.',
     },
     nav: {
       home: 'Home',
@@ -214,10 +214,10 @@ export const translations = {
   },
   bn: {
     brand: {
-      name: 'ভক্সানেক্স (VoxaNex)',
-      tagline: 'মুক্তভাবে যুক্ত হন। সীমানার ওপারে কথা বলুন।',
-      description: 'একটি আধুনিক এবং গোপনীয়তাকেন্দ্রিক যোগাযোগ প্ল্যাটফর্ম যা বাংলাদেশ এবং আন্তর্জাতিক সম্প্রদায়ের জন্য পাবলিক রুম, র‍্যান্ডম ১-অন-১ চ্যাট এবং ভয়েস/ভিডিও সুবিধা প্রদান করে।',
-      copyright: 'ভক্সানেক্স প্ল্যাটফর্ম। সর্বস্বত্ব সংরক্ষিত।',
+      name: 'চ্যাটলাস্টোরা (ChatLustora)',
+      tagline: 'বাংলা ও দেশি প্রাপ্তবয়স্ক চ্যাট, ডেটিং ও ব্যক্তিগত মেসেজিং',
+      description: '১৮+ প্রাপ্তবয়স্কদের জন্য বাংলা, দেশি এবং দক্ষিণ এশিয়ান চ্যাট ও ডেটিং কমিউনিটি। পাবলিক গ্রুপ রুম, ১-অন-১ প্রাইভেট মেসেজিং এবং লাইভ নিরাপদ কানেকশন।',
+      copyright: 'চ্যাটলাস্টোরা (ChatLustora.com)। সর্বস্বত্ব সংরক্ষিত।',
     },
     nav: {
       home: 'হোম',
@@ -379,14 +379,14 @@ export const translations = {
     },
     safety: {
       title: 'নিরাপত্তা, সম্মতি ও আস্থা কেন্দ্র',
-      subtitle: 'ভক্সানেক্স একটি সুরক্ষিত ও সম্মানজনক পরিবেশ বজায় রাখতে কঠোর গোপনীয়তা এবং স্বচ্ছ নীতি অনুসরণ করে।',
+      subtitle: 'চ্যাটলাস্টোরা (ChatLustora) একটি সুরক্ষিত ও সম্মানজনক পরিবেশ বজায় রাখতে কঠোর গোপনীয়তা এবং স্বচ্ছ নীতি অনুসরণ করে।',
       reportHeading: 'জরুরি অভিযোগ দাখিল করুন',
       emergencyTitle: 'জরুরি হেল্পলাইন ও সাহায্য (বাংলাদেশ ও আন্তর্জাতিক)',
       guidelinesTitle: 'কমিউনিটি আচরণবিধি',
       guidelinesDesc: 'ঘৃণাত্মক বক্তব্য, সাইবার বুলিং, ব্ল্যাকমেইল বা অনুমতিহীন ব্যক্তিগত তথ্য প্রকাশ করা সম্পূর্ণ নিষিদ্ধ।',
     },
     forum: {
-      title: 'ভক্সানেক্স কমিউনিটি ফোরাম',
+      title: 'চ্যাটলাস্টোরা কমিউনিটি ফোরাম',
       subtitle: 'প্রযুক্তি, সংস্কৃতি, বাংলিশ ভাষার ব্যবহার, আঞ্চলিক মিলনমেলা ও পরামর্শ নিয়ে আলোচনা করুন।',
       newTopicBtn: 'নতুন আলোচনা শুরু করুন',
       searchPlaceholder: 'আলোচনা খুঁজুন...',

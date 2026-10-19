@@ -22,7 +22,8 @@ export type AppRoute =
   | '/help'
   | '/faq'
   | '/sitemap'
-  | '/chat/indian';
+  | '/chat/indian'
+  | '/dating';
 
 interface RouterContextType {
   currentRoute: AppRoute;

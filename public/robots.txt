@@ -1,0 +1,24 @@
+User-agent: *
+Allow: /
+Allow: /rooms
+Allow: /dating
+Allow: /chat/indian
+Allow: /safety
+Allow: /privacy
+Allow: /terms
+Allow: /about
+Allow: /contact
+Allow: /help
+Allow: /faq
+Allow: /sitemap
+
+# Disallow private user messages, endpoints, and admin dashboards
+Disallow: /api/
+Disallow: /messages
+Disallow: /profile
+Disallow: /admin
+Disallow: /auth
+Disallow: /age-gate
+Disallow: /guest-entry
+
+Sitemap: https://chatlustora.com/sitemap.xml

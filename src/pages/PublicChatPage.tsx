@@ -18,6 +18,7 @@ import { UserProfileModal } from '../components/chat/UserProfileModal';
 import { PrivateChatPane } from '../components/chat/PrivateChatPane';
 import { safetyService } from '../services/safetyService';
 import { Button } from '../components/ui/Button';
+import { SEOHead } from '../components/common/SEOHead';
 import {
   messagingService,
   RealtimePresenceMember,
@@ -690,6 +691,12 @@ export const PublicChatPage: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 py-4 h-[calc(100vh-5.5rem)] min-h-[580px] flex flex-col">
+      <SEOHead
+        title={`${activeRoom.name[language] || activeRoom.name.en} – ChatLustora`}
+        description={`Real-time adult public group chat and live conversations in ${activeRoom.name[language] || activeRoom.name.en} on ChatLustora.`}
+        canonicalPath="/chat"
+        noindex={true}
+      />
       {/* Top Navigation & Channel Header Bar */}
       <div className="p-3 rounded-t-2xl border border-slate-800 bg-[#0c1222] flex items-center justify-between gap-3 shrink-0 shadow-lg">
         {/* Left: Brand/Room info & Switcher tabs */}

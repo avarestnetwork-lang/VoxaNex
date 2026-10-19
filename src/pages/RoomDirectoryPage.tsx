@@ -7,6 +7,7 @@ import { Room, RoomCategory, CommunicationMode } from '../types';
 import { communityService } from '../services/communityService';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
+import { SEOHead } from '../components/common/SEOHead';
 import {
   Compass,
   Search,
@@ -122,10 +123,30 @@ export const RoomDirectoryPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-12 px-4 sm:px-6 lg:px-8 transition-colors">
+      <SEOHead
+        title={
+          language === 'bn'
+            ? 'বাংলা ও দেশি চ্যাট রুম ডিরেক্টরি – ChatLustora'
+            : 'Bengali & Desi Chat Rooms – Adult Community Directory | ChatLustora'
+        }
+        description={
+          language === 'bn'
+            ? 'চ্যাটলাস্টোরার উন্মুক্ত চ্যাট রুম ডিরেক্টরি। বাংলা চ্যাট রুম, সেক্স চ্যাট, প্রাপ্তবয়স্ক আড্ডা, হিন্দি চ্যাট ও বাংলাদেশি আঞ্চলিক কমিউনিটি।'
+            : 'Explore public adult chat rooms on ChatLustora. Join Bengali chat room, Bangla chat community, Desi chat rooms, Hindi chat, and online chat in Bangladesh.'
+        }
+        canonicalPath="/rooms"
+        jsonLd={{
+          '@context': 'https://schema.org',
+          '@type': 'ItemList',
+          name: 'ChatLustora Public Chat Rooms',
+          description: 'Catalog of 18+ adult chatrooms and language lounges.',
+          numberOfItems: rooms.length,
+        }}
+      />
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Directory Header */}
         <div className="text-center sm:text-left space-y-3">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-orange-500 text-white shadow-xl shadow-orange-500/20 mb-1">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-rose-600 to-orange-500 text-white shadow-xl shadow-rose-500/20 mb-1">
             <Compass className="w-7 h-7 text-white" />
           </div>
           <div className="flex items-center gap-2 text-xs font-semibold text-orange-600 dark:text-orange-400 tracking-wider uppercase">

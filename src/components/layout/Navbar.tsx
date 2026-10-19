@@ -18,6 +18,7 @@ import {
   Sun,
   Moon,
   Monitor,
+  Heart,
 } from 'lucide-react';
 import { useRouter } from '../../context/RouterContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -47,6 +48,7 @@ export const Navbar: React.FC = () => {
   const navItems = [
     { label: language === 'bn' ? 'হোম' : 'Home', route: '/' },
     { label: language === 'bn' ? 'চ্যাট রুম' : 'Rooms', route: '/rooms' },
+    { label: language === 'bn' ? 'ডেটিং ও ফ্লার্টিং' : 'Dating', route: '/dating' },
     { label: language === 'bn' ? 'সেক্স চ্যাট' : 'Sex Chat', route: '/chat/sex' },
     { label: language === 'bn' ? 'প্রাপ্তবয়স্ক চ্যাট' : 'Adult Chat', route: '/chat/adult' },
     { label: language === 'bn' ? 'ভিডিও চ্যাট' : 'Video Chat', route: '/chat/video' },
@@ -86,12 +88,12 @@ export const Navbar: React.FC = () => {
               onClick={() => handleNav('/')}
               className="flex items-center gap-2.5 text-left group focus:outline-none cursor-pointer"
             >
-              <div className="w-9 h-9 rounded-xl bg-orange-500 text-white flex items-center justify-center font-extrabold shadow-md shadow-orange-500/20 group-hover:bg-orange-600 transition-colors">
-                <MessageSquare className="w-5 h-5 fill-white text-orange-500" />
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-600 to-orange-500 text-white flex items-center justify-center font-extrabold shadow-md shadow-rose-500/25 group-hover:opacity-90 transition-opacity">
+                <MessageSquare className="w-5 h-5 fill-white text-rose-500" />
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                  Voxa<span className="text-orange-600">Nex</span>
+                  Chat<span className="text-rose-600 dark:text-rose-400">Lustora</span>
                 </span>
               </div>
             </button>
@@ -99,7 +101,7 @@ export const Navbar: React.FC = () => {
             {/* 18+ Tag */}
             <button
               onClick={() => handleNav('/age-gate')}
-              className="text-xs font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700 cursor-pointer"
+              className="text-xs font-bold px-2 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors border border-rose-200 dark:border-rose-800 cursor-pointer"
             >
               18+
             </button>
@@ -107,8 +109,12 @@ export const Navbar: React.FC = () => {
 
           {/* Desktop Nav Items */}
           <nav className="hidden lg:flex items-center space-x-1" aria-label="Main Navigation">
-            <button onClick={() => handleNav('/')} className="px-3 py-2 text-sm font-semibold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">Home</button>
-            <button onClick={() => handleNav('/rooms')} className="px-3 py-2 text-sm font-semibold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">Rooms</button>
+            <button onClick={() => handleNav('/')} className="px-3 py-2 text-sm font-semibold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer">Home</button>
+            <button onClick={() => handleNav('/rooms')} className="px-3 py-2 text-sm font-semibold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer">Rooms</button>
+            <button onClick={() => handleNav('/dating')} className="px-3 py-2 text-sm font-semibold rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer flex items-center gap-1.5 font-bold">
+              <Heart className="w-3.5 h-3.5 fill-rose-500" />
+              Dating
+            </button>
             
             {/* Chatrooms Dropdown */}
             <div className="relative group">

@@ -6,6 +6,7 @@ import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { Button } from '../components/ui/Button';
 import { AppLanguage, Room } from '../types';
 import { User, Shuffle, ArrowRight, Check, Lock, Mail, ShieldAlert, AlertTriangle, Sparkles } from 'lucide-react';
+import { SEOHead } from '../components/common/SEOHead';
 
 export const GuestEntryPage: React.FC = () => {
   const { navigate, params } = useRouter();
@@ -57,21 +58,21 @@ export const GuestEntryPage: React.FC = () => {
       return;
     }
 
-    // Strict 18+ enforcement for adult rooms
-    if (targetRoom?.is18Plus && parsedAge < 18) {
+    // Strict 18+ enforcement across ChatLustora adult community
+    if (parsedAge < 18) {
       setGuestError(
         language === 'bn'
-          ? 'এই রুমটি প্রাপ্তবয়স্কদের (১৮+) জন্য নির্ধারিত। আপনার বয়স ১৮ বছরের কম হওয়ায় প্রবেশাধিকার অস্বীকৃত।'
-          : 'This room requires users to be 18 or older. Under-18 access to adult chatrooms is strictly prohibited.'
+          ? 'চ্যাটলাস্টোরা (ChatLustora) শুধুমাত্র ১৮+ প্রাপ্তবয়স্কদের জন্য। আপনার ঘোষিত বয়স ১৮ বছরের কম হওয়ায় প্রবেশাধিকার সম্পূর্ণরূপে নিষিদ্ধ।'
+          : 'ChatLustora is strictly an adult community for users aged 18 and older. Minors are strictly prohibited from entering.'
       );
       return;
     }
 
-    if (targetRoom?.is18Plus && !adultConfirmed) {
+    if (!adultConfirmed) {
       setGuestError(
         language === 'bn'
-          ? 'প্রাপ্তবয়স্ক রুমে প্রবেশের জন্য ১৮+ নিশ্চিতকরণ চেকবাক্সটি সিলেক্ট করুন।'
-          : 'You must confirm you are 18 or older to enter adult rooms.'
+          ? 'চ্যাটলাস্টোরায় প্রবেশের পূর্বে আপনার বয়স ১৮ বা তার বেশি নিশ্চিত করে ঘোষণা দিন।'
+          : 'You must confirm you are 18 years of age or older to enter ChatLustora.'
       );
       return;
     }
@@ -179,18 +180,24 @@ export const GuestEntryPage: React.FC = () => {
           </div>
         )}
 
-        {/* Header */}
+        {/* SEO & Header */}
+        <SEOHead
+          title={language === 'bn' ? 'প্রবেশ ও ১৮+ নিশ্চিতকরণ – ChatLustora' : 'Entry & 18+ Age Gate – ChatLustora'}
+          description="Enter ChatLustora Bangla & Desi adult chatrooms with instant guest access or user account."
+          canonicalPath="/guest-entry"
+          noindex={true}
+        />
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-xl bg-violet-950/60 border border-violet-800/40 flex items-center justify-center text-violet-400 mx-auto">
+          <div className="w-12 h-12 rounded-xl bg-rose-950/60 border border-rose-800/40 flex items-center justify-center text-rose-400 mx-auto">
             <User className="w-6 h-6" />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
-            {language === 'bn' ? 'ভক্সানেক্সে প্রবেশ করুন' : 'Welcome to VoxaNex'}
+            {language === 'bn' ? 'চ্যাটলাস্টোরায় স্বাগতম' : 'Welcome to ChatLustora'}
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-md mx-auto">
             {language === 'bn'
-              ? 'চ্যাটরুমে যোগ দিতে গেস্ট হিসেবে প্রবেশ করুন অথবা আপনার অ্যাকাউন্টে সাইন ইন করুন।'
-              : 'Choose guest access for quick entry or sign in with your registered account.'}
+              ? 'চ্যাটরুমে যোগ দিতে ১৮+ গেস্ট হিসেবে প্রবেশ করুন অথবা আপনার অ্যাকাউন্টে সাইন ইন করুন।'
+              : 'Choose 18+ guest access for instant privacy or sign in with your registered account.'}
           </p>
         </div>
 

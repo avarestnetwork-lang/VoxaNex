@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLanguage } from '../context/LanguageContext';
-import { Mail, Send, CheckCircle2, MessageSquare, Phone, MapPin, AlertCircle } from 'lucide-react';
+import { SEOHead } from '../components/common/SEOHead';
+import { Mail, Send, CheckCircle2, MessageSquare, AlertCircle, Info } from 'lucide-react';
 
 export const ContactPage: React.FC = () => {
   const { navigate } = useRouter();
@@ -26,19 +27,33 @@ export const ContactPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-12 px-4 sm:px-6 lg:px-8 transition-colors">
+      <SEOHead
+        title={
+          language === 'bn'
+            ? 'যোগাযোগ ও সহায়তা – ChatLustora'
+            : 'Contact & Support – ChatLustora'
+        }
+        description={
+          language === 'bn'
+            ? 'চ্যাটলাস্টোরা সহায়তা টিম। সাধারণ জিজ্ঞাসা, নিরাপত্তা রিপোর্ট ও কমিউনিটি সহায়তার জন্য বার্তা পাঠান।'
+            : 'Get in touch with the ChatLustora support and trust team. Send inquiries, report safety concerns, or request platform support.'
+        }
+        canonicalPath="/contact"
+      />
+
       <div className="max-w-4xl mx-auto space-y-10">
         {/* Header */}
         <div className="text-center space-y-3">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-orange-500 text-white shadow-xl shadow-orange-500/20 mb-1">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-600 to-orange-500 text-white shadow-xl shadow-rose-500/20 mb-1">
             <Mail className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            {language === 'bn' ? 'আমাদের সাথে যোগাযোগ করুন' : 'Contact Us'}
+            {language === 'bn' ? 'আমাদের সাথে যোগাযোগ করুন' : 'Contact Support & Inquiries'}
           </h1>
           <p className="text-base text-slate-600 dark:text-slate-400 max-w-xl mx-auto leading-relaxed">
             {language === 'bn'
               ? 'যেকোনো প্রশ্ন, মতামত, বা প্রযুক্তিগত সহায়তার জন্য আমাদের বার্তা পাঠান। আমরা দ্রুত উত্তর দেওয়ার চেষ্টা করি।'
-              : 'Have a question, feedback, or need technical support? Drop us a message and our team will get back to you promptly.'}
+              : 'Have a question, feedback, or need moderation support? Send us a message and our team will review it.'}
           </p>
         </div>
 
@@ -47,30 +62,43 @@ export const ContactPage: React.FC = () => {
           <div className="space-y-6 lg:col-span-1">
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                {language === 'bn' ? 'যোগাযোগের তথ্য' : 'Contact Information'}
+                {language === 'bn' ? 'সহায়তা ও নোটিশ' : 'Support Channels'}
               </h3>
               <div className="space-y-4 text-sm text-slate-600 dark:text-slate-400">
                 <div className="flex items-start gap-3">
-                  <Mail className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
+                  <Mail className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-semibold text-slate-900 dark:text-white block">{language === 'bn' ? 'ইমেইল' : 'Email'}</span>
-                    <span className="text-xs">support@voxanex.com</span>
+                    <span className="font-semibold text-slate-900 dark:text-white block">
+                      {language === 'bn' ? 'অনলাইন টিকিট' : 'Web Support Form'}
+                    </span>
+                    <span className="text-xs">
+                      {language === 'bn' ? 'নিচের ফর্মের মাধ্যমে বার্তা পাঠান' : 'Submit through the contact form'}
+                    </span>
                   </div>
                 </div>
                 <div className="flex items-start gap-3">
-                  <MessageSquare className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
+                  <MessageSquare className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-semibold text-slate-900 dark:text-white block">{language === 'bn' ? 'লাইভ সাপোর্ট' : 'Live Support'}</span>
-                    <span className="text-xs">{language === 'bn' ? '২৪/৭ চ্যাট রুম মডারেশন উপলব্ধ' : '24/7 Room Moderation Available'}</span>
+                    <span className="font-semibold text-slate-900 dark:text-white block">
+                      {language === 'bn' ? 'কমিউনিটি মডারেশন' : 'Community Moderation'}
+                    </span>
+                    <span className="text-xs">
+                      {language === 'bn' ? 'রুমের ভেতরে তাৎক্ষণিক রিপোর্ট অপশন' : 'In-chat user report & block tools'}
+                    </span>
                   </div>
                 </div>
-                <div className="flex items-start gap-3">
-                  <MapPin className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-semibold text-slate-900 dark:text-white block">{language === 'bn' ? 'অফিস' : 'Office'}</span>
-                    <span className="text-xs">VoxaNex Technologies Inc.</span>
-                  </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <Info className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>{language === 'bn' ? 'ডোমেইন ও কনফিগ' : 'Domain Configuration'}</span>
                 </div>
+                <p className="text-[11px] leading-relaxed">
+                  {language === 'bn'
+                    ? 'ChatLustora.com ডোমেইনের নিজস্ব ইমেইল ইনবক্স প্রোডাকশন হোস্টিংয়ের সময় কনফিগার করা হবে।'
+                    : 'Official dedicated domain email routing for ChatLustora.com will be linked upon production DNS verification.'}
+                </p>
               </div>
             </div>
           </div>
@@ -83,12 +111,12 @@ export const ContactPage: React.FC = () => {
                   <CheckCircle2 className="w-10 h-10" />
                 </div>
                 <h3 className="text-2xl font-bold text-slate-900 dark:text-white">
-                  {language === 'bn' ? 'বার্তা সফলভাবে পাঠানো হয়েছে!' : 'Message Sent Successfully!'}
+                  {language === 'bn' ? 'বার্তাটি সফলভাবে পাঠানো হয়েছে!' : 'Message Sent Successfully!'}
                 </h3>
-                <p className="text-slate-600 dark:text-slate-400 max-w-md mx-auto text-sm leading-relaxed">
+                <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto">
                   {language === 'bn'
-                    ? 'আপনার বার্তার জন্য ধন্যবাদ। আমাদের সহায়তা টিম শীঘ্রই আপনার সাথে যোগাযোগ করবে।'
-                    : 'Thank you for reaching out. Our support team has received your message and will respond shortly.'}
+                    ? 'আমাদের সাথে যোগাযোগের জন্য ধন্যবাদ। আমাদের টিম শীঘ্রই আপনার সাথে যোগাযোগ করবে।'
+                    : 'Thank you for reaching out to ChatLustora. Our trust & support team will review your inquiry.'}
                 </p>
                 <div className="pt-4">
                   <button
@@ -98,87 +126,83 @@ export const ContactPage: React.FC = () => {
                       setEmail('');
                       setMessage('');
                     }}
-                    className="px-6 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-semibold rounded-xl shadow-md transition-colors cursor-pointer text-sm"
+                    className="px-6 py-2.5 bg-rose-600 text-white font-semibold text-xs rounded-xl shadow hover:bg-rose-700 transition-colors cursor-pointer"
                   >
-                    {language === 'bn' ? 'অন্য বার্তা পাঠান' : 'Send Another Message'}
+                    {language === 'bn' ? 'আরেকটি বার্তা পাঠান' : 'Send Another Message'}
                   </button>
                 </div>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-6">
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">
-                  {language === 'bn' ? 'আমাদের একটি বার্তা পাঠান' : 'Send Us a Message'}
-                </h3>
-
                 {error && (
-                  <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 text-sm flex items-center gap-3">
-                    <AlertCircle className="w-5 h-5 shrink-0" />
+                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 text-xs rounded-xl flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
                     <span>{error}</span>
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2">
                       {language === 'bn' ? 'আপনার নাম' : 'Your Name'} *
                     </label>
                     <input
                       type="text"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
-                      placeholder={language === 'bn' ? 'আপনার নাম লিখুন' : 'Enter your name'}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all text-sm"
+                      placeholder="e.g. Arif Hossain"
+                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:border-rose-500"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2">
                       {language === 'bn' ? 'ইমেইল ঠিকানা' : 'Email Address'} *
                     </label>
                     <input
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder={language === 'bn' ? 'your@email.com' : 'your@email.com'}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all text-sm"
+                      placeholder="e.g. arif@example.com"
+                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:border-rose-500"
                     />
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2">
                     {language === 'bn' ? 'বিষয়' : 'Subject'}
                   </label>
                   <select
                     value={subject}
                     onChange={(e) => setSubject(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all text-sm"
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:border-rose-500"
                   >
-                    <option value="general">{language === 'bn' ? 'সাধারণ জিজ্ঞাসা' : 'General Inquiry'}</option>
+                    <option value="general">{language === 'bn' ? 'সাধারণ প্রশ্ন' : 'General Inquiry'}</option>
                     <option value="support">{language === 'bn' ? 'প্রযুক্তিগত সহায়তা' : 'Technical Support'}</option>
-                    <option value="safety">{language === 'bn' ? 'নিরাপত্তা ও মডারেশন' : 'Safety & Moderation'}</option>
-                    <option value="partnership">{language === 'bn' ? 'অংশীদারিত্ব' : 'Partnership & Advertising'}</option>
+                    <option value="safety">{language === 'bn' ? 'নিরাপত্তা ও রিপোর্ট' : 'Trust & Safety Question'}</option>
+                    <option value="feedback">{language === 'bn' ? 'মতামত বা পরামর্শ' : 'Feedback & Suggestions'}</option>
                   </select>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                    {language === 'bn' ? 'আপনার বার্তা' : 'Your Message'} *
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2">
+                    {language === 'bn' ? 'বার্তা' : 'Message'} *
                   </label>
                   <textarea
                     rows={5}
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
-                    placeholder={language === 'bn' ? 'আপনার বার্তা এখানে লিখুন...' : 'Type your message here...'}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all text-sm resize-none"
-                  />
+                    placeholder={language === 'bn' ? 'আপনার বার্তা লিখুন...' : 'Write your message here...'}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:border-rose-500"
+                  ></textarea>
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full py-3.5 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl shadow-lg shadow-orange-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer text-sm"
+                  className="w-full py-3.5 bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white font-bold text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
-                  <span>{language === 'bn' ? 'বার্তা পাঠান' : 'Send Message'}</span>
+                  <span>{language === 'bn' ? 'বার্তা পাঠান' : 'Submit Message'}</span>
                 </button>
               </form>
             )}

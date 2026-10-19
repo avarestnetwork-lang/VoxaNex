@@ -5,6 +5,7 @@ import { EMERGENCY_CONTACTS } from '../config/voxanexConfig';
 import { safetyService } from '../services/safetyService';
 import { Button } from '../components/ui/Button';
 import { ReportModal } from '../components/chat/ReportModal';
+import { SEOHead } from '../components/common/SEOHead';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -55,6 +56,19 @@ export const SafetyCenterPage: React.FC = () => {
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">
+      <SEOHead
+        title={
+          language === 'bn'
+            ? 'প্রাপ্তবয়স্ক সুরক্ষা, ১৮+ নীতিমালা ও অভিযোগ কেন্দ্র – ChatLustora'
+            : 'Adult Community Safety Center, Age Policy & Incident Reporting – ChatLustora'
+        }
+        description={
+          language === 'bn'
+            ? 'চ্যাটলাস্টোরা ১৮+ প্রাপ্তবয়স্ক কমিউনিটির নিরাপত্তা কেন্দ্র। আচরণবিধি, জরুরি হেল্পলাইন, ব্লক নির্দেশিকা এবং সিএসএএম ও হয়রানির বিরুদ্ধে জিরো টলারেন্স নীতি।'
+            : 'ChatLustora 18+ adult community safety center. Community guidelines, anonymous report filing, emergency contacts, blocking tools, and zero tolerance policies.'
+        }
+        canonicalPath="/safety"
+      />
       {/* Header */}
       <div className="text-center max-w-3xl mx-auto space-y-3">
         <div className="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 mx-auto">
@@ -87,8 +101,8 @@ export const SafetyCenterPage: React.FC = () => {
           </span>
           <p className="text-slate-600 leading-relaxed">
             {language === 'bn'
-              ? 'ভক্সানেক্স স্বয়ংক্রিয় ফিল্টারিং এবং প্রশিক্ষিত মানব মডারেটরদের সম্মিলিত প্রক্রিয়ায় কাজ করে। স্বয়ংক্রিয় অ্যালগরিদম কখনোই অভ্রান্ত নয়, তাই প্রতিটি গুরুতর সিদ্ধান্ত মানবীয় পর্যালোচনার অধীন থাকে। আমরা কোনো অযৌক্তিক ২৪/৭ তাৎক্ষণিক দাবি করি না; অগ্রাধিকারভিত্তিতে রিপোর্টগুলো দ্রুততম সময়ে সমাধান করা হয়।'
-              : 'VoxaNex operates transparently: automated filters assist in rapid screening, but serious sanctions and disputed decisions are reviewed by human trust-and-safety personnel. We do not claim infallible 24/7 staffing; reports are triaged continuously with child protection and threat cases prioritized immediately.'}
+              ? 'চ্যাটলাস্টোরা স্বয়ংক্রিয় ফিল্টারিং এবং প্রশিক্ষিত মানব মডারেটরদের সম্মিলিত প্রক্রিয়ায় কাজ করে। স্বয়ংক্রিয় অ্যালগরিদম কখনোই অভ্রান্ত নয়, তাই প্রতিটি গুরুতর সিদ্ধান্ত মানবীয় পর্যালোচনার অধীন থাকে। আমরা কোনো অযৌক্তিক ২৪/৭ তাৎক্ষণিক দাবি করি না; অগ্রাধিকারভিত্তিতে রিপোর্টগুলো দ্রুততম সময়ে সমাধান করা হয়।'
+              : 'ChatLustora operates transparently: automated filters assist in rapid screening, but serious sanctions and disputed decisions are reviewed by human trust-and-safety personnel. We do not claim infallible 24/7 staffing; reports are triaged continuously with child protection and threat cases prioritized immediately.'}
           </p>
         </div>
       </div>

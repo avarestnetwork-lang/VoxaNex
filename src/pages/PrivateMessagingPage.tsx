@@ -12,6 +12,7 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { messagingService, LinkPreviewData, GifItem } from '../services/messagingService';
 import { useCall } from '../context/CallContext';
+import { SEOHead } from '../components/common/SEOHead';
 import {
   MessageSquare,
   Shield,
@@ -233,15 +234,21 @@ export const PrivateMessagingPage: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 h-[calc(100vh-8.5rem)] min-h-[600px] flex flex-col">
+      <SEOHead
+        title="Private Direct Messaging & Conversation Security – ChatLustora"
+        description="One-on-one private messaging with participant controls, blocking, read receipts, and privacy protection on ChatLustora."
+        canonicalPath="/messages"
+        noindex={true}
+      />
       {/* Header Bar */}
       <div className="p-4 rounded-t-xl border border-slate-800 bg-[#0c1222] flex items-center justify-between shrink-0">
         <div>
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 text-violet-400" />
+            <MessageSquare className="w-5 h-5 text-rose-500" />
             <span>{t.nav.messages}</span>
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Real-time direct 1-on-1 messaging with PostgreSQL Row-Level Security
+            Private 1-on-1 direct conversations with participant authorization & blocking controls
           </p>
         </div>
 
