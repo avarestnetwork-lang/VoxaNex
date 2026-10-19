@@ -643,19 +643,14 @@ export default {
 
       if (request.method === 'POST') {
         try {
-          const body: any = await request.json();
-          const {
-            senderId,
-            senderNickname,
-            senderAvatar,
-            recipientId,
-            content,
-            mediaUrl,
-            mediaType,
-            linkPreview,
-            clientNonce,
-          } = body || {};
+          const authHeader = request.headers.get('Authorization');
+          if (!authHeader) {
+            return jsonResponse({ success: false, error: 'Unauthorized: Missing authorization header.' }, 401);
+          }
 
+          // In a real production worker, you MUST validate the JWT signature here.
+          // For now, we forward the authorization to Supabase to verify membership and identity.
+          
           if (!senderId || (!content && !mediaUrl)) {
             return jsonResponse({ success: false, error: 'Sender ID and content are required.' }, 400);
           }

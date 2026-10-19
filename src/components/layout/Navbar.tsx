@@ -215,6 +215,24 @@ export const Navbar: React.FC = () => {
                 <Settings className="w-3 h-3 text-slate-400" />
               </button>
             )}
+            
+            {/* Login / Sign Up buttons */}
+            {(!hasActiveSession || user.isGuest) && (
+              <>
+                <button
+                  onClick={() => handleNav('/auth')}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  {language === 'bn' ? 'লগইন' : 'Login'}
+                </button>
+                <button
+                  onClick={() => handleNav('/auth')}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors cursor-pointer"
+                >
+                  {language === 'bn' ? 'সাইন আপ' : 'Sign Up'}
+                </button>
+              </>
+            )}
 
 
             {/* Mobile Hamburger Toggle */}

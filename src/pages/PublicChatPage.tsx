@@ -134,13 +134,7 @@ export const PublicChatPage: React.FC = () => {
     }
   }, [hasActiveSession, activeRoom, is18Verified, user.is18Verified, navigate]);
 
-  const DEFAULT_ROOM_MEMBERS: RealtimePresenceMember[] = [
-    { id: 'usr-1', nickname: 'Dhaka_Rider', avatar: '🏍️', isGuest: false, gender: 'male', lastSeen: Date.now() },
-    { id: 'usr-2', nickname: 'Sylhet_Angel', avatar: '🌸', isGuest: false, gender: 'female', lastSeen: Date.now() },
-    { id: 'usr-3', nickname: 'Bangla_Queen', avatar: '👑', isGuest: true, gender: 'female', lastSeen: Date.now() },
-    { id: 'usr-4', nickname: 'Deshi_Couples', avatar: '💑', isGuest: false, gender: 'couple', lastSeen: Date.now() },
-    { id: 'usr-5', nickname: 'Ctg_Navigator', avatar: '⛵', isGuest: true, gender: 'male', lastSeen: Date.now() },
-  ];
+  // onlineMembers is already populated by messagingService.subscribeToRoom in line 291
 
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
