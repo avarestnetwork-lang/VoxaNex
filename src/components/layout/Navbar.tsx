@@ -24,12 +24,14 @@ import { useRouter } from '../../context/RouterContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme, ThemeMode } from '../../context/ThemeContext';
+import { usePrivateChat } from '../../context/PrivateChatContext';
 
 export const Navbar: React.FC = () => {
   const { currentRoute, navigate } = useRouter();
   const { language, toggleLanguage, t } = useLanguage();
   const { user, is18Verified, logout, hasActiveSession } = useAuth();
   const { theme, setTheme, resolvedTheme } = useTheme();
+  const { totalUnreadCount } = usePrivateChat();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -175,6 +177,21 @@ export const Navbar: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* Private Messages Button with Unread Badge */}
+            <button
+              onClick={() => handleNav('/messages')}
+              className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+              title="Private Messages"
+            >
+              <MessageSquare className="w-3.5 h-3.5 text-violet-500" />
+              <span className="hidden sm:inline">Messages</span>
+              {totalUnreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-rose-600 text-white text-[10px] font-bold flex items-center justify-center shadow-md animate-bounce">
+                  {totalUnreadCount}
+                </span>
+              )}
+            </button>
 
             {/* Language Toggle */}
             <button

@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './context/CallContext';
 import { RouterProvider, useRouter } from './context/RouterContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { PrivateChatProvider } from './context/PrivateChatContext';
+import { FloatingChatManager } from './components/chat/FloatingChatManager';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
 import { BackToTop } from './components/ui/BackToTop';
@@ -116,7 +118,10 @@ export default function App() {
         <CallProvider>
           <ThemeProvider>
             <RouterProvider>
-              <AppRoutes />
+              <PrivateChatProvider>
+                <AppRoutes />
+                <FloatingChatManager />
+              </PrivateChatProvider>
             </RouterProvider>
           </ThemeProvider>
         </CallProvider>
