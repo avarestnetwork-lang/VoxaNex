@@ -348,7 +348,9 @@ export const PublicChatPage: React.FC = () => {
         }
       },
       onPresence: (members) => {
+        console.log('[DIAGNOSTIC] presence_sync_received', { roomId: activeRoom.id, count: members.length });
         setOnlineMembers(members);
+        console.log('[DIAGNOSTIC] active_user_list_updated', { count: members.length });
       },
       onTyping: (activeTypers) => {
         setTypers(activeTypers.filter((name) => name !== user.nickname));
@@ -367,6 +369,7 @@ export const PublicChatPage: React.FC = () => {
   // 3. Presence Heartbeat
   useEffect(() => {
     const sendHeartbeat = () => {
+      console.log('[DIAGNOSTIC] presence_session_registered', { userId: user.id, nickname: user.nickname, roomId: activeRoom.id });
       messagingService.sendPresence(activeRoom.id, {
         id: user.id,
         nickname: user.nickname,
