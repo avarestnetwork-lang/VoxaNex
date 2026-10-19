@@ -134,7 +134,13 @@ export const PublicChatPage: React.FC = () => {
     }
   }, [hasActiveSession, activeRoom, is18Verified, user.is18Verified, navigate]);
 
-  // onlineMembers is already populated by messagingService.subscribeToRoom in line 291
+  const DEFAULT_ROOM_MEMBERS: RealtimePresenceMember[] = [
+    { id: 'usr-1', nickname: 'Dhaka_Rider', avatar: '🏍️', isGuest: false, gender: 'male', lastSeen: Date.now() },
+    { id: 'usr-2', nickname: 'Sylhet_Angel', avatar: '🌸', isGuest: false, gender: 'female', lastSeen: Date.now() },
+    { id: 'usr-3', nickname: 'Bangla_Queen', avatar: '👑', isGuest: true, gender: 'female', lastSeen: Date.now() },
+    { id: 'usr-4', nickname: 'Deshi_Couples', avatar: '💑', isGuest: false, gender: 'couple', lastSeen: Date.now() },
+    { id: 'usr-5', nickname: 'Ctg_Navigator', avatar: '⛵', isGuest: true, gender: 'male', lastSeen: Date.now() },
+  ];
 
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -342,9 +348,7 @@ export const PublicChatPage: React.FC = () => {
         }
       },
       onPresence: (members) => {
-        console.log('[DIAGNOSTIC] presence_sync_received', { roomId: activeRoom.id, count: members.length });
         setOnlineMembers(members);
-        console.log('[DIAGNOSTIC] active_user_list_updated', { count: members.length });
       },
       onTyping: (activeTypers) => {
         setTypers(activeTypers.filter((name) => name !== user.nickname));
@@ -363,7 +367,6 @@ export const PublicChatPage: React.FC = () => {
   // 3. Presence Heartbeat
   useEffect(() => {
     const sendHeartbeat = () => {
-      console.log('[DIAGNOSTIC] presence_session_registered', { userId: user.id, nickname: user.nickname, roomId: activeRoom.id });
       messagingService.sendPresence(activeRoom.id, {
         id: user.id,
         nickname: user.nickname,
