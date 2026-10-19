@@ -446,6 +446,16 @@ export const messagingService = {
     }
   },
 
+  async fetchUserConversations(userId: string): Promise<string[]> {
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`);
+      const data = await res.json();
+      return data.success && Array.isArray(data.conversations) ? data.conversations : [];
+    } catch {
+      return [];
+    }
+  },
+
   async sendConversationTyping(convId: string, memberId: string, nickname: string, isTyping: boolean) {
     try {
       await fetch(`${API_BASE}/api/chat/conversations/${convId}/typing`, {

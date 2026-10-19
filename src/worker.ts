@@ -458,6 +458,21 @@ export default {
     // 5. DIRECT 1-ON-1 CONVERSATION ENDPOINTS
     // -------------------------------------------------------------------------
 
+    // GET /api/chat/conversations/list: Server-backed conversation discovery
+    if (url.pathname === '/api/chat/conversations/list' && request.method === 'GET') {
+      const userId = url.searchParams.get('userId');
+      if (!userId) {
+        return jsonResponse({ success: false, error: 'User ID is required.' }, 400);
+      }
+      const userConvs: string[] = [];
+      for (const convId of conversationMessages.keys()) {
+        if (convId.includes(userId)) {
+          userConvs.push(convId);
+        }
+      }
+      return jsonResponse({ success: true, conversations: userConvs });
+    }
+
     // POST /api/chat/conversations: Initialize or get conversation ID
     if (url.pathname === '/api/chat/conversations' && request.method === 'POST') {
       try {
