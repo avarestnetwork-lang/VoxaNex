@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { DirectConversation, ChatMessage } from '../types';
 import { useAuth } from './AuthContext';
 import { messagingService } from '../services/messagingService';
+import { guestSessionService } from '../services/guestSessionService';
 
 export interface FloatingChatWindow {
   conversationId: string;
@@ -95,7 +96,8 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
       // Fetch server-backed conversations for this user (robust for cleared localStorage / fresh browser session)
       try {
-        const serverConvs = await messagingService.fetchUserConversations(user.id);
+        const token = guestSessionService.getStoredToken();
+        const serverConvs = await messagingService.fetchUserConversations(user.id, token || undefined);
         serverConvs.forEach((id) => knownConversationIdsRef.current.add(id));
       } catch {
         // ignore

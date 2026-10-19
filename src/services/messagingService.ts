@@ -446,9 +446,13 @@ export const messagingService = {
     }
   },
 
-  async fetchUserConversations(userId: string): Promise<string[]> {
+  async fetchUserConversations(userId: string, guestToken?: string): Promise<string[]> {
     try {
-      const res = await fetch(`${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`);
+      let url = `${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`;
+      if (guestToken) {
+        url += `&guestToken=${encodeURIComponent(guestToken)}`;
+      }
+      const res = await fetch(url);
       const data = await res.json();
       return data.success && Array.isArray(data.conversations) ? data.conversations : [];
     } catch {

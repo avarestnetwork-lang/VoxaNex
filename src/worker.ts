@@ -461,9 +461,18 @@ export default {
     // GET /api/chat/conversations/list: Server-backed conversation discovery
     if (url.pathname === '/api/chat/conversations/list' && request.method === 'GET') {
       const userId = url.searchParams.get('userId');
+      const guestToken = url.searchParams.get('guestToken');
+      
+      // Basic auth check
       if (!userId) {
         return jsonResponse({ success: false, error: 'User ID is required.' }, 400);
       }
+      
+      // Validate guest token if provided
+      if (guestToken && (!guestSessions.has(guestToken) || guestSessions.get(guestToken)?.id !== userId)) {
+        return jsonResponse({ success: false, error: 'Unauthorized: Invalid guest session.' }, 401);
+      }
+      
       const userConvs: string[] = [];
       for (const convId of conversationMessages.keys()) {
         if (convId.includes(userId)) {
