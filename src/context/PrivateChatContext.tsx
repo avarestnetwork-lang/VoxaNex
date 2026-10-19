@@ -42,6 +42,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [latestToast, setLatestToast] = useState<{ id: string; title: string; message: string; avatar: string; conversationId: string } | null>(null);
 
   const activeSubscriptionsRef = useRef<Map<string, () => void>>(new Map());
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
   // Play subtle notification sound
   const playBeep = () => {
@@ -70,11 +71,10 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const openChat = useCallback(async (partner: { id: string; nickname: string; avatar: string }) => {
     if (!user.id || partner.id === user.id) return;
 
-    // Generate deterministic ID
     const sortedIds = [user.id, partner.id].sort();
     const conversationId = `conv_${sortedIds[0]}_${sortedIds[1]}`;
 
-    // Ensure conversation is registered on backend
+    console.log('[DIAGNOSTIC] private_popup_opened', { conversationId, partnerId: partner.id });
     await messagingService.getOrCreateConversation(user.id, partner.id);
 
     setOpenWindows((prev) => {
@@ -86,7 +86,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
             : w
         );
       } else {
-        // Add new window
         return [
           ...prev,
           {
@@ -105,7 +104,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       }
     });
 
-    // Fetch initial messages for this window if empty
     const res = await messagingService.fetchConversationMessages(conversationId, user.id);
     if (res.success) {
       setOpenWindows((prev) =>
@@ -138,9 +136,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setOpenWindows((prev) =>
       prev.map((w) => (w.conversationId === conversationId ? { ...w, unreadCount: 0 } : w))
     );
-    setConversations((prev) =>
-      prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c))
-    );
   }, []);
 
   const sendMessage = useCallback(async (conversationId: string, content: string, media?: { url: string; type: 'gif' | 'image' }) => {
@@ -166,7 +161,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       status: 'sending',
     };
 
-    // Append optimistic message
     setOpenWindows((prev) =>
       prev.map((w) =>
         w.conversationId === conversationId ? { ...w, messages: [...w.messages, optimisticMsg], draft: '' } : w
@@ -185,6 +179,8 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     if (res.success && res.message) {
       const confirmed = res.message;
+      seenMessageIdsRef.current.add(confirmed.id);
+      console.log('[DIAGNOSTIC] private_message_persisted', { messageId: confirmed.id, conversationId });
       setOpenWindows((prev) =>
         prev.map((w) =>
           w.conversationId === conversationId
@@ -197,7 +193,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       );
       return true;
     } else {
-      // Mark as failed
       setOpenWindows((prev) =>
         prev.map((w) =>
           w.conversationId === conversationId
@@ -212,60 +207,114 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   }, [user, openWindows]);
 
-  // Global incoming DM subscriptions for user
+  // Handle incoming message processing
+  const handleIncomingMessage = useCallback((msg: ChatMessage, conversationId: string, partnerInfo?: { id: string; nickname: string; avatar: string }) => {
+    if (!msg || !msg.id) return;
+    if (msg.senderId === user.id) return; // Don't notify for own messages
+    if (seenMessageIdsRef.current.has(msg.id)) return; // Deduplicate
+
+    seenMessageIdsRef.current.add(msg.id);
+    console.log('[DIAGNOSTIC] private_message_event_received', { messageId: msg.id, conversationId, senderId: msg.senderId });
+
+    const partnerId = partnerInfo?.id || msg.senderId;
+    const partnerNickname = partnerInfo?.nickname || msg.senderNickname || 'User';
+    const partnerAvatar = partnerInfo?.avatar || msg.senderAvatar || '👤';
+
+    setOpenWindows((prev) => {
+      const existing = prev.find((w) => w.conversationId === conversationId);
+      const isFocused = existing && existing.isOpen && !existing.isMinimized;
+
+      if (existing) {
+        return prev.map((w) =>
+          w.conversationId === conversationId
+            ? {
+                ...w,
+                messages: w.messages.some((m) => m.id === msg.id) ? w.messages : [...w.messages, msg],
+                unreadCount: isFocused ? 0 : w.unreadCount + 1,
+                isOpen: autoOpenPrivateChats ? true : w.isOpen,
+                isMinimized: autoOpenPrivateChats ? false : w.isMinimized,
+              }
+            : w
+        );
+      } else {
+        // Automatically open window for new incoming DM if autoOpen is enabled
+        return [
+          ...prev,
+          {
+            conversationId,
+            partnerId,
+            partnerNickname,
+            partnerAvatar,
+            isMinimized: false,
+            isMaximized: false,
+            messages: [msg],
+            unreadCount: 1,
+            draft: '',
+            isOpen: autoOpenPrivateChats,
+          },
+        ];
+      }
+    });
+
+    playBeep();
+    console.log('[DIAGNOSTIC] private_notification_displayed', { messageId: msg.id, sender: partnerNickname });
+    setLatestToast({
+      id: msg.id,
+      title: partnerNickname,
+      message: msg.content || '[Media Attachment]',
+      avatar: partnerAvatar,
+      conversationId,
+    });
+  }, [user.id, autoOpenPrivateChats]);
+
+  // Global background sync for all open windows & known conversations
   useEffect(() => {
     if (!user.id) return;
 
+    // 1. Subscribe to SSE for each open window
     openWindows.forEach((win) => {
       if (activeSubscriptionsRef.current.has(win.conversationId)) return;
 
+      console.log('[DIAGNOSTIC] private_realtime_subscription_ready', { conversationId: win.conversationId });
       const unsub = messagingService.subscribeToConversation(win.conversationId, user.id, {
         onMessage: (msg) => {
-          if (!msg || !msg.id) return;
-          if (msg.senderId === user.id) return;
-
-          const isFocused = !win.isMinimized && win.isOpen;
-
-          setOpenWindows((prev) =>
-            prev.map((w) => {
-              if (w.conversationId === win.conversationId) {
-                const alreadyExists = w.messages.some((m) => m.id === msg.id);
-                if (alreadyExists) return w;
-                const newUnread = isFocused ? 0 : w.unreadCount + 1;
-                return {
-                  ...w,
-                  messages: [...w.messages, msg],
-                  unreadCount: newUnread,
-                };
-              }
-              return w;
-            })
-          );
-
-          if (!isFocused) {
-            playBeep();
-            setLatestToast({
-              id: msg.id,
-              title: msg.senderNickname,
-              message: msg.content || '[Media Attachment]',
-              avatar: msg.senderAvatar || '💬',
-              conversationId: win.conversationId,
-            });
-
-            if (autoOpenPrivateChats) {
-              setOpenWindows((prev) =>
-                prev.map((w) =>
-                  w.conversationId === win.conversationId ? { ...w, isOpen: true, isMinimized: false } : w
-                )
-              );
-            }
-          }
+          handleIncomingMessage(msg, win.conversationId, {
+            id: win.partnerId,
+            nickname: win.partnerNickname,
+            avatar: win.partnerAvatar,
+          });
         },
       });
 
       activeSubscriptionsRef.current.set(win.conversationId, unsub);
     });
-  }, [user.id, openWindows, autoOpenPrivateChats]);
+
+    // 2. Periodic polling sync fallback for active open windows to guarantee zero-refresh delivery
+    const syncInterval = setInterval(async () => {
+      for (const win of openWindows) {
+        try {
+          const res = await messagingService.fetchConversationMessages(win.conversationId, user.id);
+          if (res.success && res.messages.length > 0) {
+            for (const m of res.messages) {
+              if (!seenMessageIdsRef.current.has(m.id) && m.senderId !== user.id) {
+                handleIncomingMessage(m, win.conversationId, {
+                  id: win.partnerId,
+                  nickname: win.partnerNickname,
+                  avatar: win.partnerAvatar,
+                });
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }, 3500);
+
+    return () => {
+      clearInterval(syncInterval);
+    };
+  }, [user.id, openWindows, handleIncomingMessage]);
 
   const totalUnreadCount = openWindows.reduce((acc, w) => acc + w.unreadCount, 0);
 
