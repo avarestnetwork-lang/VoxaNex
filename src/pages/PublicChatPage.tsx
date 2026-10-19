@@ -12,9 +12,12 @@ import { GifPicker } from '../components/chat/GifPicker';
 import { LinkPreviewCard } from '../components/chat/LinkPreviewCard';
 import { TypingIndicator } from '../components/chat/TypingIndicator';
 import { ReportModal } from '../components/chat/ReportModal';
+import { UserActionMenu } from '../components/chat/UserActionMenu';
+import { MentionAutocomplete } from '../components/chat/MentionAutocomplete';
+import { UserProfileModal } from '../components/chat/UserProfileModal';
+import { PrivateChatPane } from '../components/chat/PrivateChatPane';
 import { safetyService } from '../services/safetyService';
 import { Button } from '../components/ui/Button';
-import { Modal } from '../components/ui/Modal';
 import {
   messagingService,
   RealtimePresenceMember,
@@ -37,6 +40,12 @@ import {
   ArrowUp,
   Clock,
   Sparkles,
+  MessageSquare,
+  Search,
+  X,
+  Menu,
+  ChevronRight,
+  Hash,
 } from 'lucide-react';
 
 interface ExtendedChatMessage extends ChatMessage {
@@ -45,6 +54,7 @@ interface ExtendedChatMessage extends ChatMessage {
   mediaType?: 'gif' | 'image';
   linkPreview?: LinkPreviewData;
   errorReason?: string;
+  clientNonce?: string;
 }
 
 export const getGenderInfo = (gender?: string) => {
@@ -139,10 +149,76 @@ export const PublicChatPage: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
 
+  // Chatroom View State & Sidebar Tabs
+  const [sidebarTab, setSidebarTab] = useState<'users' | 'private' | 'rooms'>('users');
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+
+  // Active Direct Conversation Tab
+  const [activePrivatePartner, setActivePrivatePartner] = useState<{
+    id: string;
+    nickname: string;
+    avatar: string;
+    gender?: string;
+    isGuest?: boolean;
+  } | null>(null);
+  const [activeChatView, setActiveChatView] = useState<'room' | 'private'>('room');
+
+  // Direct conversations list for the Private tab
+  const [directConversations, setDirectConversations] = useState<
+    Array<{
+      id: string;
+      partnerId: string;
+      partnerNickname: string;
+      partnerAvatar: string;
+      partnerGender?: string;
+      lastMessage: string;
+      timestamp: string;
+      unreadCount: number;
+    }>
+  >([
+    {
+      id: `conv_${[user.id, 'usr-2'].sort().join('_')}`,
+      partnerId: 'usr-2',
+      partnerNickname: 'Sylhet_Angel',
+      partnerAvatar: '🌸',
+      partnerGender: 'female',
+      lastMessage: 'Kalke chat-e asben?',
+      timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
+      unreadCount: 1,
+    },
+    {
+      id: `conv_${[user.id, 'usr-1'].sort().join('_')}`,
+      partnerId: 'usr-1',
+      partnerNickname: 'Dhaka_Rider',
+      partnerAvatar: '🏍️',
+      partnerGender: 'male',
+      lastMessage: 'Shob theek ache, bhai!',
+      timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+      unreadCount: 0,
+    },
+  ]);
+
+  // Contextual Menus & Modals
+  const [userActionMenu, setUserActionMenu] = useState<{
+    member: { id: string; nickname: string; avatar: string; gender?: string; isGuest?: boolean };
+    position: { x: number; y: number };
+  } | null>(null);
+  const [profileModalMember, setProfileModalMember] = useState<{
+    id: string;
+    nickname: string;
+    avatar: string;
+    gender?: string;
+    isGuest?: boolean;
+  } | null>(null);
+
+  // Mention Autocomplete
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+
   // Pickers & Modals
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
-  const [showMembers, setShowMembers] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [reportTargetUser, setReportTargetUser] = useState<{ targetId: string; nickname: string; snippet?: string } | null>(null);
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
@@ -151,13 +227,23 @@ export const PublicChatPage: React.FC = () => {
   const [attachedMedia, setAttachedMedia] = useState<{ url: string; type: 'gif' | 'image'; title?: string } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isNearBottomRef = useRef(true);
 
   const scrollToBottom = useCallback((smooth = true) => {
     messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
   }, []);
 
-  // 1. Initial message history load
+  // Monitor user scroll position to avoid forcing auto-scroll when user is reviewing history
+  const handleScrollMessages = () => {
+    if (!messagesContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+    isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 120;
+  };
+
+  // 1. Initial message history load with deduplication
   useEffect(() => {
     let cancel = false;
     async function loadHistory() {
@@ -168,12 +254,10 @@ export const PublicChatPage: React.FC = () => {
           const fetchedMessages = res.messages.map((m) => ({ ...m, status: 'delivered' as const }));
           setMessages((prev) => {
             const combined = [...fetchedMessages, ...prev];
-            // Deduplicate by ID and sort chronologically
             const unique = Array.from(new Map(combined.map((m) => [m.id, m])).values());
             return unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
           });
         } else if (res.messages.length === 0) {
-          // Provide friendly room entrance system notice if empty
           setMessages([
             {
               id: 'sys-welcome',
@@ -183,8 +267,8 @@ export const PublicChatPage: React.FC = () => {
               senderAvatar: '🛡️',
               content:
                 language === 'bn'
-                  ? `স্বাগতম "${activeRoom.name.bn}" চ্যানেলে! আলোচনায় পারস্পরিক শ্রদ্ধা রক্ষা করুন।`
-                  : `Welcome to "${activeRoom.name.en}". Respect community conduct standards.`,
+                  ? `স্বাগতম "${activeRoom.name.bn}" চ্যাটরুমে! সবাইকে পারস্পরিক শ্রদ্ধা প্রদর্শন করুন। ক্লিক করে যেকোনো ইউজারের সাথে প্রাইভেট চ্যাট শুরু করুন।`
+                  : `Welcome to "${activeRoom.name.en}". Follow community guidelines. Click any user to open a private 1-on-1 chat.`,
               timestamp: new Date().toISOString(),
               isSystem: true,
               status: 'delivered',
@@ -201,35 +285,71 @@ export const PublicChatPage: React.FC = () => {
     };
   }, [activeRoom.id, language, scrollToBottom]);
 
-  // 2. Realtime SSE stream subscription
+  // 2. Realtime SSE & Supabase Realtime stream subscription
   useEffect(() => {
-    // Supabase Broadcast presence subscription
     const unsubPresence = databaseService.subscribePresence(activeRoom.id, (presence) => {
       if (presence.payload.status === 'offline') {
-        setOnlineMembers(prev => prev.filter(m => m.id !== presence.payload.id));
+        setOnlineMembers((prev) => prev.filter((m) => m.id !== presence.payload.id));
       }
     });
 
     const unsubscribe = messagingService.subscribeToRoom(activeRoom.id, {
       onMessage: (newMsg) => {
-        console.log(`[Chat] Incoming message for ${activeRoom.id}:`, newMsg.id);
         setMessages((prev) => {
-          // Deduplicate if already present by ID or nonce
-          const exists = prev.some((m) => m.id === newMsg.id);
-          if (exists) {
-            console.log(`[Chat] Message ${newMsg.id} already exists, skipping.`);
+          // 1. Deduplicate by exact confirmed message ID
+          if (prev.some((m) => m.id === newMsg.id)) {
             return prev;
           }
-          console.log(`[Chat] Updating state with new message:`, newMsg.id);
+
+          // 2. Reconcile optimistic message by clientNonce
+          if (newMsg.clientNonce && prev.some((m) => m.clientNonce === newMsg.clientNonce)) {
+            return prev.map((m) =>
+              m.clientNonce === newMsg.clientNonce
+                ? {
+                    ...newMsg,
+                    status: 'delivered',
+                    linkPreview: m.linkPreview || newMsg.linkPreview,
+                    mediaUrl: m.mediaUrl || newMsg.mediaUrl,
+                    mediaType: m.mediaType || newMsg.mediaType,
+                  }
+                : m
+            );
+          }
+
+          // 3. Reconcile optimistic message by matching sender and content in 'sending' status
+          const pendingMatch = prev.find(
+            (m) =>
+              m.status === 'sending' &&
+              m.senderId === newMsg.senderId &&
+              m.content === newMsg.content
+          );
+          if (pendingMatch) {
+            return prev.map((m) =>
+              m.id === pendingMatch.id
+                ? {
+                    ...newMsg,
+                    status: 'delivered',
+                    linkPreview: m.linkPreview || newMsg.linkPreview,
+                    mediaUrl: m.mediaUrl || newMsg.mediaUrl,
+                    mediaType: m.mediaType || newMsg.mediaType,
+                  }
+                : m
+            );
+          }
+
+          // 4. Genuine incoming message
           return [...prev, { ...newMsg, status: 'delivered' }];
         });
-        setTimeout(scrollToBottom, 50);
+
+        // Only auto-scroll if near bottom
+        if (isNearBottomRef.current) {
+          setTimeout(() => scrollToBottom(true), 50);
+        }
       },
       onPresence: (members) => {
         setOnlineMembers(members);
       },
       onTyping: (activeTypers) => {
-        // Exclude current user from typing display
         setTypers(activeTypers.filter((name) => name !== user.nickname));
       },
       onStatusChange: (status) => {
@@ -256,13 +376,26 @@ export const PublicChatPage: React.FC = () => {
     };
 
     sendHeartbeat();
-    const interval = setInterval(sendHeartbeat, 25000); // Heartbeat every 25s
+    const interval = setInterval(sendHeartbeat, 25000);
     return () => clearInterval(interval);
   }, [activeRoom.id, user]);
 
-  // Handle typing input with debounce
+  // Handle typing input with mention autocomplete detection
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInputText(e.target.value);
+    const val = e.target.value;
+    setInputText(val);
+
+    // Detect mention trigger (@word)
+    const cursorPos = e.target.selectionStart || val.length;
+    const textBeforeCursor = val.slice(0, cursorPos);
+    const mentionMatch = textBeforeCursor.match(/@([a-zA-Z0-9_]*)$/);
+
+    if (mentionMatch) {
+      setMentionQuery(mentionMatch[1]);
+      setMentionSelectedIndex(0);
+    } else {
+      setMentionQuery(null);
+    }
 
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     messagingService.sendTyping(activeRoom.id, user.id, user.nickname, true);
@@ -272,16 +405,62 @@ export const PublicChatPage: React.FC = () => {
     }, 2500);
   };
 
+  // Keyboard navigation for mention autocomplete
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (mentionQuery !== null) {
+      const eligible = onlineMembers.filter(
+        (m) =>
+          m.id !== user.id &&
+          m.nickname.toLowerCase().includes(mentionQuery.toLowerCase())
+      );
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionSelectedIndex((prev) => (prev + 1) % Math.max(1, eligible.length));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionSelectedIndex((prev) =>
+          prev === 0 ? eligible.length - 1 : prev - 1
+        );
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && eligible.length > 0) {
+        e.preventDefault();
+        handleSelectMention(eligible[mentionSelectedIndex]?.nickname || eligible[0].nickname);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setMentionQuery(null);
+        return;
+      }
+    }
+  };
+
+  // Insert selected mention
+  const handleSelectMention = (nickname: string) => {
+    if (!inputRef.current) return;
+    const val = inputText;
+    const cursorPos = inputRef.current.selectionStart || val.length;
+    const textBeforeCursor = val.slice(0, cursorPos);
+    const textAfterCursor = val.slice(cursorPos);
+
+    const updatedBefore = textBeforeCursor.replace(/@([a-zA-Z0-9_]*)$/, `@${nickname} `);
+    setInputText(updatedBefore + textAfterCursor);
+    setMentionQuery(null);
+    inputRef.current.focus();
+  };
+
   // 4. Send Message Handler
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const clean = inputText.trim();
     if (!clean && !attachedMedia) return;
 
-    const tempId = `temp_${Date.now()}`;
-    const nonce = `nonce_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const nonce = `nonce_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    // Optimistic UI append
     const optimisticMsg: ExtendedChatMessage = {
       id: tempId,
       roomId: activeRoom.id,
@@ -293,17 +472,18 @@ export const PublicChatPage: React.FC = () => {
       mediaType: attachedMedia?.type,
       timestamp: new Date().toISOString(),
       status: 'sending',
+      clientNonce: nonce,
     };
 
     setMessages((prev) => [...prev, optimisticMsg]);
     setInputText('');
+    setMentionQuery(null);
     const mediaToSend = attachedMedia;
     setAttachedMedia(null);
     setShowEmojiPicker(false);
     setShowGifPicker(false);
-    setTimeout(scrollToBottom, 50);
+    setTimeout(() => scrollToBottom(true), 50);
 
-    // Check for safe link preview if contains URL
     let linkPreview: LinkPreviewData | undefined;
     const urlMatch = clean.match(/(https?:\/\/[^\s]+)/i);
     if (urlMatch && !mediaToSend) {
@@ -311,7 +491,6 @@ export const PublicChatPage: React.FC = () => {
       if (previewRes) linkPreview = previewRes;
     }
 
-    // Server-authoritative dispatch
     const result = await messagingService.sendRoomMessage(activeRoom.id, {
       senderId: user.id,
       senderNickname: user.nickname,
@@ -325,11 +504,18 @@ export const PublicChatPage: React.FC = () => {
     });
 
     if (result.success && result.message) {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === tempId ? { ...result.message!, status: 'delivered', linkPreview } : m
-        )
-      );
+      const confirmed = result.message;
+      setMessages((prev) => {
+        const alreadyDelivered = prev.some((m) => m.id === confirmed.id);
+        if (alreadyDelivered) {
+          return prev.filter((m) => m.id !== tempId);
+        }
+        return prev.map((m) =>
+          m.id === tempId || (nonce && m.clientNonce === nonce)
+            ? { ...confirmed, status: 'delivered', linkPreview }
+            : m
+        );
+      });
     } else {
       setMessages((prev) =>
         prev.map((m) =>
@@ -371,8 +557,13 @@ export const PublicChatPage: React.FC = () => {
     }
   };
 
+  // 5. Scroll-Preserving History Pagination
   const handleLoadOlder = async () => {
     if (messages.length === 0 || loadingHistory) return;
+    const container = messagesContainerRef.current;
+    const prevScrollHeight = container?.scrollHeight || 0;
+    const prevScrollTop = container?.scrollTop || 0;
+
     const oldestTimestamp = messages[0].timestamp;
     setLoadingHistory(true);
 
@@ -381,9 +572,16 @@ export const PublicChatPage: React.FC = () => {
       const fetchedMessages = res.messages.map((m) => ({ ...m, status: 'delivered' as const }));
       setMessages((prev) => {
         const combined = [...fetchedMessages, ...prev];
-        // Deduplicate by ID and sort chronologically
         const unique = Array.from(new Map(combined.map((m) => [m.id, m])).values());
         return unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      });
+
+      // Restore exact scroll offset
+      requestAnimationFrame(() => {
+        if (container) {
+          const newScrollHeight = container.scrollHeight;
+          container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
+        }
       });
     } else {
       setHasMoreHistory(false);
@@ -391,66 +589,173 @@ export const PublicChatPage: React.FC = () => {
     setLoadingHistory(false);
   };
 
-  const handleInsertBanglish = (phrase: string) => {
-    setInputText((prev) => (prev ? `${prev} ${phrase}` : phrase));
+  // Click on any participant to open UserActionMenu
+  const handleUserClick = (
+    e: React.MouseEvent,
+    member: { id: string; nickname: string; avatar: string; gender?: string; isGuest?: boolean }
+  ) => {
+    e.stopPropagation();
+    setUserActionMenu({
+      member,
+      position: { x: e.clientX, y: e.clientY },
+    });
   };
 
-  const handleSelectEmoji = (emoji: string) => {
-    setInputText((prev) => prev + emoji);
-    setShowEmojiPicker(false);
+  // Open Direct 1-on-1 Chat with Partner
+  const handleOpenPrivateChat = (partner: {
+    id: string;
+    nickname: string;
+    avatar: string;
+    gender?: string;
+    isGuest?: boolean;
+  }) => {
+    setActivePrivatePartner(partner);
+    setActiveChatView('private');
+    setShowMobileSidebar(false);
+
+    // Ensure conversation exists in direct list
+    setDirectConversations((prev) => {
+      const exists = prev.some((c) => c.partnerId === partner.id);
+      if (exists) return prev;
+      return [
+        {
+          id: `conv_${[user.id, partner.id].sort().join('_')}`,
+          partnerId: partner.id,
+          partnerNickname: partner.nickname,
+          partnerAvatar: partner.avatar,
+          partnerGender: partner.gender,
+          lastMessage: 'Started new direct chat',
+          timestamp: new Date().toISOString(),
+          unreadCount: 0,
+        },
+        ...prev,
+      ];
+    });
   };
 
-  const handleSelectGif = (gif: GifItem) => {
-    setAttachedMedia({ url: gif.url, type: 'gif', title: gif.title });
-    setShowGifPicker(false);
+  // Insert mention from UserActionMenu
+  const handleMentionFromMenu = (nickname: string) => {
+    setInputText((prev) => (prev ? `${prev} @${nickname} ` : `@${nickname} `));
+    inputRef.current?.focus();
+    setActiveChatView('room');
+  };
+
+  // Render mentions highlighted in chat messages
+  const renderMessageContent = (content: string) => {
+    const parts = content.split(/(@[a-zA-Z0-9_]+)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith('@')) {
+        const mentionedName = part.slice(1);
+        const isMentioningMe =
+          user.nickname && mentionedName.toLowerCase() === user.nickname.toLowerCase();
+        return (
+          <span
+            key={i}
+            onClick={(e) => {
+              e.stopPropagation();
+              const matchedMember = onlineMembers.find(
+                (m) => m.nickname.toLowerCase() === mentionedName.toLowerCase()
+              );
+              if (matchedMember) {
+                handleUserClick(e, matchedMember);
+              }
+            }}
+            className={`font-semibold px-1 py-0.5 rounded text-[11px] font-mono inline-block cursor-pointer transition-colors ${
+              isMentioningMe
+                ? 'bg-amber-500/25 text-amber-300 border border-amber-500/50 shadow-sm'
+                : 'bg-cyan-950/70 text-cyan-300 border border-cyan-800/60 hover:bg-cyan-900/60'
+            }`}
+            title="Click to view user profile"
+          >
+            {part}
+          </span>
+        );
+      }
+      return part;
+    });
   };
 
   const handleLeaveRoom = () => {
-    // Notify others of departure
     databaseService.broadcastPresence(activeRoom.id, {
       type: 'presence',
-      payload: { id: user.id, status: 'offline' }
+      payload: { id: user.id, status: 'offline' },
     });
     navigate('/rooms');
   };
 
+  // Filtered members for sidebar search
+  const filteredMembers = onlineMembers.filter((m) =>
+    m.nickname.toLowerCase().includes(userSearchQuery.toLowerCase())
+  );
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 h-[calc(100vh-8.5rem)] min-h-[600px] flex flex-col">
-      {/* Top Channel Bar */}
-      <div className="p-3.5 rounded-t-xl border border-slate-800 bg-[#0c1222] flex items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3">
+    <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 py-4 h-[calc(100vh-5.5rem)] min-h-[580px] flex flex-col">
+      {/* Top Navigation & Channel Header Bar */}
+      <div className="p-3 rounded-t-2xl border border-slate-800 bg-[#0c1222] flex items-center justify-between gap-3 shrink-0 shadow-lg">
+        {/* Left: Brand/Room info & Switcher tabs */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
             onClick={() => navigate('/rooms')}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800/60 rounded-lg transition-colors cursor-pointer"
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800/80 rounded-xl transition-colors cursor-pointer shrink-0"
             title="Browse room directory"
           >
             <Compass className="w-5 h-5 text-cyan-400" />
           </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold text-white tracking-tight">
-                {activeRoom.name[language]}
-              </h1>
+
+          {/* Active View Tabs (Public Room vs Active Private Chat) */}
+          <div className="flex items-center gap-1.5 min-w-0 bg-[#080d19] p-1 rounded-xl border border-slate-800/90">
+            <button
+              onClick={() => setActiveChatView('room')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer truncate ${
+                activeChatView === 'room'
+                  ? 'bg-cyan-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <Hash className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{activeRoom.name[language]}</span>
               {activeRoom.is18Plus && (
-                <span className="text-[10px] font-semibold text-rose-400 border border-rose-800/60 bg-rose-950/30 px-1.5 py-0.5 rounded">
-                  18+ Gated
+                <span className="text-[9px] bg-rose-950/80 text-rose-300 border border-rose-800 px-1 py-0.2 rounded shrink-0">
+                  18+
                 </span>
               )}
-            </div>
-            <div className="text-xs text-slate-400 flex items-center gap-2">
-              <span>{activeRoom.categoryLabel[language]}</span>
-              <span aria-hidden="true">·</span>
-              <span className="uppercase font-mono">{activeRoom.language}</span>
-            </div>
+            </button>
+
+            {activePrivatePartner && (
+              <div
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  activeChatView === 'private'
+                    ? 'bg-violet-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <button
+                  onClick={() => setActiveChatView('private')}
+                  className="flex items-center gap-1.5 truncate cursor-pointer"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{activePrivatePartner.nickname}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setActivePrivatePartner(null);
+                    setActiveChatView('room');
+                  }}
+                  className="hover:text-rose-300 rounded p-0.5"
+                  title="Close private chat"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Live Network & Action Badges */}
-        <div className="flex items-center gap-2">
+        {/* Right: Network indicator & Action Controls */}
+        <div className="flex items-center gap-2 shrink-0">
           {/* Connection status badge */}
           <div
-            className={`hidden sm:flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-md border ${
+            className={`hidden md:flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-lg border ${
               connectionStatus === 'connected'
                 ? 'border-emerald-800/60 bg-emerald-950/20 text-emerald-300'
                 : connectionStatus === 'connecting'
@@ -483,393 +788,655 @@ export const PublicChatPage: React.FC = () => {
             )}
           </div>
 
+          {/* Toggle Sidebar Button */}
           <button
-            onClick={() => setShowMembers(!showMembers)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors cursor-pointer ${
-              showMembers
-                ? 'bg-slate-800 border-slate-700 text-cyan-300'
-                : 'border-slate-800 bg-[#101729] text-slate-400 hover:text-slate-200'
-            }`}
+            onClick={() => setShowMobileSidebar(!showMobileSidebar)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-800 bg-[#101729] hover:bg-slate-800 text-slate-300 hover:text-white text-xs transition-colors cursor-pointer"
           >
-            <Users className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">
-              {onlineMembers.length > 0 ? `${onlineMembers.length} Members` : t.chat.onlineList}
+            <Users className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="font-semibold">
+              {onlineMembers.length} <span className="hidden sm:inline">Online</span>
             </span>
           </button>
 
           <button
             onClick={() => setReportModalOpen(true)}
-            className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 rounded-lg border border-rose-900/60 bg-rose-950/20 transition-colors cursor-pointer"
+            className="p-2 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 rounded-xl border border-rose-900/60 bg-rose-950/20 transition-colors cursor-pointer"
             title="Report channel or abuse"
           >
-            <AlertTriangle className="w-3.5 h-3.5" />
+            <AlertTriangle className="w-4 h-4" />
           </button>
 
           <button
             onClick={handleLeaveRoom}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800/60 rounded-lg border border-slate-800 bg-[#101729] transition-colors cursor-pointer"
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800/80 rounded-xl border border-slate-800 bg-[#101729] transition-colors cursor-pointer"
             title="Leave room"
           >
-            <LogOut className="w-3.5 h-3.5" />
+            <LogOut className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* Main chat viewport */}
-      <div className="flex-1 flex overflow-hidden border-x border-slate-800 bg-[#090d18] relative">
-        <div className="flex-1 flex flex-col justify-between overflow-hidden">
-          {/* Data retention & safety notice banner */}
-          <div className="p-2 bg-[#0c1324] border-b border-slate-800 text-[11px] text-slate-400 font-mono flex items-center justify-between px-4 shrink-0">
-            <div className="flex items-center gap-1.5">
-              {connectionStatus === 'connected' ? (
-                <>
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Real-Time SSE Channel Active · Rolling 30-Day Retention · Zero-Harassment Rules</span>
-                </>
-              ) : connectionStatus === 'connecting' ? (
-                <>
-                  <Wifi className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-                  <span className="text-cyan-300">Connecting to Real-Time SSE Channel... · Rolling 30-Day Retention</span>
-                </>
-              ) : connectionStatus === 'reconnecting' ? (
-                <>
-                  <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-                  <span className="text-amber-300">Reconnecting to Real-Time Channel... · Auto-retrying</span>
-                </>
-              ) : (
-                <>
-                  <WifiOff className="w-3.5 h-3.5 text-rose-400" />
-                  <span className="text-rose-300">Real-Time Channel Disconnected</span>
-                </>
-              )}
+      {/* Main Container */}
+      <div className="flex-1 flex overflow-hidden border-x border-b border-slate-800 rounded-b-2xl bg-[#090d18] relative shadow-2xl">
+        {/* ACTIVE VIEW: Public Room Chat OR Direct 1-on-1 Chat */}
+        {activeChatView === 'private' && activePrivatePartner ? (
+          <PrivateChatPane
+            conversationId={`conv_${[user.id, activePrivatePartner.id].sort().join('_')}`}
+            partner={activePrivatePartner}
+            currentUser={{ id: user.id, nickname: user.nickname, avatar: user.avatar }}
+            onClose={() => setActiveChatView('room')}
+            language={language}
+          />
+        ) : (
+          <div className="flex-1 flex flex-col justify-between overflow-hidden relative">
+            {/* Safety & Retention Notification Strip */}
+            <div className="px-4 py-2 bg-[#0c1324] border-b border-slate-800 text-[11px] text-slate-400 font-mono flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="truncate">
+                  Live Chatroom Active · Click any user to start Private Chat · Zero-Harassment Rules
+                </span>
+              </div>
+              <span className="text-slate-500 hidden md:inline shrink-0">Asia/Dhaka</span>
             </div>
-            <span className="text-slate-500 hidden md:inline">Asia/Dhaka</span>
-          </div>
 
-          {/* Pagination header */}
-          {hasMoreHistory && (
-            <div className="p-2 text-center border-b border-slate-800/50 bg-[#090e1a]/80 shrink-0">
-              <button
-                onClick={handleLoadOlder}
-                disabled={loadingHistory}
-                className="text-xs text-cyan-400 hover:underline inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
-              >
-                <ArrowUp className="w-3 h-3" />
-                <span>{loadingHistory ? 'Fetching earlier messages...' : 'Load older messages'}</span>
-              </button>
-            </div>
-          )}
-
-          {/* Messages Stream */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
-            {messages.map((msg, idx) => {
-              const isMe = msg.senderId === user.id;
-
-              if (msg.isSystem) {
-                return (
-                  <div
-                    key={`${msg.id}-${idx}`}
-                    className="p-3 rounded-lg bg-[#111728]/80 border border-slate-800 text-xs text-slate-300 flex items-start gap-2.5 max-w-xl mx-auto"
-                  >
-                    <span className="text-base select-none">{msg.senderAvatar}</span>
-                    <div className="flex-1">
-                      <div className="font-semibold text-cyan-300 text-[11px] mb-0.5">
-                        {msg.senderNickname}
-                      </div>
-                      <p className="leading-relaxed">{msg.content}</p>
-                    </div>
-                    <span className="text-[10px] text-slate-500 font-mono shrink-0">
-                      {formatDhakaTime(msg.timestamp, language)}
-                    </span>
-                  </div>
-                );
-              }
-
-              return (
-                <div
-                  key={`${msg.id}-${idx}`}
-                  className={`flex items-start gap-2.5 max-w-xl ${
-                    isMe ? 'ml-auto flex-row-reverse' : ''
-                  }`}
+            {/* Load Older Messages Banner */}
+            {hasMoreHistory && (
+              <div className="p-2 text-center border-b border-slate-800/50 bg-[#090e1a]/90 shrink-0">
+                <button
+                  onClick={handleLoadOlder}
+                  disabled={loadingHistory}
+                  className="text-xs text-cyan-400 hover:text-cyan-300 hover:underline inline-flex items-center gap-1 cursor-pointer disabled:opacity-50 font-medium"
                 >
-                  <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-sm shrink-0 select-none">
-                    {msg.senderAvatar}
-                  </div>
-                  <div
-                    className={`rounded-xl p-3 text-xs leading-relaxed max-w-sm sm:max-w-md ${
-                      isMe
-                        ? 'bg-violet-600 text-white rounded-tr-none'
-                        : 'bg-[#12192c] border border-slate-800 text-slate-200 rounded-tl-none'
-                    }`}
-                  >
+                  <ArrowUp className="w-3 h-3" />
+                  <span>{loadingHistory ? 'Fetching earlier messages...' : 'Load older messages'}</span>
+                </button>
+              </div>
+            )}
+
+            {/* Main Chatroom Messages Stream with Alternating Subtle Row Backgrounds */}
+            <div
+              ref={messagesContainerRef}
+              onScroll={handleScrollMessages}
+              className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-1.5"
+            >
+              {messages.map((msg, idx) => {
+                const isMe = msg.senderId === user.id;
+                const isMentioned =
+                  user.nickname &&
+                  msg.content?.toLowerCase().includes(`@${user.nickname.toLowerCase()}`);
+
+                // System message notice
+                if (msg.isSystem) {
+                  return (
                     <div
-                      className={`flex items-center justify-between gap-3 text-[10px] mb-1 ${
-                        isMe ? 'text-violet-200' : 'text-slate-400'
-                      }`}
+                      key={`${msg.id}-${idx}`}
+                      className="p-3 my-2 rounded-xl bg-[#111728]/90 border border-slate-800 text-xs text-slate-300 flex items-start gap-2.5 max-w-xl mx-auto shadow-sm"
                     >
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">{msg.senderNickname}</span>
-                        {!isMe && (
-                          <div className="flex items-center gap-1.5 opacity-60 hover:opacity-100 transition-opacity">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setReportTargetUser({
-                                  targetId: msg.senderId,
-                                  nickname: msg.senderNickname,
-                                  snippet: msg.content,
-                                });
-                                setReportModalOpen(true);
-                              }}
-                              className="text-[10px] text-slate-400 hover:text-rose-400 cursor-pointer"
-                            >
-                              Report
-                            </button>
-                            <span className="text-slate-600">·</span>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                await safetyService.toggleBlockUser({
-                                  blockerId: user.id,
-                                  targetId: msg.senderId,
-                                  targetNickname: msg.senderNickname,
-                                  blocked: true,
-                                });
-                                setNotificationMsg(`Blocked ${msg.senderNickname}`);
-                                setTimeout(() => setNotificationMsg(null), 2500);
-                              }}
-                              className="text-[10px] text-slate-400 hover:text-amber-400 cursor-pointer"
-                            >
-                              Block
-                            </button>
-                          </div>
-                        )}
+                      <span className="text-lg select-none shrink-0">{msg.senderAvatar}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-cyan-300 text-[11px] mb-0.5">
+                          {msg.senderNickname}
+                        </div>
+                        <p className="leading-relaxed break-words">{msg.content}</p>
                       </div>
-                      <span className="font-mono">
+                      <span className="text-[10px] text-slate-500 font-mono shrink-0">
                         {formatDhakaTime(msg.timestamp, language)}
                       </span>
                     </div>
+                  );
+                }
 
-                    {/* Text content */}
-                    {msg.content && <p className="break-words whitespace-pre-wrap">{msg.content}</p>}
+                // Normal message row with alternating subtle background
+                return (
+                  <div
+                    key={`${msg.id}-${idx}`}
+                    className={`group flex items-start gap-2.5 p-2 sm:px-3 sm:py-2.5 rounded-xl transition-colors ${
+                      idx % 2 === 0 ? 'bg-[#0d1424]/40' : 'bg-transparent'
+                    } hover:bg-slate-800/30 ${
+                      isMentioned ? 'bg-amber-950/25 border border-amber-800/40 shadow-sm' : ''
+                    }`}
+                  >
+                    {/* Clickable Participant Avatar */}
+                    <button
+                      type="button"
+                      onClick={(e) =>
+                        handleUserClick(e, {
+                          id: msg.senderId,
+                          nickname: msg.senderNickname,
+                          avatar: msg.senderAvatar,
+                        })
+                      }
+                      className="w-8 h-8 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-sm shrink-0 select-none hover:scale-105 hover:border-cyan-500 transition-all cursor-pointer shadow-sm"
+                      title="Click user options"
+                    >
+                      {msg.senderAvatar}
+                    </button>
 
-                    {/* Attached GIF / Media */}
-                    {msg.mediaUrl && (
-                      <div className="mt-2 rounded-lg overflow-hidden border border-slate-700/60 max-w-xs">
-                        <img
-                          src={msg.mediaUrl}
-                          alt="Shared media"
-                          className="w-full max-h-48 object-cover"
-                          loading="lazy"
-                        />
-                      </div>
-                    )}
-
-                    {/* Safe link preview card */}
-                    {msg.linkPreview && <LinkPreviewCard preview={msg.linkPreview} />}
-
-                    {/* Delivery & Failure state */}
-                    <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px]">
-                      {msg.status === 'sending' && (
-                        <span className="text-violet-300 font-mono">Sending...</span>
-                      )}
-                      {msg.status === 'failed' && (
-                        <div className="flex items-center gap-1 text-rose-300">
-                          <span>{msg.errorReason || 'Failed'}</span>
+                    {/* Message Details */}
+                    <div className="flex-1 min-w-0">
+                      {/* Name, Gender, Timestamp Bar */}
+                      <div className="flex items-center justify-between gap-2 mb-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                          {/* Clickable Nickname */}
                           <button
-                            onClick={() => handleRetry(msg)}
-                            className="underline hover:text-white flex items-center gap-0.5 ml-1 cursor-pointer"
+                            type="button"
+                            onClick={(e) =>
+                              handleUserClick(e, {
+                                id: msg.senderId,
+                                nickname: msg.senderNickname,
+                                avatar: msg.senderAvatar,
+                              })
+                            }
+                            className={`font-bold text-xs truncate hover:underline cursor-pointer text-left ${getGenderColor(
+                              onlineMembers.find((m) => m.id === msg.senderId)?.gender
+                            )}`}
                           >
-                            <RotateCcw className="w-2.5 h-2.5" />
-                            <span>Retry</span>
+                            {msg.senderNickname}
                           </button>
+
+                          {/* Gender sign */}
+                          <GenderBadge
+                            gender={onlineMembers.find((m) => m.id === msg.senderId)?.gender}
+                          />
+
+                          {isMe && (
+                            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-violet-950 text-violet-300 border border-violet-800">
+                              You
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Light gray formatted timestamp */}
+                        <span className="text-[10px] text-slate-500 font-mono shrink-0 select-none">
+                          [{formatDhakaTime(msg.timestamp, language)}]
+                        </span>
+                      </div>
+
+                      {/* Content with mention parsing */}
+                      {msg.content && (
+                        <div className="text-xs text-slate-200 leading-relaxed break-words whitespace-pre-wrap">
+                          {renderMessageContent(msg.content)}
+                        </div>
+                      )}
+
+                      {/* Attached GIF / Media */}
+                      {msg.mediaUrl && (
+                        <div className="mt-2 rounded-xl overflow-hidden border border-slate-700/60 max-w-xs shadow-md">
+                          <img
+                            src={msg.mediaUrl}
+                            alt="Shared media"
+                            className="w-full max-h-48 object-cover"
+                            loading="lazy"
+                          />
+                        </div>
+                      )}
+
+                      {/* Safe link preview card */}
+                      {msg.linkPreview && <LinkPreviewCard preview={msg.linkPreview} />}
+
+                      {/* Delivery status or failure retry */}
+                      {isMe && (
+                        <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px]">
+                          {msg.status === 'sending' && (
+                            <span className="text-violet-300 font-mono">Sending...</span>
+                          )}
+                          {msg.status === 'failed' && (
+                            <div className="flex items-center gap-1 text-rose-300">
+                              <span>{msg.errorReason || 'Failed'}</span>
+                              <button
+                                onClick={() => handleRetry(msg)}
+                                className="underline hover:text-white flex items-center gap-0.5 ml-1 cursor-pointer"
+                              >
+                                <RotateCcw className="w-2.5 h-2.5" />
+                                <span>Retry</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   </div>
-                </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Typing indicator */}
-          <TypingIndicator typers={typers} />
-
-          {/* Attached Media Staging Preview */}
-          {attachedMedia && (
-            <div className="px-4 py-2 bg-[#0c1222] border-t border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs text-slate-300">
-                <img
-                  src={attachedMedia.url}
-                  alt="Attachment preview"
-                  className="w-10 h-10 object-cover rounded border border-slate-700"
-                />
-                <div>
-                  <span className="font-semibold block text-cyan-300">Attached Animated GIF</span>
-                  <span className="text-[10px] text-slate-400">{attachedMedia.title}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => setAttachedMedia(null)}
-                className="text-xs text-rose-400 hover:text-white"
-              >
-                Remove
-              </button>
+                );
+              })}
+              <div ref={messagesEndRef} />
             </div>
-          )}
 
-          {/* Banglish Helper & Composer Dock */}
-          <div className="p-3 border-t border-slate-800 bg-[#0c1222] space-y-2 shrink-0 relative">
-            <BanglishHelperBar onInsertText={handleInsertBanglish} />
+            {/* Typing indicator */}
+            <TypingIndicator typers={typers} />
 
-            {/* Emoji & GIF Popovers */}
-            {showEmojiPicker && (
-              <EmojiPicker
-                onSelectEmoji={handleSelectEmoji}
-                onClose={() => setShowEmojiPicker(false)}
-              />
-            )}
-            {showGifPicker && (
-              <GifPicker
-                onSelectGif={handleSelectGif}
-                onClose={() => setShowGifPicker(false)}
-              />
-            )}
-
-            <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-              <div className="flex items-center gap-1">
+            {/* Attached Media Staging Preview */}
+            {attachedMedia && (
+              <div className="px-4 py-2 bg-[#0c1222] border-t border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <img
+                    src={attachedMedia.url}
+                    alt="Attachment preview"
+                    className="w-10 h-10 object-cover rounded border border-slate-700"
+                  />
+                  <div>
+                    <span className="font-semibold block text-cyan-300">Attached Animated GIF</span>
+                    <span className="text-[10px] text-slate-400">{attachedMedia.title}</span>
+                  </div>
+                </div>
                 <button
-                  type="button"
-                  onClick={() => {
-                    setShowEmojiPicker(!showEmojiPicker);
-                    setShowGifPicker(false);
-                  }}
-                  className={`p-2 rounded-lg border transition-colors cursor-pointer ${
-                    showEmojiPicker
-                      ? 'bg-violet-600 text-white border-violet-500'
-                      : 'border-slate-800 bg-[#101729] text-slate-400 hover:text-white'
-                  }`}
-                  title="Emoji picker"
+                  onClick={() => setAttachedMedia(null)}
+                  className="text-xs text-rose-400 hover:text-white cursor-pointer"
                 >
-                  <Smile className="w-4 h-4" />
+                  Remove
                 </button>
+              </div>
+            )}
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowGifPicker(!showGifPicker);
+            {/* Composer Dock */}
+            <div className="p-3 border-t border-slate-800 bg-[#0c1222] space-y-2 shrink-0 relative">
+              <BanglishHelperBar onInsertText={(phrase) => setInputText((prev) => (prev ? `${prev} ${phrase}` : phrase))} />
+
+              {/* Mention Autocomplete Dropdown */}
+              {mentionQuery !== null && (
+                <MentionAutocomplete
+                  query={mentionQuery}
+                  members={onlineMembers.filter((m) => m.id !== user.id)}
+                  onSelect={handleSelectMention}
+                  onClose={() => setMentionQuery(null)}
+                  selectedIndex={mentionSelectedIndex}
+                />
+              )}
+
+              {/* Emoji & GIF Popovers */}
+              {showEmojiPicker && (
+                <EmojiPicker
+                  onSelectEmoji={(emoji) => {
+                    setInputText((prev) => prev + emoji);
                     setShowEmojiPicker(false);
                   }}
-                  className={`p-2 rounded-lg border transition-colors cursor-pointer ${
-                    showGifPicker
-                      ? 'bg-fuchsia-600 text-white border-fuchsia-500'
-                      : 'border-slate-800 bg-[#101729] text-slate-400 hover:text-white'
-                  }`}
-                  title="Curated GIF search"
-                >
-                  <ImageIcon className="w-4 h-4" />
-                </button>
-              </div>
+                  onClose={() => setShowEmojiPicker(false)}
+                />
+              )}
+              {showGifPicker && (
+                <GifPicker
+                  onSelectGif={(gif) => {
+                    setAttachedMedia({ url: gif.url, type: 'gif', title: gif.title });
+                    setShowGifPicker(false);
+                  }}
+                  onClose={() => setShowGifPicker(false)}
+                />
+              )}
 
-              <input
-                type="text"
-                value={inputText}
-                onChange={handleInputChange}
-                maxLength={2000}
-                placeholder={t.chat.inputPlaceholder}
-                className="flex-1 bg-[#101729] border border-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
-              />
+              <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEmojiPicker(!showEmojiPicker);
+                      setShowGifPicker(false);
+                    }}
+                    className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+                      showEmojiPicker
+                        ? 'bg-violet-600 text-white border-violet-500'
+                        : 'border-slate-800 bg-[#101729] text-slate-400 hover:text-white'
+                    }`}
+                    title="Emoji picker"
+                  >
+                    <Smile className="w-4 h-4" />
+                  </button>
 
-              <Button type="submit" variant="primary" size="md" className="shrink-0">
-                <Send className="w-4 h-4 mr-1.5" />
-                <span>{t.chat.sendBtn}</span>
-              </Button>
-            </form>
-          </div>
-        </div>
-
-        {/* Online Members Sidebar */}
-        {showMembers && (
-          <div className="w-72 border-l border-slate-800 bg-[#0c1220] p-4 flex flex-col justify-between shrink-0">
-            <div>
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800 text-xs text-slate-300 font-semibold">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-orange-500" />
-                  <span>{t.chat.onlineList}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowGifPicker(!showGifPicker);
+                      setShowEmojiPicker(false);
+                    }}
+                    className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+                      showGifPicker
+                        ? 'bg-fuchsia-600 text-white border-fuchsia-500'
+                        : 'border-slate-800 bg-[#101729] text-slate-400 hover:text-white'
+                    }`}
+                    title="Curated GIF search"
+                  >
+                    <ImageIcon className="w-4 h-4" />
+                  </button>
                 </div>
-                <span className="text-[11px] text-cyan-400 font-mono px-2 py-0.5 rounded bg-cyan-950/40 border border-cyan-800/40">
-                  {1 + onlineMembers.filter((m) => m.id !== user.id).length} Active
-                </span>
-              </div>
 
-              <div className="mt-3 space-y-2 text-xs overflow-y-auto max-h-[60vh] pr-1">
-                {/* Current user */}
-                <div className="p-2.5 rounded-xl bg-violet-950/30 border border-violet-900/50 shadow-sm">
-                  <div className="flex items-center justify-between gap-1.5 mb-1">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-lg select-none shrink-0">{user.avatar || '👤'}</span>
-                      <span className={`font-bold truncate text-sm ${getGenderColor(user.gender)}`}>
-                        {user.nickname}
-                      </span>
-                    </div>
-                    <GenderBadge gender={user.gender} />
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] text-violet-300 pt-1 border-t border-violet-900/30">
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      <span>You ({user.isGuest ? 'Guest' : 'Member'})</span>
+                <div className="flex-1 relative">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={inputText}
+                    onChange={handleInputChange}
+                    onKeyDown={handleInputKeyDown}
+                    maxLength={2000}
+                    placeholder={`Type message or @ to mention participant...`}
+                    className="w-full bg-[#101729] border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                  />
+                  {inputText.length > 50 && (
+                    <span className="absolute right-3 top-2.5 text-[10px] text-slate-500 font-mono">
+                      {inputText.length}/2000
                     </span>
-                    <span className="font-mono text-[9px] uppercase tracking-wider text-violet-400">Online</span>
-                  </div>
+                  )}
                 </div>
 
-                {/* Real-time active members */}
-                {onlineMembers
-                  .filter((m) => m.id !== user.id)
-                  .map((member) => (
-                    <div
-                      key={member.id}
-                      className="p-2.5 rounded-xl bg-[#101729] hover:bg-[#141d33] border border-slate-800/80 transition-colors"
-                    >
-                      <div className="flex items-center justify-between gap-1.5 mb-1">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-lg select-none shrink-0">{member.avatar || '👤'}</span>
-                          <span className={`font-semibold truncate text-xs ${getGenderColor(member.gender)}`}>
-                            {member.nickname}
-                          </span>
-                        </div>
-                        <GenderBadge gender={member.gender} />
-                      </div>
-                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/50">
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                          <span>{member.isGuest ? 'Guest Session' : 'Member'}</span>
-                        </span>
-                        <span className="font-mono text-[9px] uppercase tracking-wider text-slate-500">Active</span>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            <div className="p-2.5 rounded-lg bg-[#101729] border border-slate-800 text-[10px] text-slate-400 space-y-1">
-              <span className="font-semibold text-slate-300 block">SSE Presence Heartbeat</span>
-              <p>Active participants update automatically every 25 seconds.</p>
+                <Button type="submit" variant="primary" size="md" className="shrink-0 rounded-xl">
+                  <Send className="w-4 h-4 mr-1.5" />
+                  <span>Send</span>
+                </Button>
+              </form>
             </div>
           </div>
         )}
+
+        {/* Right Sidebar: Tabs for Users | Private Chats | Rooms */}
+        <div
+          className={`${
+            showMobileSidebar ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'
+          } fixed inset-y-0 right-0 z-40 lg:static w-72 sm:w-80 border-l border-slate-800 bg-[#0c1220] flex flex-col justify-between shrink-0 transition-transform duration-200 ease-in-out`}
+        >
+          {/* Sidebar Top: Tabs */}
+          <div className="flex flex-col h-full overflow-hidden">
+            <div className="p-3 border-b border-slate-800 bg-[#090d18] flex items-center justify-between">
+              <div className="flex items-center gap-1 bg-[#101729] p-1 rounded-xl border border-slate-800">
+                <button
+                  onClick={() => setSidebarTab('users')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    sidebarTab === 'users'
+                      ? 'bg-cyan-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Users ({onlineMembers.length})
+                </button>
+                <button
+                  onClick={() => setSidebarTab('private')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer relative ${
+                    sidebarTab === 'private'
+                      ? 'bg-violet-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>Private</span>
+                  {directConversations.some((c) => c.unreadCount > 0) && (
+                    <span className="w-2 h-2 rounded-full bg-rose-500 inline-block ml-1" />
+                  )}
+                </button>
+                <button
+                  onClick={() => setSidebarTab('rooms')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    sidebarTab === 'rooms'
+                      ? 'bg-cyan-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Rooms
+                </button>
+              </div>
+
+              {/* Close sidebar on mobile */}
+              <button
+                onClick={() => setShowMobileSidebar(false)}
+                className="lg:hidden p-1.5 text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* TAB CONTENT 1: ONLINE USERS */}
+            {sidebarTab === 'users' && (
+              <div className="flex-1 flex flex-col p-3 overflow-hidden">
+                {/* Search user filter */}
+                <div className="relative mb-2 shrink-0">
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                  <input
+                    type="text"
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    placeholder="Search online users..."
+                    className="w-full bg-[#101729] border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                  {userSearchQuery && (
+                    <button
+                      onClick={() => setUserSearchQuery('')}
+                      className="absolute right-2 top-2 text-slate-400 hover:text-white"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Users List */}
+                <div className="flex-1 overflow-y-auto space-y-1.5 pr-0.5">
+                  {/* Current user card */}
+                  <div
+                    onClick={(e) => handleUserClick(e, user)}
+                    className="p-2.5 rounded-xl bg-violet-950/30 border border-violet-900/50 shadow-sm cursor-pointer hover:border-violet-600 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-1.5 mb-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-lg select-none shrink-0">{user.avatar || '👤'}</span>
+                        <span className={`font-bold truncate text-xs ${getGenderColor(user.gender)}`}>
+                          {user.nickname}
+                        </span>
+                      </div>
+                      <GenderBadge gender={user.gender} />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-violet-300 pt-1 border-t border-violet-900/30 font-mono">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>You ({user.isGuest ? 'Guest' : 'Member'})</span>
+                      </span>
+                      <span className="text-violet-400 uppercase tracking-wider text-[9px]">Online</span>
+                    </div>
+                  </div>
+
+                  {/* Active room members */}
+                  {filteredMembers
+                    .filter((m) => m.id !== user.id)
+                    .map((member) => (
+                      <div
+                        key={member.id}
+                        onClick={(e) => handleUserClick(e, member)}
+                        className="p-2.5 rounded-xl bg-[#101729] hover:bg-[#151f38] border border-slate-800/80 hover:border-cyan-500/50 transition-all cursor-pointer group shadow-sm"
+                      >
+                        <div className="flex items-center justify-between gap-1.5 mb-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-lg select-none shrink-0 group-hover:scale-110 transition-transform">
+                              {member.avatar || '👤'}
+                            </span>
+                            <span
+                              className={`font-semibold truncate text-xs group-hover:underline ${getGenderColor(
+                                member.gender
+                              )}`}
+                            >
+                              {member.nickname}
+                            </span>
+                          </div>
+                          <GenderBadge gender={member.gender} />
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/60 font-mono">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                            <span>{member.isGuest ? 'Guest Session' : 'Member'}</span>
+                          </span>
+                          <span className="text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                            Options →
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT 2: PRIVATE CONVERSATIONS */}
+            {sidebarTab === 'private' && (
+              <div className="flex-1 flex flex-col p-3 overflow-hidden">
+                <div className="flex-1 overflow-y-auto space-y-1.5">
+                  {directConversations.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      <MessageSquare className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                      <p>No active private chats.</p>
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Click on any online user to start a conversation.
+                      </p>
+                    </div>
+                  ) : (
+                    directConversations.map((conv) => (
+                      <div
+                        key={conv.id}
+                        onClick={() =>
+                          handleOpenPrivateChat({
+                            id: conv.partnerId,
+                            nickname: conv.partnerNickname,
+                            avatar: conv.partnerAvatar,
+                            gender: conv.partnerGender,
+                          })
+                        }
+                        className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                          activePrivatePartner?.id === conv.partnerId
+                            ? 'bg-violet-950/40 border-violet-600 shadow-md'
+                            : 'bg-[#101729] hover:bg-[#141d33] border-slate-800/80 hover:border-violet-500/40'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1.5 mb-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-lg select-none shrink-0">{conv.partnerAvatar}</span>
+                            <span className="font-semibold text-xs text-white truncate">
+                              {conv.partnerNickname}
+                            </span>
+                          </div>
+                          {conv.unreadCount > 0 && (
+                            <span className="bg-rose-500 text-white font-bold text-[9px] px-1.5 py-0.2 rounded-full">
+                              {conv.unreadCount}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-400 truncate mb-1">
+                          {conv.lastMessage}
+                        </div>
+                        <div className="text-[9px] text-slate-500 font-mono text-right">
+                          {formatDhakaTime(conv.timestamp, language)}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT 3: ROOMS DIRECTORY */}
+            {sidebarTab === 'rooms' && (
+              <div className="flex-1 flex flex-col p-3 overflow-hidden">
+                <div className="flex-1 overflow-y-auto space-y-1.5">
+                  {ROOMS_CONFIG.map((r) => {
+                    const isCurrent = r.slug === activeRoom.slug;
+                    return (
+                      <button
+                        key={r.id}
+                        onClick={() => {
+                          navigate('/chat', { roomId: r.slug });
+                          setActiveChatView('room');
+                          setShowMobileSidebar(false);
+                        }}
+                        className={`w-full p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          isCurrent
+                            ? 'bg-cyan-950/40 border-cyan-500 text-white shadow-sm'
+                            : 'bg-[#101729] hover:bg-[#141d33] border-slate-800 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="font-bold text-xs truncate">{r.name[language]}</span>
+                          {r.is18Plus && (
+                            <span className="text-[9px] font-semibold text-rose-400 border border-rose-800/80 bg-rose-950/40 px-1 py-0.2 rounded shrink-0">
+                              18+
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                          {r.description[language]}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Bottom info strip */}
+            <div className="p-3 border-t border-slate-800 bg-[#090d18] text-[10px] text-slate-400 font-mono flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span>Multi-Transport Realtime</span>
+              </span>
+              <span>VoxaNex Edge</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Mobile Backdrop */}
+        {showMobileSidebar && (
+          <div
+            onClick={() => setShowMobileSidebar(false)}
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden"
+          />
+        )}
       </div>
+
+      {/* Contextual User Action Menu */}
+      {userActionMenu && (
+        <UserActionMenu
+          member={userActionMenu.member}
+          position={userActionMenu.position}
+          onClose={() => setUserActionMenu(null)}
+          onOpenPrivateChat={handleOpenPrivateChat}
+          onMention={handleMentionFromMenu}
+          onViewProfile={(m) => setProfileModalMember(m)}
+          onBlockUser={async (targetId, targetNickname) => {
+            await safetyService.toggleBlockUser({
+              blockerId: user.id,
+              targetId,
+              targetNickname,
+              blocked: true,
+            });
+            setNotificationMsg(`Blocked ${targetNickname}`);
+            setTimeout(() => setNotificationMsg(null), 2500);
+          }}
+          onReportUser={(targetId, targetNickname) => {
+            setReportTargetUser({ targetId, nickname: targetNickname });
+            setReportModalOpen(true);
+          }}
+          isCurrentUser={userActionMenu.member.id === user.id}
+        />
+      )}
+
+      {/* User Profile Inspection Modal */}
+      <UserProfileModal
+        isOpen={Boolean(profileModalMember)}
+        onClose={() => setProfileModalMember(null)}
+        member={profileModalMember}
+        onOpenPrivateChat={handleOpenPrivateChat}
+        onMention={handleMentionFromMenu}
+        onBlockUser={async (targetId, targetNickname) => {
+          await safetyService.toggleBlockUser({
+            blockerId: user.id,
+            targetId,
+            targetNickname,
+            blocked: true,
+          });
+          setNotificationMsg(`Blocked ${targetNickname}`);
+          setTimeout(() => setNotificationMsg(null), 2500);
+        }}
+        isCurrentUser={profileModalMember?.id === user.id}
+      />
 
       {/* Toast Notification Banner */}
       {notificationMsg && (
-        <div className="fixed bottom-20 right-6 z-50 p-3 rounded-xl bg-slate-900/90 border border-slate-700 text-xs text-white shadow-xl flex items-center gap-2 animate-in fade-in">
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+        <div className="fixed bottom-20 right-6 z-50 p-3 rounded-xl bg-slate-900/95 border border-slate-700 text-xs text-white shadow-2xl flex items-center gap-2 animate-in fade-in">
+          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{notificationMsg}</span>
         </div>
       )}
 
-      {/* Real Phase 6 Safety Report Modal */}
+      {/* Report Modal */}
       <ReportModal
         isOpen={reportModalOpen}
         onClose={() => {

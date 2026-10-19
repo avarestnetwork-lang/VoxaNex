@@ -96,6 +96,7 @@ export interface ChatMessage {
   timestamp: string; // ISO 8601 string
   isSystem?: boolean;
   isDirect?: boolean;
+  clientNonce?: string;
   status?: 'sending' | 'delivered' | 'failed';
 }
 

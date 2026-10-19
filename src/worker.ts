@@ -54,8 +54,12 @@ const roomPresence = new Map<string, Map<string, PresenceMember>>();
 const roomTyping = new Map<string, Map<string, { nickname: string; expiresAt: number }>>();
 const guestSessions = new Map<string, GuestSession>();
 
-// Active SSE client streams per room
+// Active SSE client streams per room & conversation
 const roomStreams = new Map<string, Set<WritableStreamDefaultWriter<Uint8Array>>>();
+const conversationMessages = new Map<string, HubMessage[]>();
+const conversationStreams = new Map<string, Set<WritableStreamDefaultWriter<Uint8Array>>>();
+const conversationTyping = new Map<string, Map<string, { nickname: string; expiresAt: number }>>();
+const conversationReadState = new Map<string, Map<string, { readUntilId: string; readAt: string }>>();
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -76,6 +80,25 @@ function jsonResponse(data: unknown, status = 200, extraHeaders: Record<string, 
 
 function broadcastToRoom(roomId: string, eventName: string, data: unknown) {
   const writers = roomStreams.get(roomId);
+  if (!writers || writers.size === 0) return;
+
+  const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(payload);
+
+  for (const writer of writers) {
+    try {
+      writer.write(encoded).catch(() => {
+        writers.delete(writer);
+      });
+    } catch {
+      writers.delete(writer);
+    }
+  }
+}
+
+function broadcastToConversation(convId: string, eventName: string, data: unknown) {
+  const writers = conversationStreams.get(convId);
   if (!writers || writers.size === 0) return;
 
   const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -432,7 +455,210 @@ export default {
     }
 
     // -------------------------------------------------------------------------
-    // 5. GUEST SESSION ENDPOINTS
+    // 5. DIRECT 1-ON-1 CONVERSATION ENDPOINTS
+    // -------------------------------------------------------------------------
+
+    // POST /api/chat/conversations: Initialize or get conversation ID
+    if (url.pathname === '/api/chat/conversations' && request.method === 'POST') {
+      try {
+        const body: any = await request.json();
+        const { userId, partnerId } = body || {};
+        if (!userId || !partnerId) {
+          return jsonResponse({ success: false, error: 'User ID and Partner ID are required.' }, 400);
+        }
+        const convId = `conv_${[userId, partnerId].sort().join('_')}`;
+        if (!conversationMessages.has(convId)) {
+          conversationMessages.set(convId, []);
+        }
+        return jsonResponse({ success: true, conversationId: convId });
+      } catch {
+        return jsonResponse({ success: false, error: 'Malformed conversation request' }, 400);
+      }
+    }
+
+    // GET /api/chat/conversations/:id/events: SSE Stream for conversation
+    const convEventsMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/events\/?$/);
+    if (convEventsMatch && request.method === 'GET') {
+      const convId = decodeURIComponent(convEventsMatch[1]);
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      if (!conversationStreams.has(convId)) {
+        conversationStreams.set(convId, new Set());
+      }
+      const writers = conversationStreams.get(convId)!;
+      writers.add(writer);
+
+      writer.write(encoder.encode(`event: connected\ndata: {"status":"connected","convId":"${convId}"}\n\n`));
+
+      const intervalId = setInterval(() => {
+        try {
+          writer.write(encoder.encode(`: ping ${Date.now()}\n\n`)).catch(() => {
+            clearInterval(intervalId);
+            writers.delete(writer);
+          });
+        } catch {
+          clearInterval(intervalId);
+          writers.delete(writer);
+        }
+      }, 15000);
+
+      request.signal?.addEventListener('abort', () => {
+        clearInterval(intervalId);
+        writers.delete(writer);
+        try {
+          writer.close();
+        } catch {
+          // ignore
+        }
+      });
+
+      return new Response(readable, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
+    // /api/chat/conversations/:id/messages: History and Sending
+    const convMessagesMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/messages$/);
+    if (convMessagesMatch) {
+      const convId = decodeURIComponent(convMessagesMatch[1]);
+
+      if (request.method === 'GET') {
+        const list = conversationMessages.get(convId) || [];
+        return jsonResponse({ success: true, messages: list });
+      }
+
+      if (request.method === 'POST') {
+        try {
+          const body: any = await request.json();
+          const {
+            senderId,
+            senderNickname,
+            senderAvatar,
+            recipientId,
+            content,
+            mediaUrl,
+            mediaType,
+            linkPreview,
+            clientNonce,
+          } = body || {};
+
+          if (!senderId || (!content && !mediaUrl)) {
+            return jsonResponse({ success: false, error: 'Sender ID and content are required.' }, 400);
+          }
+
+          const cleanContent = sanitizeContent(content || '');
+          const message: HubMessage = {
+            id: crypto.randomUUID(),
+            roomId: convId,
+            senderId,
+            senderNickname: senderNickname || 'User',
+            senderAvatar: senderAvatar || '👤',
+            senderType: 'registered',
+            content: cleanContent,
+            rawContent: content,
+            mediaUrl,
+            mediaType,
+            linkPreview,
+            clientNonce,
+            timestamp: new Date().toISOString(),
+            status: 'delivered',
+          };
+
+          if (!conversationMessages.has(convId)) {
+            conversationMessages.set(convId, []);
+          }
+          const list = conversationMessages.get(convId)!;
+
+          // Deduplicate by clientNonce
+          if (clientNonce && list.some((m) => m.clientNonce === clientNonce)) {
+            const existing = list.find((m) => m.clientNonce === clientNonce)!;
+            return jsonResponse({ success: true, message: existing });
+          }
+
+          list.push(message);
+          if (list.length > 500) list.shift();
+
+          // Broadcast to active SSE subscribers on this direct conversation
+          broadcastToConversation(convId, 'new_dm', message);
+
+          return jsonResponse({ success: true, message });
+        } catch (err: any) {
+          return jsonResponse({ success: false, error: 'Failed to deliver message' }, 400);
+        }
+      }
+    }
+
+    // POST /api/chat/conversations/:id/typing
+    const convTypingMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/typing$/);
+    if (convTypingMatch && request.method === 'POST') {
+      const convId = decodeURIComponent(convTypingMatch[1]);
+      try {
+        const body: any = await request.json();
+        const { memberId, nickname, isTyping } = body || {};
+
+        if (!conversationTyping.has(convId)) {
+          conversationTyping.set(convId, new Map());
+        }
+        const typersMap = conversationTyping.get(convId)!;
+
+        if (isTyping && memberId && nickname) {
+          typersMap.set(memberId, { nickname, expiresAt: Date.now() + 3000 });
+        } else if (memberId) {
+          typersMap.delete(memberId);
+        }
+
+        const now = Date.now();
+        for (const [tid, t] of typersMap.entries()) {
+          if (now > t.expiresAt) typersMap.delete(tid);
+        }
+
+        const activeTypers = Array.from(typersMap.values()).map((t) => t.nickname);
+        broadcastToConversation(convId, 'dm_typing', { typers: activeTypers });
+
+        return jsonResponse({ success: true });
+      } catch {
+        return jsonResponse({ success: true });
+      }
+    }
+
+    // POST /api/chat/conversations/:id/read
+    const convReadMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/read$/);
+    if (convReadMatch && request.method === 'POST') {
+      const convId = decodeURIComponent(convReadMatch[1]);
+      try {
+        const body: any = await request.json();
+        const { userId, messageId } = body || {};
+
+        if (userId && messageId) {
+          if (!conversationReadState.has(convId)) {
+            conversationReadState.set(convId, new Map());
+          }
+          const readMap = conversationReadState.get(convId)!;
+          readMap.set(userId, { readUntilId: messageId, readAt: new Date().toISOString() });
+
+          broadcastToConversation(convId, 'dm_read', {
+            userId,
+            messageId,
+            readAt: new Date().toISOString(),
+          });
+        }
+
+        return jsonResponse({ success: true });
+      } catch {
+        return jsonResponse({ success: true });
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. GUEST SESSION ENDPOINTS
     // -------------------------------------------------------------------------
     if (url.pathname === '/api/guest/session' && request.method === 'POST') {
       try {

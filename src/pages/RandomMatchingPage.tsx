@@ -192,10 +192,12 @@ export const RandomMatchingPage: React.FC = () => {
       const unsubConv = messagingService.subscribeToConversation(
         match.conversationId,
         user.id,
-        (incomingMsg) => {
-          if (incomingMsg.senderId !== user.id) {
-            setMessages((prev) => [...prev, incomingMsg]);
-          }
+        {
+          onMessage: (incomingMsg: ChatMessage) => {
+            if (incomingMsg.senderId !== user.id) {
+              setMessages((prev) => [...prev, incomingMsg]);
+            }
+          },
         }
       );
       conversationUnsubscribeRef.current = unsubConv;

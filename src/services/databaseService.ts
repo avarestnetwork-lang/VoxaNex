@@ -74,25 +74,52 @@ export const databaseService = {
   },
 
   /**
-   * Send a message to a public room
+   * Broadcast a chat message directly via Supabase Realtime WebSocket broadcast
+   */
+  broadcastMessage(roomId: string, message: ChatMessage) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      const channel = supabase.channel(`room_hub:${roomId}`);
+      channel.send({
+        type: 'broadcast',
+        event: 'new_message',
+        payload: message,
+      });
+    } catch (e) {
+      console.warn('[VX-RT] Failed to broadcast message:', e);
+    }
+  },
+
+  /**
+   * Send a message to a public room, persisting to Supabase and broadcasting
    */
   async sendRoomMessage(params: {
     roomId: string;
+    id?: string;
     senderUserId?: string;
     senderGuestId?: string;
     senderNickname: string;
     senderAvatar: string;
     content: string;
+    mediaUrl?: string;
+    mediaType?: 'gif' | 'image';
+    clientNonce?: string;
   }): Promise<ChatMessage | null> {
     const supabase = getSupabaseClient();
+    const msgId = params.id || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const newMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
+      id: msgId,
       roomId: params.roomId,
       senderId: params.senderUserId || params.senderGuestId || 'usr',
       senderNickname: params.senderNickname,
       senderAvatar: params.senderAvatar,
       content: params.content,
+      mediaUrl: params.mediaUrl,
+      mediaType: params.mediaType,
+      clientNonce: params.clientNonce,
       timestamp: new Date().toISOString(),
+      status: 'delivered',
     };
 
     if (!supabase) return newMsg;
@@ -101,6 +128,7 @@ export const databaseService = {
       const { data, error } = await supabase
         .from('messages')
         .insert({
+          id: msgId,
           room_id: params.roomId,
           sender_user_id: params.senderUserId || null,
           sender_guest_id: params.senderGuestId || null,
@@ -111,34 +139,67 @@ export const databaseService = {
         .select()
         .single();
 
-      if (error || !data) return newMsg;
+      const savedMsg: ChatMessage = (error || !data)
+        ? newMsg
+        : {
+            id: data.id,
+            roomId: data.room_id,
+            senderId: data.sender_user_id || data.sender_guest_id || 'usr',
+            senderNickname: data.sender_nickname,
+            senderAvatar: data.sender_avatar,
+            content: data.content,
+            mediaUrl: params.mediaUrl,
+            mediaType: params.mediaType,
+            clientNonce: params.clientNonce,
+            timestamp: data.created_at,
+            status: 'delivered',
+          };
 
-      return {
-        id: data.id,
-        roomId: data.room_id,
-        senderId: data.sender_user_id || data.sender_guest_id || 'usr',
-        senderNickname: data.sender_nickname,
-        senderAvatar: data.sender_avatar,
-        content: data.content,
-        timestamp: data.created_at,
-      };
+      // Broadcast immediately across all browser clients in this room
+      this.broadcastMessage(params.roomId, savedMsg);
+
+      return savedMsg;
     } catch {
+      this.broadcastMessage(params.roomId, newMsg);
       return newMsg;
     }
   },
 
   /**
-   * Subscribe to Supabase Realtime changes for a room
+   * Subscribe to Supabase Realtime changes and WebSocket broadcasts for a room
    */
   subscribeToRoom(roomId: string, onMessage: (msg: ChatMessage) => void) {
     const supabase = getSupabaseClient();
     if (!supabase) return () => {};
 
-    const channelName = `room_chan_${roomId}_${Math.random().toString(36).slice(2, 6)}`;
-    console.log(`[VX-RT] Attempting Supabase subscription: ${channelName} for room ${roomId}`);
-    
+    const channelName = `room_hub:${roomId}`;
+    console.log(`[VX-RT] Subscribing to Supabase channel: ${channelName}`);
+
+    const seenIds = new Set<string>();
+    const markAndEmit = (msg: ChatMessage) => {
+      if (!msg || !msg.id) return;
+      if (seenIds.has(msg.id)) return;
+      seenIds.add(msg.id);
+      if (seenIds.size > 200) {
+        const oldest = seenIds.values().next().value;
+        if (oldest) seenIds.delete(oldest);
+      }
+      onMessage(msg);
+    };
+
     const channel = supabase
-      .channel(channelName, { config: { broadcast: { self: true } } })
+      .channel(channelName, { config: { broadcast: { self: false } } })
+      .on(
+        'broadcast',
+        { event: 'new_message' },
+        (payload: any) => {
+          const msg = payload?.payload;
+          if (msg && msg.roomId === roomId) {
+            console.log(`[VX-RT] Broadcast message received for room ${roomId}:`, msg.id);
+            markAndEmit(msg);
+          }
+        }
+      )
       .on(
         'postgres_changes',
         {
@@ -149,9 +210,9 @@ export const databaseService = {
         },
         (payload: any) => {
           const row = payload?.new;
-          console.log(`[VX-RT] INSERT event received for channel ${channelName}, room ${roomId}:`, row?.id);
           if (row && row.room_id === roomId) {
-            onMessage({
+            console.log(`[VX-RT] INSERT event received for room ${roomId}:`, row.id);
+            markAndEmit({
               id: row.id,
               roomId: row.room_id,
               senderId: row.sender_user_id || row.sender_guest_id || 'usr',
@@ -159,12 +220,13 @@ export const databaseService = {
               senderAvatar: row.sender_avatar,
               content: row.content,
               timestamp: row.created_at,
+              status: 'delivered',
             });
           }
         }
       )
       .subscribe((status, err) => {
-        console.log(`[VX-RT] Subscription status for channel ${channelName} (room ${roomId}): ${status}`, err || '');
+        console.log(`[VX-RT] Subscription status for ${channelName}: ${status}`, err || '');
       });
 
     return () => {

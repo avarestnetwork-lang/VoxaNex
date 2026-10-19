@@ -117,12 +117,14 @@ export const PrivateMessagingPage: React.FC = () => {
     init();
 
     // Subscribe to SSE stream for this conversation
-    const unsubscribe = messagingService.subscribeToConversation(activeConvId, user.id, (newMsg) => {
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === newMsg.id)) return prev;
-        return [...prev, newMsg];
-      });
-      setTimeout(scrollToBottom, 50);
+    const unsubscribe = messagingService.subscribeToConversation(activeConvId, user.id, {
+      onMessage: (newMsg) => {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === newMsg.id)) return prev;
+          return [...prev, newMsg];
+        });
+        setTimeout(scrollToBottom, 50);
+      },
     });
 
     return () => {
