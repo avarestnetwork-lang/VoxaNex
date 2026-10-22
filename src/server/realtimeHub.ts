@@ -521,6 +521,13 @@ export function postConversationMessage(params: {
 
   broadcastToConversation(conversationId, 'new_dm', message);
   broadcastToUser(recipientId, 'incoming_dm', { conversationId, message });
+  
+  // Bridge across environments
+  try {
+    const { databaseService } = require('./databaseService');
+    databaseService.broadcastDM(recipientId, conversationId, message);
+  } catch {}
+  
   return { success: true, message };
 }
 

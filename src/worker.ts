@@ -833,7 +833,26 @@ export default {
           // Broadcast to active SSE subscribers on this direct conversation
           broadcastToConversation(convId, 'new_dm', message);
           if (recipientId) {
-            broadcastToUser(recipientId, 'new_dm', message);
+            broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message });
+            
+            // Bridge across environments
+            if (env?.SUPABASE_URL) {
+              try {
+                // We need to import databaseService or use its implementation.
+                // Since this is worker.ts, I will just replicate the broadcast logic here
+                // to avoid complex import issues in edge runtime if any.
+                const supabase = await import('./lib/supabaseClient').then(m => m.getSupabaseClient());
+                if (supabase) {
+                    supabase.channel(`user_dm:${recipientId}`).send({
+                        type: 'broadcast',
+                        event: 'incoming_dm',
+                        payload: { conversationId: convId, message },
+                    });
+                }
+              } catch (e) {
+                console.warn('[VX-RT] Failed to broadcast DM from worker:', e);
+              }
+            }
           }
 
           return jsonResponse({ success: true, message });

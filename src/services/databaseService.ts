@@ -294,4 +294,43 @@ export const databaseService = {
       return false;
     }
   },
+
+  broadcastDM(userId: string, conversationId: string, message: ChatMessage) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      const channel = supabase.channel(`user_dm:${userId}`);
+      channel.send({
+        type: 'broadcast',
+        event: 'incoming_dm',
+        payload: { conversationId, message },
+      });
+    } catch (e) {
+      console.warn('[VX-RT] Failed to broadcast DM:', e);
+    }
+  },
+
+  subscribeToUserDMs(userId: string, onMessage: (conversationId: string, message: ChatMessage) => void) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return () => {};
+
+    const channelName = `user_dm:${userId}`;
+    const channel = supabase
+      .channel(channelName, { config: { broadcast: { self: false } } })
+      .on(
+        'broadcast',
+        { event: 'incoming_dm' },
+        (payload: any) => {
+          const { conversationId, message } = payload?.payload || {};
+          if (conversationId && message) {
+            onMessage(conversationId, message);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
 };

@@ -330,6 +330,19 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       activeSubscriptionsRef.current.set(win.conversationId, unsub);
     });
 
+    // Subscribe to global user notification stream
+    const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
+    const userEventSource = new EventSource(`${API_BASE}/api/chat/user/${user.id}/events`);
+    userEventSource.addEventListener('incoming_dm', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        // data contains { conversationId, message }
+        handleIncomingMessage(data.message, data.conversationId);
+      } catch (err) {
+        console.error('Failed to parse incoming DM from notification stream', err);
+      }
+    });
+
     // 2. Periodic polling sync fallback for ALL known conversations (even when window is closed)
     const syncInterval = setInterval(async () => {
       const allConvs = new Set<string>(knownConversationIdsRef.current);
@@ -360,6 +373,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     return () => {
       clearInterval(syncInterval);
+      userEventSource.close();
     };
   }, [user.id, openWindows, handleIncomingMessage]);
 
