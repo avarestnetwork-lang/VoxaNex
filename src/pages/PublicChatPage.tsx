@@ -183,28 +183,7 @@ export const PublicChatPage: React.FC = () => {
       timestamp: string;
       unreadCount: number;
     }>
-  >([
-    {
-      id: `conv_${[user.id, 'usr-2'].sort().join('_')}`,
-      partnerId: 'usr-2',
-      partnerNickname: 'Sylhet_Angel',
-      partnerAvatar: '🌸',
-      partnerGender: 'female',
-      lastMessage: 'Kalke chat-e asben?',
-      timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-      unreadCount: 1,
-    },
-    {
-      id: `conv_${[user.id, 'usr-1'].sort().join('_')}`,
-      partnerId: 'usr-1',
-      partnerNickname: 'Dhaka_Rider',
-      partnerAvatar: '🏍️',
-      partnerGender: 'male',
-      lastMessage: 'Shob theek ache, bhai!',
-      timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-      unreadCount: 0,
-    },
-  ]);
+  >([]);
 
   // Contextual Menus & Modals
   const [userActionMenu, setUserActionMenu] = useState<{
@@ -354,9 +333,16 @@ export const PublicChatPage: React.FC = () => {
         }
       },
       onPresence: (members) => {
-        console.log('[DIAGNOSTIC] presence_sync_received', { roomId: activeRoom.id, count: members.length });
-        setOnlineMembers(members);
-        console.log('[DIAGNOSTIC] active_user_list_updated', { count: members.length });
+        console.log('[DIAGNOSTIC] presence_sync_received', { roomId: activeRoom.id, count: members?.length || 0 });
+        if (Array.isArray(members)) {
+          setOnlineMembers((prev) => {
+            if (members.length === 0 && user?.id) {
+              return prev;
+            }
+            return members;
+          });
+        }
+        console.log('[DIAGNOSTIC] active_user_list_updated', { count: members?.length || 0 });
       },
       onTyping: (activeTypers) => {
         setTypers(activeTypers.filter((name) => name !== user.nickname));
@@ -381,13 +367,24 @@ export const PublicChatPage: React.FC = () => {
       try {
         const members = await messagingService.sendPresence(activeRoom.id, {
           id: user.id,
-          nickname: user.nickname,
-          avatar: user.avatar,
-          isGuest: user.isGuest,
+          nickname: user.nickname || 'You',
+          avatar: user.avatar || '👤',
+          isGuest: Boolean(user.isGuest),
           gender: user.gender,
         });
-        if (isMounted && Array.isArray(members) && members.length > 0) {
-          setOnlineMembers(members);
+        if (isMounted && Array.isArray(members)) {
+          if (members.length > 0) {
+            setOnlineMembers(members);
+          } else if (user?.id) {
+            setOnlineMembers([{
+              id: user.id,
+              nickname: user.nickname || 'You',
+              avatar: user.avatar || '👤',
+              isGuest: Boolean(user.isGuest),
+              gender: user.gender,
+              lastSeen: Date.now(),
+            }]);
+          }
         }
       } catch (err) {
         console.warn('Presence heartbeat non-fatal error:', err);
@@ -399,6 +396,9 @@ export const PublicChatPage: React.FC = () => {
     return () => {
       isMounted = false;
       clearInterval(interval);
+      if (user?.id) {
+        messagingService.leaveRoom(activeRoom.id, user.id);
+      }
     };
   }, [activeRoom.id, user]);
 
@@ -1240,17 +1240,17 @@ export const PublicChatPage: React.FC = () => {
                   >
                     <div className="flex items-center justify-between gap-1.5 mb-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-lg select-none shrink-0">{user.avatar || '👤'}</span>
-                        <span className={`font-bold truncate text-xs ${getGenderColor(user.gender)}`}>
-                          {user.nickname}
+                        <span className="text-lg select-none shrink-0">{user?.avatar || '👤'}</span>
+                        <span className={`font-bold truncate text-xs ${getGenderColor(user?.gender)}`}>
+                          {user?.nickname || 'You'}
                         </span>
                       </div>
-                      <GenderBadge gender={user.gender} />
+                      <GenderBadge gender={user?.gender} />
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-violet-300 pt-1 border-t border-violet-900/30 font-mono">
                       <span className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        <span>You ({user.isGuest ? 'Guest' : 'Member'})</span>
+                        <span>You ({user?.isGuest ? 'Guest' : 'Member'})</span>
                       </span>
                       <span className="text-violet-400 uppercase tracking-wider text-[9px]">Online</span>
                     </div>

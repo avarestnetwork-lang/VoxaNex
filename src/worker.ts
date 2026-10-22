@@ -413,7 +413,16 @@ export default {
       if (request.method === 'POST') {
         try {
           const body: any = await request.json();
-          const { id, nickname, avatar, isGuest, gender } = body || {};
+          const { id, nickname, avatar, isGuest, gender, action, status } = body || {};
+
+          if (action === 'leave' || status === 'offline') {
+            if (id) {
+              membersMap.delete(id);
+              const currentMembers = Array.from(membersMap.values());
+              broadcastToRoom(roomId, 'presence_update', currentMembers);
+              return jsonResponse({ success: true, members: currentMembers });
+            }
+          }
 
           if (id && nickname) {
             membersMap.set(id, {
@@ -604,6 +613,18 @@ export default {
       const convId = decodeURIComponent(convMessagesMatch[1]);
 
       if (request.method === 'GET') {
+        const reqUserId = url.searchParams.get('userId');
+        if (reqUserId && convId.startsWith('conv_')) {
+          const idWithoutPrefix = convId.replace(/^conv_/, '');
+          const isMember =
+            idWithoutPrefix.startsWith(reqUserId + '_') ||
+            idWithoutPrefix.endsWith('_' + reqUserId) ||
+            idWithoutPrefix === reqUserId;
+          if (!isMember) {
+            return jsonResponse({ success: false, error: 'Unauthorized: Not a member of this conversation.' }, 403);
+          }
+        }
+
         if (env?.SUPABASE_URL && env?.SUPABASE_ANON_KEY) {
           try {
             const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?conversation_id=eq.${convId}&order=created_at.asc`;
@@ -663,8 +684,14 @@ export default {
 
           // Authorize: Verify that sender is a participant in this conversation
           if (convId.startsWith('conv_')) {
-            const participants = convId.replace('conv_', '').split('_');
-            if (participants.length >= 2 && !participants.includes(senderId)) {
+            const idWithoutPrefix = convId.replace(/^conv_/, '');
+            const isMember =
+              (recipientId && convId === `conv_${[senderId, recipientId].sort().join('_')}`) ||
+              idWithoutPrefix.startsWith(senderId + '_') ||
+              idWithoutPrefix.endsWith('_' + senderId) ||
+              idWithoutPrefix === senderId;
+
+            if (!isMember) {
               return jsonResponse({ success: false, error: 'Unauthorized: Sender is not a member of this conversation.' }, 403);
             }
           }
@@ -708,6 +735,34 @@ export default {
 
           list.push(message);
           if (list.length > 500) list.shift();
+
+          // Persist to Supabase if configured
+          if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
+            try {
+              const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages`;
+              await fetch(supabaseUrl, {
+                method: 'POST',
+                headers: {
+                  'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+                  'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+                  'Content-Type': 'application/json',
+                  'Prefer': 'return=minimal',
+                },
+                body: JSON.stringify({
+                  conversation_id: convId,
+                  sender_user_id: senderId,
+                  sender_nickname: senderNickname || 'User',
+                  sender_avatar: senderAvatar || '👤',
+                  content: cleanContent,
+                  media_url: mediaUrl,
+                  media_type: mediaType,
+                  client_nonce: clientNonce,
+                }),
+              });
+            } catch (dbErr) {
+              console.warn('Supabase service-role DM persistence warning:', dbErr);
+            }
+          }
 
           // Broadcast to active SSE subscribers on this direct conversation
           broadcastToConversation(convId, 'new_dm', message);
@@ -761,6 +816,17 @@ export default {
         const { userId, messageId } = body || {};
 
         if (userId && messageId) {
+          if (convId.startsWith('conv_')) {
+            const idWithoutPrefix = convId.replace(/^conv_/, '');
+            const isMember =
+              idWithoutPrefix.startsWith(userId + '_') ||
+              idWithoutPrefix.endsWith('_' + userId) ||
+              idWithoutPrefix === userId;
+            if (!isMember) {
+              return jsonResponse({ success: false, error: 'Unauthorized: Not a member of this conversation.' }, 403);
+            }
+          }
+
           if (!conversationReadState.has(convId)) {
             conversationReadState.set(convId, new Map());
           }

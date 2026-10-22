@@ -363,10 +363,29 @@ export const messagingService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(member),
       });
+      if (!res.ok) {
+        return [];
+      }
       const data = await res.json();
-      return data.members || [];
+      return Array.isArray(data?.members) ? data.members : [];
     } catch {
       return [];
+    }
+  },
+
+  /**
+   * Signal immediate departure from a room
+   */
+  async leaveRoom(roomId: string, memberId: string): Promise<void> {
+    try {
+      await fetch(`${API_BASE}/api/chat/rooms/${roomId}/presence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: memberId, action: 'leave' }),
+        keepalive: true,
+      });
+    } catch {
+      // non-fatal
     }
   },
 

@@ -15,6 +15,7 @@ import {
   getRoomMessages,
   postRoomMessage,
   updateRoomPresence,
+  removeRoomPresence,
   getRoomPresence,
   setRoomTyping,
   registerConversationMembers,
@@ -291,7 +292,14 @@ async function startServer() {
   // Post presence / heartbeat
   app.post('/api/chat/rooms/:roomId/presence', (req, res) => {
     const { roomId } = req.params;
-    const { id, nickname, avatar, isGuest, gender } = req.body || {};
+    const { id, nickname, avatar, isGuest, gender, action, status } = req.body || {};
+
+    if (action === 'leave' || status === 'offline') {
+      if (id) {
+        removeRoomPresence(roomId, id);
+      }
+      return res.json({ success: true, members: getRoomPresence(roomId) });
+    }
 
     if (id && nickname) {
       updateRoomPresence(roomId, {

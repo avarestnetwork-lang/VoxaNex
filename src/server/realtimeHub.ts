@@ -325,6 +325,13 @@ export function updateRoomPresence(roomId: string, member: PresenceMember) {
   broadcastToRoom(roomId, 'presence_update', Array.from(members.values()));
 }
 
+export function removeRoomPresence(roomId: string, memberId: string) {
+  if (!roomPresence.has(roomId)) return;
+  const members = roomPresence.get(roomId)!;
+  members.delete(memberId);
+  broadcastToRoom(roomId, 'presence_update', Array.from(members.values()));
+}
+
 export function getRoomPresence(roomId: string): PresenceMember[] {
   const members = roomPresence.get(roomId);
   if (!members) return [];
@@ -368,7 +375,20 @@ export function registerConversationMembers(convId: string, memberIds: string[])
 
 export function isConversationMember(convId: string, userId: string): boolean {
   const members = conversationMembers.get(convId);
-  return Boolean(members && members.has(userId));
+  if (members && members.has(userId)) return true;
+  // Fallback: check deterministic convId format "conv_<id1>_<id2>"
+  if (convId.startsWith('conv_')) {
+    const withoutPrefix = convId.slice(5);
+    if (
+      withoutPrefix.startsWith(userId + '_') ||
+      withoutPrefix.endsWith('_' + userId) ||
+      withoutPrefix === userId
+    ) {
+      registerConversationMembers(convId, [userId]);
+      return true;
+    }
+  }
+  return false;
 }
 
 export function getConversationMessages(convId: string, requesterId: string, limit = 50): HubMessage[] {
