@@ -52,6 +52,7 @@ const userBlocks = new Map<string, Set<string>>(); // blockerId -> Set of blocke
 // SSE active response streams
 const roomSSEStreams = new Map<string, Set<Response>>();
 const conversationSSEStreams = new Map<string, Set<Response>>();
+const userDMStreams = new Map<string, Set<Response>>(); // userId -> Set of active SSE streams
 
 // Typing indicators & Presence
 const roomPresence = new Map<string, Map<string, PresenceMember>>(); // roomId -> (memberId -> PresenceMember)
@@ -191,6 +192,33 @@ export function registerConversationStream(convId: string, res: Response) {
   res.on('close', () => {
     streamSet.delete(res);
   });
+}
+
+export function registerUserDMStream(userId: string, res: Response) {
+  if (!userDMStreams.has(userId)) {
+    userDMStreams.set(userId, new Set());
+  }
+  const streamSet = userDMStreams.get(userId)!;
+  streamSet.add(res);
+
+  res.write(`event: connected\ndata: ${JSON.stringify({ userId, timestamp: new Date().toISOString() })}\n\n`);
+
+  res.on('close', () => {
+    streamSet.delete(res);
+  });
+}
+
+export function broadcastToUser(userId: string, event: string, data: any) {
+  const streamSet = userDMStreams.get(userId);
+  if (!streamSet || streamSet.size === 0) return;
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of streamSet) {
+    try {
+      res.write(payload);
+    } catch {
+      streamSet.delete(res);
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -391,6 +419,17 @@ export function isConversationMember(convId: string, userId: string): boolean {
   return false;
 }
 
+export function getUserConversations(userId: string): string[] {
+  const result = new Set<string>();
+  for (const [convId, members] of conversationMembers.entries()) {
+    if (members.has(userId)) result.add(convId);
+  }
+  for (const convId of conversationMessages.keys()) {
+    if (isConversationMember(convId, userId)) result.add(convId);
+  }
+  return Array.from(result);
+}
+
 export function getConversationMessages(convId: string, requesterId: string, limit = 50): HubMessage[] {
   if (!isConversationMember(convId, requesterId)) {
     return [];
@@ -481,6 +520,7 @@ export function postConversationMessage(params: {
   list.push(message);
 
   broadcastToConversation(conversationId, 'new_dm', message);
+  broadcastToUser(recipientId, 'incoming_dm', { conversationId, message });
   return { success: true, message };
 }
 

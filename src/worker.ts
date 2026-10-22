@@ -58,6 +58,7 @@ const guestSessions = new Map<string, GuestSession>();
 const roomStreams = new Map<string, Set<WritableStreamDefaultWriter<Uint8Array>>>();
 const conversationMessages = new Map<string, HubMessage[]>();
 const conversationStreams = new Map<string, Set<WritableStreamDefaultWriter<Uint8Array>>>();
+const userDMStreams = new Map<string, Set<WritableStreamDefaultWriter<Uint8Array>>>();
 const conversationTyping = new Map<string, Map<string, { nickname: string; expiresAt: number }>>();
 const conversationReadState = new Map<string, Map<string, { readUntilId: string; readAt: string }>>();
 
@@ -99,6 +100,25 @@ function broadcastToRoom(roomId: string, eventName: string, data: unknown) {
 
 function broadcastToConversation(convId: string, eventName: string, data: unknown) {
   const writers = conversationStreams.get(convId);
+  if (!writers || writers.size === 0) return;
+
+  const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(payload);
+
+  for (const writer of writers) {
+    try {
+      writer.write(encoded).catch(() => {
+        writers.delete(writer);
+      });
+    } catch {
+      writers.delete(writer);
+    }
+  }
+}
+
+function broadcastToUser(userId: string, eventName: string, data: unknown) {
+  const writers = userDMStreams.get(userId);
   if (!writers || writers.size === 0) return;
 
   const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -175,6 +195,52 @@ export default {
     // -------------------------------------------------------------------------
     // 1. SSE LIVE EVENT STREAM: /api/chat/rooms/:roomId/events
     // -------------------------------------------------------------------------
+    const userSseMatch = url.pathname.match(/^\/api\/chat\/user\/([^/]+)\/events\/?$/);
+    if (userSseMatch && request.method === 'GET') {
+      const userId = decodeURIComponent(userSseMatch[1]);
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      if (!userDMStreams.has(userId)) {
+        userDMStreams.set(userId, new Set());
+      }
+      const writers = userDMStreams.get(userId)!;
+      writers.add(writer);
+
+      writer.write(encoder.encode(`event: connected\ndata: {"status":"connected","userId":"${userId}"}\n\n`));
+
+      const intervalId = setInterval(() => {
+        try {
+          writer.write(encoder.encode(`: ping ${Date.now()}\n\n`)).catch(() => {
+            clearInterval(intervalId);
+            writers.delete(writer);
+          });
+        } catch {
+          clearInterval(intervalId);
+          writers.delete(writer);
+        }
+      }, 15000);
+
+      request.signal?.addEventListener('abort', () => {
+        clearInterval(intervalId);
+        writers.delete(writer);
+        try {
+          writer.close();
+        } catch {}
+      });
+
+      return new Response(readable, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+          ...CORS_HEADERS,
+        },
+      });
+    }
+
     const sseMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)\/events\/?$/);
     console.log(`[Worker] Incoming request: ${request.method} ${url.pathname}, matched SSE: ${!!sseMatch}`);
     if (sseMatch && request.method === 'GET') {
@@ -766,6 +832,9 @@ export default {
 
           // Broadcast to active SSE subscribers on this direct conversation
           broadcastToConversation(convId, 'new_dm', message);
+          if (recipientId) {
+            broadcastToUser(recipientId, 'new_dm', message);
+          }
 
           return jsonResponse({ success: true, message });
         } catch (err: any) {

@@ -21,6 +21,8 @@ import {
   registerConversationMembers,
   getConversationMessages,
   postConversationMessage,
+  registerUserDMStream,
+  getUserConversations,
   setUserBlock,
   fetchSafeLinkPreview,
   searchGifs,
@@ -349,6 +351,32 @@ async function startServer() {
 
     registerConversationMembers(convId, [userId, partnerId]);
     res.json({ success: true, conversationId: convId });
+  });
+
+  // User-level SSE Stream for incoming direct messages & notifications
+  app.get('/api/chat/user/:userId/events', (req, res) => {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required.' });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    registerUserDMStream(userId, res);
+  });
+
+  // Get active conversations list for user
+  app.get('/api/chat/conversations/list', (req, res) => {
+    const userId = req.query.userId as string;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'User ID is required.' });
+    }
+    const convs = getUserConversations(userId);
+    res.json({ success: true, conversations: convs });
   });
 
   // SSE Stream for direct 1-on-1 conversation
