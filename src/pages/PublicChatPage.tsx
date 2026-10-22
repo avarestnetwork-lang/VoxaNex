@@ -134,18 +134,24 @@ export const PublicChatPage: React.FC = () => {
     }
   }, [hasActiveSession, activeRoom, is18Verified, user.is18Verified, navigate]);
 
-  const DEFAULT_ROOM_MEMBERS: RealtimePresenceMember[] = [
-    { id: 'usr-1', nickname: 'Dhaka_Rider', avatar: '🏍️', isGuest: false, gender: 'male', lastSeen: Date.now() },
-    { id: 'usr-2', nickname: 'Sylhet_Angel', avatar: '🌸', isGuest: false, gender: 'female', lastSeen: Date.now() },
-    { id: 'usr-3', nickname: 'Bangla_Queen', avatar: '👑', isGuest: true, gender: 'female', lastSeen: Date.now() },
-    { id: 'usr-4', nickname: 'Deshi_Couples', avatar: '💑', isGuest: false, gender: 'couple', lastSeen: Date.now() },
-    { id: 'usr-5', nickname: 'Ctg_Navigator', avatar: '⛵', isGuest: true, gender: 'male', lastSeen: Date.now() },
-  ];
-
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected'>('connecting');
-  const [onlineMembers, setOnlineMembers] = useState<RealtimePresenceMember[]>(DEFAULT_ROOM_MEMBERS);
+  const [onlineMembers, setOnlineMembers] = useState<RealtimePresenceMember[]>(() => {
+    if (user?.id) {
+      return [
+        {
+          id: user.id,
+          nickname: user.nickname || 'You',
+          avatar: user.avatar || '👤',
+          isGuest: Boolean(user.isGuest),
+          gender: user.gender,
+          lastSeen: Date.now(),
+        },
+      ];
+    }
+    return [];
+  });
   const [typers, setTypers] = useState<string[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
@@ -368,20 +374,32 @@ export const PublicChatPage: React.FC = () => {
 
   // 3. Presence Heartbeat
   useEffect(() => {
-    const sendHeartbeat = () => {
+    let isMounted = true;
+    const sendHeartbeat = async () => {
+      if (!user.id) return;
       console.log('[DIAGNOSTIC] presence_session_registered', { userId: user.id, nickname: user.nickname, roomId: activeRoom.id });
-      messagingService.sendPresence(activeRoom.id, {
-        id: user.id,
-        nickname: user.nickname,
-        avatar: user.avatar,
-        isGuest: user.isGuest,
-        gender: user.gender,
-      });
+      try {
+        const members = await messagingService.sendPresence(activeRoom.id, {
+          id: user.id,
+          nickname: user.nickname,
+          avatar: user.avatar,
+          isGuest: user.isGuest,
+          gender: user.gender,
+        });
+        if (isMounted && Array.isArray(members) && members.length > 0) {
+          setOnlineMembers(members);
+        }
+      } catch (err) {
+        console.warn('Presence heartbeat non-fatal error:', err);
+      }
     };
 
     sendHeartbeat();
     const interval = setInterval(sendHeartbeat, 25000);
-    return () => clearInterval(interval);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [activeRoom.id, user]);
 
   // Handle typing input with mention autocomplete detection
@@ -1273,6 +1291,19 @@ export const PublicChatPage: React.FC = () => {
                         </div>
                       </div>
                     ))}
+
+                  {/* Empty state when no other members are in this room */}
+                  {filteredMembers.filter((m) => m.id !== user.id).length === 0 && (
+                    <div className="py-6 px-3 text-center text-slate-500 text-xs">
+                      <Users className="w-6 h-6 mx-auto mb-1.5 opacity-40 text-slate-400" />
+                      <p className="font-medium text-slate-400">
+                        {userSearchQuery ? 'No matching members found' : 'No other users in this room yet'}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        {userSearchQuery ? 'Try another search term' : 'Invite friends or chat as others join!'}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

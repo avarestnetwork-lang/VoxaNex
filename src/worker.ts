@@ -240,13 +240,44 @@ export default {
         const limitParam = parseInt(url.searchParams.get('limit') || '50', 10);
         const limit = Math.min(Math.max(limitParam, 1), 100);
 
+        if (env?.SUPABASE_URL && env?.SUPABASE_ANON_KEY) {
+          try {
+            const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?room_id=eq.${roomId}&order=created_at.desc&limit=${limit}`;
+            const headers: Record<string, string> = {
+              'apikey': env.SUPABASE_ANON_KEY,
+            };
+            // Pass user's JWT for RLS enforcement
+            if (request.headers.has('Authorization')) {
+              headers['Authorization'] = request.headers.get('Authorization')!;
+            } else {
+              headers['Authorization'] = `Bearer ${env.SUPABASE_ANON_KEY}`;
+            }
+
+            const res = await fetch(supabaseUrl, { headers });
+            const data = await res.json();
+            const messages = (Array.isArray(data) ? data : []).reverse().map((m: any) => ({
+              id: m.id,
+              roomId: m.room_id,
+              senderId: m.sender_user_id || m.sender_guest_id || 'anonymous',
+              senderNickname: m.sender_nickname,
+              senderAvatar: m.sender_avatar,
+              content: m.content,
+              timestamp: m.created_at,
+              isSystem: m.is_system || false,
+              status: 'delivered',
+            }));
+            
+            return jsonResponse({ success: true, messages });
+          } catch (e) {
+            console.error('Supabase fetch error:', e);
+            return jsonResponse({ success: false, error: 'Database error' }, 500);
+          }
+        }
+        
+        // Fallback if Supabase not configured
         const list = roomMessages.get(roomId) || [];
         const paginated = list.slice(-limit);
-
-        return jsonResponse({
-          success: true,
-          messages: paginated,
-        });
+        return jsonResponse({ success: true, messages: paginated });
       }
 
       // POST: Send new message
@@ -458,6 +489,48 @@ export default {
     // 5. DIRECT 1-ON-1 CONVERSATION ENDPOINTS
     // -------------------------------------------------------------------------
 
+    // GET /api/chat/conversations/list: Server-backed conversation discovery
+    if (url.pathname === '/api/chat/conversations/list' && request.method === 'GET') {
+      const userId = url.searchParams.get('userId');
+      const guestToken = url.searchParams.get('guestToken');
+      
+      if (!userId) {
+        return jsonResponse({ success: false, error: 'User ID is required.' }, 400);
+      }
+      
+      // Validate guest token if provided (server-side auth)
+      if (guestToken && (!guestSessions.has(guestToken) || guestSessions.get(guestToken)?.id !== userId)) {
+        return jsonResponse({ success: false, error: 'Unauthorized: Invalid guest session.' }, 401);
+      }
+      
+      if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
+        try {
+          const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/conversation_participants?user_id=eq.${userId}&select=conversation_id`;
+          const res = await fetch(supabaseUrl, {
+            headers: {
+              'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+              'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
+            }
+          });
+          const data = await res.json();
+          const userConvs = (Array.isArray(data) ? data : []).map((p: any) => p.conversation_id);
+          return jsonResponse({ success: true, conversations: userConvs });
+        } catch (e) {
+          console.error('Supabase conv list error:', e);
+          return jsonResponse({ success: false, error: 'Database error' }, 500);
+        }
+      }
+
+      // Fallback
+      const userConvs: string[] = [];
+      for (const convId of conversationMessages.keys()) {
+        if (convId.includes(userId)) {
+          userConvs.push(convId);
+        }
+      }
+      return jsonResponse({ success: true, conversations: userConvs });
+    }
+
     // POST /api/chat/conversations: Initialize or get conversation ID
     if (url.pathname === '/api/chat/conversations' && request.method === 'POST') {
       try {
@@ -531,6 +604,39 @@ export default {
       const convId = decodeURIComponent(convMessagesMatch[1]);
 
       if (request.method === 'GET') {
+        if (env?.SUPABASE_URL && env?.SUPABASE_ANON_KEY) {
+          try {
+            const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?conversation_id=eq.${convId}&order=created_at.asc`;
+            const headers: Record<string, string> = {
+              'apikey': env.SUPABASE_ANON_KEY,
+            };
+            // Pass user's JWT for RLS enforcement
+            if (request.headers.has('Authorization')) {
+              headers['Authorization'] = request.headers.get('Authorization')!;
+            } else {
+              headers['Authorization'] = `Bearer ${env.SUPABASE_ANON_KEY}`;
+            }
+
+            const res = await fetch(supabaseUrl, { headers });
+            const data = await res.json();
+            const messages = (Array.isArray(data) ? data : []).map((m: any) => ({
+              id: m.id,
+              conversationId: m.conversation_id,
+              senderId: m.sender_user_id || m.sender_guest_id || 'anonymous',
+              senderNickname: m.sender_nickname,
+              senderAvatar: m.sender_avatar,
+              content: m.content,
+              timestamp: m.created_at,
+              isDirect: true,
+              status: 'delivered',
+            }));
+            return jsonResponse({ success: true, messages });
+          } catch (e) {
+            console.error('Supabase DM fetch error:', e);
+            return jsonResponse({ success: false, error: 'Database error' }, 500);
+          }
+        }
+
         const list = conversationMessages.get(convId) || [];
         return jsonResponse({ success: true, messages: list });
       }
@@ -548,10 +654,27 @@ export default {
             mediaType,
             linkPreview,
             clientNonce,
+            guestToken,
           } = body || {};
 
           if (!senderId || (!content && !mediaUrl)) {
             return jsonResponse({ success: false, error: 'Sender ID and content are required.' }, 400);
+          }
+
+          // Authorize: Verify that sender is a participant in this conversation
+          if (convId.startsWith('conv_')) {
+            const participants = convId.replace('conv_', '').split('_');
+            if (participants.length >= 2 && !participants.includes(senderId)) {
+              return jsonResponse({ success: false, error: 'Unauthorized: Sender is not a member of this conversation.' }, 403);
+            }
+          }
+
+          // Authorize guest sessions if guest token provided
+          if (guestToken && guestSessions.has(guestToken)) {
+            const gSession = guestSessions.get(guestToken)!;
+            if (gSession.id !== senderId) {
+              return jsonResponse({ success: false, error: 'Unauthorized: Guest token mismatch.' }, 403);
+            }
           }
 
           const cleanContent = sanitizeContent(content || '');

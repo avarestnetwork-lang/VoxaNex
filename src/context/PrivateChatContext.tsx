@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { DirectConversation, ChatMessage } from '../types';
 import { useAuth } from './AuthContext';
 import { messagingService } from '../services/messagingService';
+import { guestSessionService } from '../services/guestSessionService';
 
 export interface FloatingChatWindow {
   conversationId: string;
@@ -79,18 +80,30 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
-  // Restore known conversations on mount / user change
+  // Restore known conversations from localStorage and server-backed list on mount / user change
   useEffect(() => {
     if (!user.id) return;
-    try {
-      const saved = localStorage.getItem(`vx_known_convs_${user.id}`);
-      if (saved) {
-        const parsed: string[] = JSON.parse(saved);
-        parsed.forEach((id) => knownConversationIdsRef.current.add(id));
+    async function initConvs() {
+      try {
+        const saved = localStorage.getItem(`vx_known_convs_${user.id}`);
+        if (saved) {
+          const parsed: string[] = JSON.parse(saved);
+          parsed.forEach((id) => knownConversationIdsRef.current.add(id));
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
+
+      // Fetch server-backed conversations for this user (robust for cleared localStorage / fresh browser session)
+      try {
+        const token = guestSessionService.getStoredToken();
+        const serverConvs = await messagingService.fetchUserConversations(user.id, token || undefined);
+        serverConvs.forEach((id) => knownConversationIdsRef.current.add(id));
+      } catch {
+        // ignore
+      }
     }
+    initConvs();
   }, [user.id]);
 
   // Open or focus a chat window with a partner
