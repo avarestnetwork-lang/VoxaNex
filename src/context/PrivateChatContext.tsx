@@ -309,15 +309,38 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
   }, [user.id, autoOpenPrivateChats]);
 
-  // Global background sync for all open windows & known conversations
+  // Fix 1: Global Notifications (SSE + Supabase)
   useEffect(() => {
     if (!user.id) return;
 
-    // 1. Subscribe to SSE for open windows
+    const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
+    const userEventSource = new EventSource(`${API_BASE}/api/chat/user/${user.id}/events`);
+    userEventSource.addEventListener('incoming_dm', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        handleIncomingMessage(data.message, data.conversationId);
+      } catch (err) {
+        console.error('Failed to parse incoming DM from SSE stream', err);
+      }
+    });
+
+    const unsubSupabase = databaseService.subscribeToUserDMs(user.id, (conversationId: string, message: ChatMessage) => {
+      handleIncomingMessage(message, conversationId);
+    });
+
+    return () => {
+      userEventSource.close();
+      unsubSupabase();
+    };
+  }, [user.id, handleIncomingMessage]);
+
+  // Fix 2: Per-window Subscriptions
+  useEffect(() => {
+    if (!user.id) return;
+
     openWindows.forEach((win) => {
       if (activeSubscriptionsRef.current.has(win.conversationId)) return;
-
-      console.log('[DIAGNOSTIC] private_realtime_subscription_ready', { conversationId: win.conversationId });
+      
       const unsub = messagingService.subscribeToConversation(win.conversationId, user.id, {
         onMessage: (msg) => {
           handleIncomingMessage(msg, win.conversationId, {
@@ -331,24 +354,24 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       activeSubscriptionsRef.current.set(win.conversationId, unsub);
     });
 
-    // Subscribe to global user notification stream
-    const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
-    const userEventSource = new EventSource(`${API_BASE}/api/chat/user/${user.id}/events`);
-    userEventSource.addEventListener('incoming_dm', (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        handleIncomingMessage(data.message, data.conversationId);
-      } catch (err) {
-        console.error('Failed to parse incoming DM from SSE stream', err);
-      }
+    // Cleanup unsubscribed windows
+    const openConvIds = new Set(openWindows.map(w => w.conversationId));
+    activeSubscriptionsRef.current.forEach((unsub, convId) => {
+        if (!openConvIds.has(convId)) {
+            unsub();
+            activeSubscriptionsRef.current.delete(convId);
+        }
     });
 
-    // Bridge cross-runtime delivery via Supabase Realtime
-    const unsubSupabase = databaseService.subscribeToUserDMs(user.id, (conversationId: string, message: ChatMessage) => {
-      handleIncomingMessage(message, conversationId);
-    });
+    return () => {
+      activeSubscriptionsRef.current.forEach((unsub) => unsub());
+      activeSubscriptionsRef.current.clear();
+    };
+  }, [user.id, openWindows, handleIncomingMessage]);
 
-    // 2. Periodic polling sync fallback for ALL known conversations (even when window is closed)
+  // Fix 3: Polling Sync
+  useEffect(() => {
+    if (!user.id) return;
     const syncInterval = setInterval(async () => {
       const allConvs = new Set<string>(knownConversationIdsRef.current);
       openWindows.forEach((w) => allConvs.add(w.conversationId));
@@ -359,7 +382,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
           if (res.success && res.messages.length > 0) {
             for (const m of res.messages) {
               if (!seenMessageIdsRef.current.has(m.id) && m.senderId !== user.id) {
-                // Determine partner info from convId
                 const parts = convId.replace('conv_', '').split('_');
                 const partnerId = parts[0] === user.id ? parts[1] : parts[0];
                 handleIncomingMessage(m, convId, {
@@ -376,11 +398,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       }
     }, 3000);
 
-    return () => {
-      clearInterval(syncInterval);
-      userEventSource.close();
-      unsubSupabase();
-    };
+    return () => clearInterval(syncInterval);
   }, [user.id, openWindows, handleIncomingMessage]);
 
   const totalUnreadCount = openWindows.reduce((acc, w) => acc + w.unreadCount, 0);
