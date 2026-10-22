@@ -103,6 +103,20 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       } catch {
         // ignore
       }
+
+      // Seed seenMessageIdsRef with existing history so reload does not treat old messages as brand-new incoming messages
+      for (const convId of knownConversationIdsRef.current) {
+        try {
+          const res = await messagingService.fetchConversationMessages(convId, user.id);
+          if (res.success && res.messages) {
+            res.messages.forEach((m) => {
+              if (m.id) seenMessageIdsRef.current.add(m.id);
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
     initConvs();
   }, [user.id]);
