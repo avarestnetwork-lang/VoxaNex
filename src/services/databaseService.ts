@@ -295,42 +295,19 @@ export const databaseService = {
     }
   },
 
-  broadcastDM(userId: string, conversationId: string, message: ChatMessage) {
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
-    try {
-      const channel = supabase.channel(`user_dm:${userId}`);
-      channel.send({
-        type: 'broadcast',
-        event: 'incoming_dm',
-        payload: { conversationId, message },
-      });
-    } catch (e) {
-      console.warn('[VX-RT] Failed to broadcast DM:', e);
-    }
+  /**
+   * DEPRECATED: Unauthenticated public broadcast channel decommissioned for security compliance.
+   * Private DMs are routed exclusively through server-authenticated event streams and the secure event_bus.
+   */
+  broadcastDM(_userId: string, _conversationId: string, _message: ChatMessage) {
+    // Intentionally decommissioned to prevent public broadcast of private messages.
   },
 
-  subscribeToUserDMs(userId: string, onMessage: (conversationId: string, message: ChatMessage) => void) {
-    const supabase = getSupabaseClient();
-    if (!supabase) return () => {};
-
-    const channelName = `user_dm:${userId}`;
-    const channel = supabase
-      .channel(channelName, { config: { broadcast: { self: false } } })
-      .on(
-        'broadcast',
-        { event: 'incoming_dm' },
-        (payload: any) => {
-          const { conversationId, message } = payload?.payload || {};
-          if (conversationId && message) {
-            onMessage(conversationId, message);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+  /**
+   * DEPRECATED: Unauthenticated public broadcast subscription decommissioned.
+   * Private DM notifications use server-authenticated SSE streams (/api/chat/user/:userId/events).
+   */
+  subscribeToUserDMs(_userId: string, _onMessage: (conversationId: string, message: ChatMessage) => void) {
+    return () => {};
   },
 };

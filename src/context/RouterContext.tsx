@@ -15,6 +15,7 @@ export type AppRoute =
   | '/forum'
   | '/blog'
   | '/admin'
+  | '/admin/login'
   | '/privacy'
   | '/terms'
   | '/about'
@@ -80,6 +81,7 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
     '/forum',
     '/blog',
     '/admin',
+    '/admin/login',
     '/privacy',
     '/terms',
     '/about',

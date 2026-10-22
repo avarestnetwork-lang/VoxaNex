@@ -438,11 +438,15 @@ export const messagingService = {
     }
   ): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
     try {
+      const guestToken =
+        guestSessionService.getStoredToken() ||
+        (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined) ||
+        undefined;
       const clientNonce = options.clientNonce || `nonce_dm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...options, clientNonce }),
+        body: JSON.stringify({ ...options, guestToken, clientNonce }),
       });
       const data = await res.json();
 
@@ -550,9 +554,10 @@ export const messagingService = {
       // ignore
     }
 
-    // 2. SSE Connection
+    // 2. SSE Connection (Authenticated via guestToken)
     try {
-      eventSource = new EventSource(`${API_BASE}/api/chat/conversations/${convId}/events?userId=${encodeURIComponent(userId)}`);
+      const token = guestSessionService.getStoredToken();
+      eventSource = new EventSource(`${API_BASE}/api/chat/conversations/${convId}/events?userId=${encodeURIComponent(userId)}${token ? `&guestToken=${encodeURIComponent(token)}` : ''}`);
       
       eventSource.addEventListener('new_dm', (e) => {
         try {

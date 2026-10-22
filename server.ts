@@ -2,6 +2,8 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { createServer as createViteServer } from 'vite';
 import {
   createGuestSession,
@@ -9,6 +11,7 @@ import {
   revokeGuestSession,
   cleanupExpiredSessions,
 } from './src/server/guestSessionManager';
+import { adminAuthMiddleware, parseCookies } from './src/server/adminAuthMiddleware';
 import {
   registerRoomStream,
   registerConversationStream,
@@ -21,6 +24,7 @@ import {
   registerConversationMembers,
   getConversationMessages,
   postConversationMessage,
+  isConversationMember,
   registerUserDMStream,
   getUserConversations,
   setUserBlock,
@@ -356,8 +360,21 @@ async function startServer() {
   // User-level SSE Stream for incoming direct messages & notifications
   app.get('/api/chat/user/:userId/events', (req, res) => {
     const { userId } = req.params;
+    const token =
+      (req.query.guestToken as string) ||
+      (req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.split(' ')[1]
+        : undefined);
+
     if (!userId) {
       return res.status(400).json({ success: false, error: 'User ID is required.' });
+    }
+
+    const auth = validateGuestToken(token || '');
+    if (!auth.valid || !auth.session || auth.session.id !== userId) {
+      return res
+        .status(401)
+        .json({ success: false, error: 'Unauthorized: Session identity mismatch or invalid guest token.' });
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -370,19 +387,38 @@ async function startServer() {
   });
 
   // Get active conversations list for user
-  app.get('/api/chat/conversations/list', (req, res) => {
-    const userId = req.query.userId as string;
-    if (!userId) {
-      return res.status(400).json({ success: false, error: 'User ID is required.' });
+  app.get('/api/chat/conversations/list', async (req, res) => {
+    const { guestToken } = req.query;
+
+    const auth = validateGuestToken(guestToken as string);
+    if (!auth.valid || !auth.session) {
+      return res.status(401).json({ success: false, error: 'Unauthorized.' });
     }
-    const convs = getUserConversations(userId);
+
+    const convs = await getUserConversations(auth.session.id!);
     res.json({ success: true, conversations: convs });
   });
 
   // SSE Stream for direct 1-on-1 conversation
-  app.get('/api/chat/conversations/:id/events', (req, res) => {
+  app.get('/api/chat/conversations/:id/events', async (req, res) => {
     const { id } = req.params;
-    const userId = req.query.userId as string;
+    const token =
+      (req.query.guestToken as string) ||
+      (req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.split(' ')[1]
+        : undefined);
+
+    const auth = validateGuestToken(token || '');
+    if (!auth.valid || !auth.session) {
+      return res.status(401).json({ success: false, error: 'Unauthorized: Invalid guest session token.' });
+    }
+
+    const isMember = await isConversationMember(id, auth.session.id!);
+    if (!isMember) {
+      return res
+        .status(403)
+        .json({ success: false, error: 'Forbidden: You are not a member of this direct conversation.' });
+    }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -394,22 +430,27 @@ async function startServer() {
   });
 
   // Get conversation history
-  app.get('/api/chat/conversations/:id/messages', (req, res) => {
+  app.get('/api/chat/conversations/:id/messages', async (req, res) => {
     const { id } = req.params;
-    const requesterId = (req.query.userId as string) || '';
+    const { guestToken } = req.query;
 
-    const messages = getConversationMessages(id, requesterId);
+    const auth = validateGuestToken(guestToken as string);
+    if (!auth.valid || !auth.session) {
+      return res.status(401).json({ success: false, error: 'Unauthorized.' });
+    }
+
+    const messages = await getConversationMessages(id, auth.session.id!);
     res.json({ success: true, messages });
   });
 
   // Send direct message
-  app.post('/api/chat/conversations/:id/messages', (req, res) => {
+  app.post('/api/chat/conversations/:id/messages', async (req, res) => {
     const { id } = req.params;
     const {
-      senderId,
+      guestToken,
+      senderId: bodySenderId,
       senderNickname,
       senderAvatar,
-      recipientId,
       content,
       mediaUrl,
       mediaType,
@@ -417,12 +458,29 @@ async function startServer() {
       clientNonce,
     } = req.body || {};
 
-    const postResult = postConversationMessage({
+    let verifiedSenderId = bodySenderId;
+    let verifiedNickname = senderNickname;
+    let verifiedAvatar = senderAvatar;
+
+    if (guestToken) {
+      const auth = validateGuestToken(guestToken);
+      if (!auth.valid || !auth.session) {
+        return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired guest session.' });
+      }
+      verifiedSenderId = auth.session.id || verifiedSenderId;
+      verifiedNickname = auth.session.nickname || verifiedNickname;
+      verifiedAvatar = auth.session.avatar || verifiedAvatar;
+    }
+
+    if (!verifiedSenderId) {
+      return res.status(400).json({ success: false, error: 'Sender identity or guest session token required.' });
+    }
+
+    const postResult = await postConversationMessage({
       conversationId: id,
-      senderId,
-      senderNickname: senderNickname || 'User',
-      senderAvatar: senderAvatar || '👤',
-      recipientId,
+      senderId: verifiedSenderId,
+      senderNickname: verifiedNickname || 'User',
+      senderAvatar: verifiedAvatar || '👤',
       rawContent: content,
       mediaUrl,
       mediaType,
@@ -797,12 +855,8 @@ async function startServer() {
     res.json({ success: true, config: getAgeAssuranceConfig() });
   });
 
-  app.post('/api/admin/age-assurance/config', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || req.body?.role || 'user';
-    if (role !== 'admin') {
-      return res.status(403).json({ success: false, error: 'Admin privileges required to update age assurance configuration.' });
-    }
-    const actor = (req.headers['x-user-nickname'] as string) || 'Admin';
+  app.post('/api/admin/age-assurance/config', adminAuthMiddleware('admin'), (req, res) => {
+    const actor = (req as any).adminUser?.username || 'Admin';
     const updated = updateAgeAssuranceConfig(req.body || {}, actor);
     res.json({ success: true, config: updated });
   });
@@ -865,16 +919,13 @@ async function startServer() {
   });
 
   // Age Assurance: Revoke Eligibility (Admin / Moderator)
-  app.post('/api/admin/age-assurance/revoke', (req, res) => {
-    const { userId, reason, actor } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || req.body?.role || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Moderator privileges required.' });
-    }
+  app.post('/api/admin/age-assurance/revoke', adminAuthMiddleware('moderator'), (req, res) => {
+    const { userId, reason } = req.body || {};
+    const actor = (req as any).adminUser?.username || 'Staff';
     const success = revokeAgeVerification(
       userId,
       reason || 'Eligibility revoked by moderation investigation.',
-      actor || 'Admin'
+      actor
     );
     res.json({ success });
   });
@@ -1029,6 +1080,121 @@ async function startServer() {
   });
 
   // ---------------------------------------------------------------------------
+  // ADMIN AUTHENTICATION ENDPOINTS
+  // ---------------------------------------------------------------------------
+  const loginAttemptsMap = new Map<string, { count: number; resetAt: number }>();
+
+  app.get('/api/admin/me', adminAuthMiddleware('moderator'), (req, res) => {
+    const adminUser = (req as any).adminUser;
+    res.json({
+      success: true,
+      user: {
+        username: adminUser?.username || 'admin',
+        role: adminUser?.role || 'admin',
+      },
+    });
+  });
+
+  app.post('/api/admin/login', (req, res) => {
+    const ip =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      '127.0.0.1';
+    const now = Date.now();
+    const record = loginAttemptsMap.get(ip);
+
+    if (record && now < record.resetAt && record.count >= 5) {
+      return res.status(429).json({
+        success: false,
+        error: 'Too many failed login attempts. Please try again in 15 minutes.',
+      });
+    }
+
+    const { username, password } = req.body || {};
+    const expectedUser = process.env.ADMIN_USER;
+    const expectedHash = process.env.ADMIN_PASS_HASH;
+    const secret = process.env.JWT_SECRET;
+
+    // Fail securely if environment variables are missing or default
+    if (
+      !expectedUser ||
+      !expectedHash ||
+      !secret ||
+      secret === 'fallback_secret' ||
+      secret === 'change_me'
+    ) {
+      console.error('[Admin Auth] Missing or unsafe ADMIN_USER, ADMIN_PASS_HASH, or JWT_SECRET configuration.');
+      return res.status(500).json({
+        success: false,
+        error: 'Administrator authentication is not properly configured on this server.',
+      });
+    }
+
+    if (!username || !password || typeof username !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Username and password are required.',
+      });
+    }
+
+    const isUserValid = username === expectedUser;
+    let isPassValid = false;
+
+    try {
+      isPassValid = bcrypt.compareSync(password, expectedHash);
+    } catch (err) {
+      console.error('[Admin Auth] Password hash verification error:', err);
+      isPassValid = false;
+    }
+
+    if (isUserValid && isPassValid) {
+      loginAttemptsMap.delete(ip);
+      const token = jwt.sign({ role: 'admin', username: expectedUser }, secret, {
+        expiresIn: '2h',
+        algorithm: 'HS256',
+        issuer: 'chatlustora-auth',
+        audience: 'chatlustora-admin',
+      });
+
+      res.cookie('admin_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 2 * 60 * 60 * 1000,
+      });
+
+      return res.json({
+        success: true,
+        user: {
+          username: expectedUser,
+          role: 'admin',
+        },
+      });
+    } else {
+      if (!record || now > record.resetAt) {
+        loginAttemptsMap.set(ip, { count: 1, resetAt: now + 15 * 60 * 1000 });
+      } else {
+        record.count++;
+      }
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid administrator credentials.',
+      });
+    }
+  });
+
+  app.post('/api/admin/logout', (req, res) => {
+    res.clearCookie('admin_token', {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    res.json({ success: true });
+  });
+
+  // ---------------------------------------------------------------------------
   // PHASE 7: COMMUNITY FORUM ENDPOINTS
   // ---------------------------------------------------------------------------
   app.get('/api/forum/topics', (req, res) => {
@@ -1109,9 +1275,9 @@ async function startServer() {
     res.json(result);
   });
 
-  app.post('/api/forum/topics/:id/lock', (req, res) => {
+  app.post('/api/forum/topics/:id/lock', adminAuthMiddleware('moderator'), (req, res) => {
     const { isLocked } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || 'user';
+    const role = (req as any).adminUser?.role || 'moderator';
     const result = toggleLockForumTopic(req.params.id, Boolean(isLocked), role);
     if (!result.success) {
       return res.status(403).json(result);
@@ -1119,9 +1285,9 @@ async function startServer() {
     res.json(result);
   });
 
-  app.post('/api/forum/topics/:id/pin', (req, res) => {
+  app.post('/api/forum/topics/:id/pin', adminAuthMiddleware('moderator'), (req, res) => {
     const { pinned } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || 'user';
+    const role = (req as any).adminUser?.role || 'moderator';
     const result = togglePinForumTopic(req.params.id, Boolean(pinned), role);
     if (!result.success) {
       return res.status(403).json(result);
@@ -1130,7 +1296,20 @@ async function startServer() {
   });
 
   app.delete('/api/forum/topics/:id', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || (req.query.role as string) || 'user';
+    // Check if request carries verified staff credentials in cookie
+    const cookies = parseCookies(req.headers.cookie);
+    let role = 'user';
+    const secret = process.env.JWT_SECRET;
+    if (cookies['admin_token'] && secret) {
+      try {
+        const decoded = jwt.verify(cookies['admin_token'], secret, {
+          algorithms: ['HS256'],
+          issuer: 'chatlustora-auth',
+          audience: 'chatlustora-admin',
+        }) as any;
+        if (decoded?.role) role = decoded.role;
+      } catch {}
+    }
     const requesterId = (req.headers['x-user-id'] as string) || (req.query.authorId as string);
     const ok = deleteForumTopic(req.params.id, requesterId, role);
     if (!ok) {
@@ -1140,7 +1319,19 @@ async function startServer() {
   });
 
   app.delete('/api/forum/topics/:id/replies/:replyId', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || (req.query.role as string) || 'user';
+    const cookies = parseCookies(req.headers.cookie);
+    let role = 'user';
+    const secret = process.env.JWT_SECRET;
+    if (cookies['admin_token'] && secret) {
+      try {
+        const decoded = jwt.verify(cookies['admin_token'], secret, {
+          algorithms: ['HS256'],
+          issuer: 'chatlustora-auth',
+          audience: 'chatlustora-admin',
+        }) as any;
+        if (decoded?.role) role = decoded.role;
+      } catch {}
+    }
     const requesterId = (req.headers['x-user-id'] as string) || (req.query.authorId as string);
     const ok = deleteForumReply(req.params.id, req.params.replyId, requesterId, role);
     if (!ok) {
@@ -1149,9 +1340,9 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.post('/api/forum/topics/:id/replies/:replyId/moderate', (req, res) => {
+  app.post('/api/forum/topics/:id/replies/:replyId/moderate', adminAuthMiddleware('moderator'), (req, res) => {
     const { isApproved } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || 'user';
+    const role = (req as any).adminUser?.role || 'moderator';
     const ok = moderateForumReply(req.params.id, req.params.replyId, Boolean(isApproved), role);
     if (!ok) {
       return res.status(403).json({ success: false, error: 'Unauthorized: Moderator privileges required.' });
@@ -1177,18 +1368,16 @@ async function startServer() {
     res.json({ success: true, article });
   });
 
-  app.post('/api/blog/articles', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || req.body?.authorRole || 'user';
-    const result = saveBlogArticle(req.body, role);
+  app.post('/api/blog/articles', adminAuthMiddleware('admin'), (req, res) => {
+    const result = saveBlogArticle(req.body, 'admin');
     if (!result.success) {
       return res.status(403).json(result);
     }
     res.json(result);
   });
 
-  app.delete('/api/blog/articles/:slug', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    const ok = deleteBlogArticle(req.params.slug, role);
+  app.delete('/api/blog/articles/:slug', adminAuthMiddleware('admin'), (req, res) => {
+    const ok = deleteBlogArticle(req.params.slug, 'admin');
     if (!ok) {
       return res.status(403).json({ success: false, error: 'Unauthorized: Admin role required to delete articles.' });
     }
@@ -1212,19 +1401,17 @@ async function startServer() {
     res.json(result);
   });
 
-  app.post('/api/blog/articles/:slug/comments/:commentId/moderate', (req, res) => {
+  app.post('/api/blog/articles/:slug/comments/:commentId/moderate', adminAuthMiddleware('moderator'), (req, res) => {
     const { status } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    const ok = moderateBlogComment(req.params.slug, req.params.commentId, status || 'approved', role);
+    const ok = moderateBlogComment(req.params.slug, req.params.commentId, status || 'approved', 'moderator');
     if (!ok) {
       return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
     }
     res.json({ success: true });
   });
 
-  app.delete('/api/blog/articles/:slug/comments/:commentId', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    const ok = deleteBlogComment(req.params.slug, req.params.commentId, role);
+  app.delete('/api/blog/articles/:slug/comments/:commentId', adminAuthMiddleware('moderator'), (req, res) => {
+    const ok = deleteBlogComment(req.params.slug, req.params.commentId, 'moderator');
     if (!ok) {
       return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
     }
@@ -1246,9 +1433,8 @@ async function startServer() {
     res.json({ success: true, guide });
   });
 
-  app.put('/api/admin/guides/:slug', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    const result = updateCommunityGuide(req.params.slug, req.body || {}, role);
+  app.put('/api/admin/guides/:slug', adminAuthMiddleware('admin'), (req, res) => {
+    const result = updateCommunityGuide(req.params.slug, req.body || {}, 'admin');
     if (!result.success) {
       return res.status(403).json(result);
     }
@@ -1271,27 +1457,24 @@ async function startServer() {
     res.json({ success: true, rooms: catalogWithLiveCounts });
   });
 
-  app.post('/api/admin/rooms', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    const result = createDynamicRoom(req.body, role);
+  app.post('/api/admin/rooms', adminAuthMiddleware('admin'), (req, res) => {
+    const result = createDynamicRoom(req.body, 'admin');
     if (!result.success) {
       return res.status(403).json(result);
     }
     res.json(result);
   });
 
-  app.put('/api/admin/rooms/:id', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    const result = updateDynamicRoom(req.params.id, req.body || {}, role);
+  app.put('/api/admin/rooms/:id', adminAuthMiddleware('admin'), (req, res) => {
+    const result = updateDynamicRoom(req.params.id, req.body || {}, 'admin');
     if (!result.success) {
       return res.status(403).json(result);
     }
     res.json(result);
   });
 
-  app.delete('/api/admin/rooms/:id', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    const ok = deleteDynamicRoom(req.params.id, role);
+  app.delete('/api/admin/rooms/:id', adminAuthMiddleware('admin'), (req, res) => {
+    const ok = deleteDynamicRoom(req.params.id, 'admin');
     if (!ok) {
       return res.status(403).json({ success: false, error: 'Unauthorized: Admin role required.' });
     }
@@ -1324,16 +1507,13 @@ async function startServer() {
     res.json({ success: ok });
   });
 
-  app.get('/api/admin/media', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Staff role required.' });
-    }
+  app.get('/api/admin/media', adminAuthMiddleware('moderator'), (req, res) => {
+    const role = (req as any).adminUser?.role || 'admin';
     res.json({ success: true, media: getMediaList(role) });
   });
 
-  app.delete('/api/admin/media/:id', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || 'user';
+  app.delete('/api/admin/media/:id', adminAuthMiddleware('moderator'), (req, res) => {
+    const role = (req as any).adminUser?.role || 'admin';
     const ok = removeMediaUpload(req.params.id, role);
     if (!ok) {
       return res.status(403).json({ success: false, error: 'Unauthorized: Staff role required.' });
@@ -1348,7 +1528,7 @@ async function startServer() {
   // ---------------------------------------------------------------------------
   // PHASE 7: ADMIN DASHBOARD & MODERATION ENDPOINTS
   // ---------------------------------------------------------------------------
-  app.get('/api/admin/metrics', (req, res) => {
+  app.get('/api/admin/metrics', adminAuthMiddleware('moderator'), (req, res) => {
     const catalog = EXTENDED_ROOMS_CATALOG;
     let totalRoomParticipants = 0;
     catalog.forEach((r) => {
@@ -1356,9 +1536,9 @@ async function startServer() {
       totalRoomParticipants += p ? p.length : 0;
     });
 
-    const reports = getPlatformReports();
-    const restrictions = getUserRestrictions();
-    const appeals = getModerationAppeals();
+    const reports = getPlatformReports('admin');
+    const restrictions = getUserRestrictions('admin');
+    const appeals = getModerationAppeals('admin');
     const topics = getForumTopics();
     const articles = getBlogArticles({ status: 'all' });
 
@@ -1379,46 +1559,34 @@ async function startServer() {
   });
 
   // Admin: Safety Reports Queue
-  app.get('/api/admin/reports', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || (req.query.role as string) || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
-    }
+  app.get('/api/admin/reports', adminAuthMiddleware('moderator'), (req, res) => {
+    const role = (req as any).adminUser?.role || 'admin';
     res.json({ success: true, reports: getPlatformReports(role) });
   });
 
-  app.post('/api/admin/reports/:id/status', (req, res) => {
-    const { status, actionTaken, moderatorNotes, reviewer } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
-    }
+  app.post('/api/admin/reports/:id/status', adminAuthMiddleware('moderator'), (req, res) => {
+    const { status, actionTaken, moderatorNotes } = req.body || {};
+    const reviewer = (req as any).adminUser?.username || 'Staff';
     const updated = updateReportStatus(
       req.params.id,
       status,
       actionTaken,
       moderatorNotes,
-      reviewer || (req.headers['x-user-nickname'] as string) || 'Admin'
+      reviewer
     );
     res.json({ success: true, report: updated });
   });
 
   // Admin: User Restrictions List
-  app.get('/api/admin/restrictions', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || (req.query.role as string) || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
-    }
+  app.get('/api/admin/restrictions', adminAuthMiddleware('moderator'), (req, res) => {
+    const role = (req as any).adminUser?.role || 'admin';
     res.json({ success: true, restrictions: getUserRestrictions(role) });
   });
 
   // Admin: Impose User Restriction
-  app.post('/api/admin/restrictions', (req, res) => {
-    const { userId, userNickname, type, scope, reason, imposedBy } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
-    }
+  app.post('/api/admin/restrictions', adminAuthMiddleware('moderator'), (req, res) => {
+    const { userId, userNickname, type, scope, reason } = req.body || {};
+    const actor = (req as any).adminUser?.username || 'Staff';
     if (!userId || !type || !reason) {
       return res.status(400).json({ success: false, error: 'userId, type, and reason required.' });
     }
@@ -1428,32 +1596,26 @@ async function startServer() {
       type,
       scope,
       reason,
-      imposedBy: imposedBy || (req.headers['x-user-nickname'] as string) || 'Admin',
+      imposedBy: actor,
     });
     res.json(result);
   });
 
   // Admin: Lift User Restriction
-  app.post('/api/admin/restrictions/:userId/lift', (req, res) => {
-    const { reason, actor } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
-    }
+  app.post('/api/admin/restrictions/:userId/lift', adminAuthMiddleware('moderator'), (req, res) => {
+    const { reason } = req.body || {};
+    const actor = (req as any).adminUser?.username || 'Staff';
     const lifted = liftUserRestriction(
       req.params.userId,
-      reason || 'Sanction manually lifted by moderator.',
-      actor || (req.headers['x-user-nickname'] as string) || 'Admin'
+      reason || 'Sanction manually lifted by staff.',
+      actor
     );
     res.json({ success: lifted });
   });
 
   // Admin: Appeals List & Review
-  app.get('/api/admin/appeals', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || (req.query.role as string) || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
-    }
+  app.get('/api/admin/appeals', adminAuthMiddleware('moderator'), (req, res) => {
+    const role = (req as any).adminUser?.role || 'admin';
     res.json({ success: true, appeals: getModerationAppeals(role) });
   });
 
@@ -1466,40 +1628,30 @@ async function startServer() {
     res.json(result);
   });
 
-  app.post('/api/admin/appeals/:id/review', (req, res) => {
-    const { status, notes, reviewer } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
-    }
+  app.post('/api/admin/appeals/:id/review', adminAuthMiddleware('moderator'), (req, res) => {
+    const { status, notes } = req.body || {};
+    const reviewer = (req as any).adminUser?.username || 'Staff';
     const result = reviewAppeal(
       req.params.id,
       status,
       notes,
-      reviewer || (req.headers['x-user-nickname'] as string) || 'Admin'
+      reviewer
     );
     if (!result) return res.status(404).json({ success: false, error: 'Appeal not found.' });
     res.json({ success: true, appeal: result });
   });
 
   // Admin: Audit Logs
-  app.get('/api/admin/audit-logs', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || (req.query.role as string) || 'user';
-    if (role !== 'admin' && role !== 'moderator') {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator or admin role required.' });
-    }
+  app.get('/api/admin/audit-logs', adminAuthMiddleware('moderator'), (req, res) => {
+    const role = (req as any).adminUser?.role || 'admin';
     res.json({ success: true, auditLogs: getModerationAuditLogs(role) });
   });
 
-  app.get('/api/admin/settings', (req, res) => {
+  app.get('/api/admin/settings', adminAuthMiddleware('admin'), (req, res) => {
     res.json({ success: true, settings: getPlatformSettings() });
   });
 
-  app.post('/api/admin/settings', (req, res) => {
-    const role = (req.headers['x-user-role'] as string) || 'user';
-    if (role !== 'admin') {
-      return res.status(403).json({ success: false, error: 'Admin role required to modify platform settings.' });
-    }
+  app.post('/api/admin/settings', adminAuthMiddleware('admin'), (req, res) => {
     const updated = updatePlatformSettings(req.body || {});
     res.json({ success: true, settings: updated });
   });

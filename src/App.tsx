@@ -24,6 +24,8 @@ import { SafetyCenterPage } from './pages/SafetyCenterPage';
 import { ForumPage } from './pages/ForumPage';
 import { BlogPage } from './pages/BlogPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
+import { AdminLoginPage } from './pages/AdminLoginPage';
+import { AdminRouteGuard } from './components/auth/AdminRouteGuard';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { TermsOfServicePage } from './pages/TermsOfServicePage';
 import { AboutPage } from './pages/AboutPage';
@@ -74,8 +76,14 @@ const AppRoutes: React.FC = () => {
         return <ForumPage />;
       case '/blog':
         return <BlogPage />;
+      case '/admin/login':
+        return <AdminLoginPage />;
       case '/admin':
-        return <AdminDashboardPage />;
+        return (
+          <AdminRouteGuard>
+            <AdminDashboardPage />
+          </AdminRouteGuard>
+        );
       case '/privacy':
         return <PrivacyPolicyPage />;
       case '/terms':

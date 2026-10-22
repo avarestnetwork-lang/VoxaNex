@@ -98,6 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (check.valid && check.session) {
           setUser(prev => ({
             ...prev,
+            id: check.session?.id || prev.id,
             nickname: check.session?.nickname || prev.nickname,
             avatar: check.session?.avatar || prev.avatar,
             is18Verified: Boolean(check.session?.is18Verified),

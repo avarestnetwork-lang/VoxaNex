@@ -213,12 +213,11 @@ async function runPhase6Tests() {
   const convId = 'conv_alice_bob_test';
   registerConversationMembers(convId, [userAlice, userBob]);
 
-  const dmBlockedResult = postConversationMessage({
+  const dmBlockedResult = await postConversationMessage({
     conversationId: convId,
     senderId: userBob,
     senderNickname: 'Bob',
     senderAvatar: '👤',
-    recipientId: userAlice,
     rawContent: 'Hey Alice, can you hear me?',
   });
   assert(!dmBlockedResult.success, '3.2 Direct messaging is strictly blocked bidirectionally');

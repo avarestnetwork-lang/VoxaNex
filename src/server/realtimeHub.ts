@@ -3,6 +3,8 @@ import crypto from 'crypto';
 import dns from 'dns';
 import { promisify } from 'util';
 import { validateGuestToken } from './guestSessionManager';
+import { getSupabaseClient } from '../lib/supabaseClient';
+import { databaseService } from '../services/databaseService';
 import {
   checkUserRestriction,
   isUserEligibleForAdultAreas,
@@ -401,17 +403,49 @@ export function registerConversationMembers(convId: string, memberIds: string[])
   memberIds.forEach((id) => set.add(id));
 }
 
-export function isConversationMember(convId: string, userId: string): boolean {
+// Check persistent membership
+async function isPersistentMember(convId: string, userId: string): Promise<boolean> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return false;
+  try {
+    const { data } = await supabase
+      .from('conversation_participants')
+      .select('user_id')
+      .eq('conversation_id', convId)
+      .eq('user_id', userId)
+      .single();
+    return !!data;
+  } catch {
+    return false;
+  }
+}
+
+export async function isConversationMember(convId: string, userId: string): Promise<boolean> {
   const members = conversationMembers.get(convId);
   if (members && members.has(userId)) return true;
+  
+  // Try persistent check
+  if (await isPersistentMember(convId, userId)) {
+    registerConversationMembers(convId, [userId]);
+    return true;
+  }
+
   // Fallback: check deterministic convId format "conv_<id1>_<id2>"
   if (convId.startsWith('conv_')) {
     const withoutPrefix = convId.slice(5);
-    if (
-      withoutPrefix.startsWith(userId + '_') ||
-      withoutPrefix.endsWith('_' + userId) ||
-      withoutPrefix === userId
-    ) {
+    if (withoutPrefix.startsWith(userId + '_')) {
+      const partnerId = withoutPrefix.slice(userId.length + 1);
+      if (partnerId) {
+        registerConversationMembers(convId, [userId, partnerId]);
+        return true;
+      }
+    } else if (withoutPrefix.endsWith('_' + userId)) {
+      const partnerId = withoutPrefix.slice(0, withoutPrefix.length - userId.length - 1);
+      if (partnerId) {
+        registerConversationMembers(convId, [partnerId, userId]);
+        return true;
+      }
+    } else if (withoutPrefix === userId) {
       registerConversationMembers(convId, [userId]);
       return true;
     }
@@ -419,43 +453,61 @@ export function isConversationMember(convId: string, userId: string): boolean {
   return false;
 }
 
-export function getUserConversations(userId: string): string[] {
+export async function getUserConversations(userId: string): Promise<string[]> {
   const result = new Set<string>();
   for (const [convId, members] of conversationMembers.entries()) {
     if (members.has(userId)) result.add(convId);
   }
   for (const convId of conversationMessages.keys()) {
-    if (isConversationMember(convId, userId)) result.add(convId);
+    if (await isConversationMember(convId, userId)) result.add(convId);
   }
   return Array.from(result);
 }
 
-export function getConversationMessages(convId: string, requesterId: string, limit = 50): HubMessage[] {
-  if (!isConversationMember(convId, requesterId)) {
+export async function getConversationMessages(convId: string, requesterId: string, limit = 50): Promise<HubMessage[]> {
+  if (!(await isConversationMember(convId, requesterId))) {
     return [];
   }
   const list = conversationMessages.get(convId) || [];
   return list.slice(-limit);
 }
 
-export function postConversationMessage(params: {
+export async function postConversationMessage(params: {
   conversationId: string;
   senderId: string;
   senderNickname: string;
   senderAvatar: string;
-  recipientId: string;
   rawContent: string;
   mediaUrl?: string;
   mediaType?: 'gif' | 'image';
   linkPreview?: any;
   clientNonce?: string;
-}): { success: boolean; message?: HubMessage; error?: string } {
-  const { conversationId, senderId, recipientId, senderNickname, senderAvatar, rawContent } = params;
+}): Promise<{ success: boolean; message?: HubMessage; error?: string }> {
+  const { conversationId, senderId, senderNickname, senderAvatar, rawContent } = params;
 
   // Authorization check
-  if (!isConversationMember(conversationId, senderId)) {
+  if (!(await isConversationMember(conversationId, senderId))) {
     return { success: false, error: 'Unauthorized: You are not a member of this conversation.' };
   }
+
+  // Derive recipientId server-side from membership
+  let members = conversationMembers.get(conversationId);
+  if ((!members || members.size < 2) && conversationId.startsWith('conv_')) {
+    const withoutPrefix = conversationId.slice(5);
+    if (withoutPrefix.startsWith(senderId + '_')) {
+      const partnerId = withoutPrefix.slice(senderId.length + 1);
+      if (partnerId) registerConversationMembers(conversationId, [senderId, partnerId]);
+    } else if (withoutPrefix.endsWith('_' + senderId)) {
+      const partnerId = withoutPrefix.slice(0, withoutPrefix.length - senderId.length - 1);
+      if (partnerId) registerConversationMembers(conversationId, [partnerId, senderId]);
+    }
+    members = conversationMembers.get(conversationId);
+  }
+
+  if (!members || members.size < 2) {
+      return { success: false, error: 'Recipient not found in conversation.' };
+  }
+  const recipientId = Array.from(members).find(id => id !== senderId) || '';
 
   // Suspension / Ban check
   const restr = checkUserRestriction(senderId);
@@ -524,7 +576,6 @@ export function postConversationMessage(params: {
   
   // Bridge across environments
   try {
-    const { databaseService } = require('./databaseService');
     databaseService.broadcastDM(recipientId, conversationId, message);
   } catch {}
   

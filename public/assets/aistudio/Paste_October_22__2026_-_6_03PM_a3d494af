@@ -1,0 +1,495 @@
+# CHATLUSTORA — FINAL MASTER SECURITY, REALTIME DM, ADMIN PANEL & PRE-DEPLOYMENT PROMPT
+
+## ROLE
+
+Act as a senior full-stack engineer, application security engineer, Supabase/PostgreSQL specialist, Cloudflare Workers engineer, and UI/UX designer.
+
+You are working on the existing production application **ChatLustora**:
+
+- Production URL: https://chatlustora.com/
+- Admin login URL: https://chatlustora.com/admin/login
+- Existing stack: React, Vite, TypeScript/JavaScript, Express/server routes, Cloudflare Worker, Supabase, and the existing guest-session authentication system.
+- Existing code includes `server.ts`, `src/server/realtimeHub.ts`, `src/services/guestSessionService.ts`, `src/server/guestSessionManager.ts`, `src/services/databaseService.ts`, `src/context/PrivateChatContext.tsx`, and `src/worker.ts`.
+
+First inspect the actual repository, package scripts, current Git diff, database access patterns, routing, and deployment configuration. Do not assume any file, API, table, or authentication provider behaves differently from what the repository proves.
+
+## PRIMARY OBJECTIVE
+
+Complete one integrated implementation covering:
+
+1. Secure private DM authorization and history/list APIs.
+2. Persistent conversation membership and reliable cross-instance realtime delivery.
+3. Removal or secure replacement of the unsafe private-DM Broadcast fallback.
+4. A professional admin login page at `/admin/login`.
+5. A fully functional, secure admin dashboard.
+6. Regression prevention, tests, staging instructions, and a final deployment-readiness report.
+
+Preserve the existing chat application and all working features. Do not rebuild the app from scratch or remove features to simplify the task.
+
+---
+
+# PHASE 1 — SECURITY AUDIT AND BACKWARD-COMPATIBLE FIXES
+
+Inspect the current implementation and trace each request from the client through the server to the database and event-delivery mechanism.
+
+Previously reported issues include:
+
+- `GET /api/chat/conversations/:id/messages` trusts `req.query.userId`.
+- `GET /api/chat/conversations/list` trusts client-supplied identity.
+- `conversationMembers` is an in-memory registry.
+- Private DM notifications use a potentially unsafe Supabase Broadcast channel such as `user_dm:${userId}`.
+- Local in-memory SSE registries cannot guarantee delivery across independent Worker/server instances.
+
+Confirm each issue against the current code before changing it.
+
+## 1.1 Authentication on every private-DM endpoint
+
+Require a valid guest session token or the application's existing authenticated session on all relevant endpoints, including:
+
+- `POST /api/chat/conversations/:id/messages`
+- `GET /api/chat/conversations/:id/messages`
+- `GET /api/chat/conversations/list`
+- Private-DM event-stream/SSE endpoints
+- Conversation creation and membership endpoints
+- Message read-status, delete, edit, or related endpoints, if present
+
+Follow the existing token-validation implementation. Verify its actual function signature, expiration behavior, error handling, and session identity fields before integrating it.
+
+For guest sessions:
+
+- Validate the token server-side.
+- Derive the authenticated guest/user identity exclusively from the verified session.
+- Never trust `userId`, `senderId`, `recipientId`, `isAdmin`, or role information submitted in the request body, query string, URL, or client-controlled headers.
+- A missing, invalid, expired, revoked, or malformed token must be rejected with an appropriate `401` response.
+- A valid user who is not authorized to access a resource must receive `403`, or a consistent `404` where resource-existence privacy requires it.
+- Validate inputs and enforce sensible limits on message length, pagination, and request frequency.
+
+Update the frontend API calls to send the appropriate session token through the application's existing secure authentication mechanism. Do not break existing guest login, guest sessions, or established authenticated-user flows.
+
+Never solve authorization failures by restoring client-supplied identity trust.
+
+## 1.2 Secure GET history and conversation-list APIs
+
+For `GET /api/chat/conversations/:id/messages`:
+
+1. Authenticate the requester.
+2. Derive requester identity from the validated session.
+3. Verify persistent membership in the requested conversation.
+4. Return messages only if the requester is an authorized participant.
+5. Enforce bounded pagination and stable ordering.
+6. Prevent arbitrary user-ID substitution from revealing private messages.
+
+For `GET /api/chat/conversations/list`:
+
+1. Authenticate the requester.
+2. Ignore or reject client-supplied identity parameters.
+3. Fetch only conversations belonging to the verified identity.
+4. Verify membership using authoritative persistent data.
+5. Never expose another user's conversation IDs, participants, messages, private metadata, or presence information without authorization.
+
+Review every adjacent route for equivalent IDOR (Insecure Direct Object Reference) vulnerabilities. Do not only patch the two reported GET routes.
+
+## 1.3 Persistent membership and authorization
+
+The in-memory `conversationMembers` map must not be the sole source of truth for authorization.
+
+Inspect the actual Supabase schema, existing membership tables, constraints, and relationships. Reuse the existing authoritative membership data if it is sufficient. Otherwise, prepare a backward-compatible migration proposal for persistent conversation membership.
+
+Requirements:
+
+- Membership survives server restarts and deployments.
+- Conversation participants are verified server-side for every protected operation.
+- Membership is created only through authorized server-side workflows.
+- Prevent arbitrary membership injection and conversation-ID guessing.
+- Add appropriate foreign keys, unique constraints, indexes, and consistency checks where supported by the existing schema.
+- Avoid changing table structures blindly or assuming columns exist.
+- If current guest identities cannot be represented safely in the existing schema, explain the required identity mapping before implementing it.
+
+In-memory maps may remain as caches, but never as the sole authorization authority.
+
+## 1.4 Private notification security
+
+Inspect `broadcastDM`, `subscribeToUserDMs`, `user_dm:${userId}`, `userDMStreams`, and every related subscription or event-delivery path.
+
+Do not assume a predictable channel name is private simply because its name contains a user ID.
+
+Remove the unsafe private-DM Broadcast fallback unless the repository proves that access is securely authenticated and authorized for the actual guest-session identity model.
+
+Do not replace it with another client-controlled channel that has the same vulnerability.
+
+Private notifications must be delivered only to verified participants. Minimize notification payloads: do not expose private message contents or unnecessary metadata to unauthorized listeners.
+
+---
+
+# PHASE 2 — RELIABLE REALTIME DELIVERY ACROSS INSTANCES
+
+The current in-memory SSE registry cannot provide reliable delivery across independent server/Worker instances.
+
+Inspect the actual Cloudflare runtime and Supabase capabilities before selecting an implementation. Choose the smallest secure, production-compatible architecture for the existing stack.
+
+Potential solutions may include a durable database-backed event queue, a supported shared messaging service, or an appropriately secured Supabase Realtime design. Choose based on verified compatibility, current schema, and deployment configuration—not assumptions.
+
+Requirements:
+
+1. Cross-instance delivery without requiring page refresh.
+2. Persistent membership and authorization checks.
+3. Session authentication when opening an SSE connection.
+4. Bind each SSE connection to the identity derived from the verified session, never a client-selected recipient ID.
+5. Verify conversation membership before subscribing a user to private conversation events.
+6. Recover missed notifications after temporary disconnections.
+7. Deduplicate events using stable message/event IDs.
+8. Preserve message ordering where possible.
+9. Clean up subscriptions and connections correctly.
+10. Avoid unbounded polling, unbounded event storage, and excessive database reads.
+11. Support reconnect/backoff without infinite rapid retry loops.
+12. Prevent one conversation's events from reaching unrelated users.
+
+If using a database-backed event queue:
+
+- First inspect whether an existing queue or event table can be reused.
+- Propose the exact schema, indexes, ownership/recipient authorization strategy, retention policy, and cleanup mechanism.
+- Ensure queue records cannot be read or forged by arbitrary clients.
+- Ensure cleanup is actually scheduled or safely triggered; do not create an unscheduled cleanup function and claim retention is operational.
+- Avoid exposing the queue directly to anonymous clients.
+- Handle retries, duplicate delivery, event expiry, and recovery after disconnects.
+
+If the necessary infrastructure cannot be safely implemented in this repository, implement the secure parts that are supported and clearly identify the remaining blocker. Never claim cross-instance realtime is fixed unless the code and tests demonstrate it.
+
+---
+
+# PHASE 3 — ADMIN AUTHENTICATION AND AUTHORIZATION
+
+Create a professional administration area integrated into the existing application.
+
+Required routes:
+
+- `/admin/login` — administrator login
+- `/admin` — dashboard overview
+- Additional `/admin/...` routes for the implemented management pages
+
+Use the existing router and authentication architecture where appropriate. Ensure direct navigation, refresh, and production SPA/Worker routing work correctly.
+
+## 3.1 Admin authentication
+
+First determine whether the project already has an administrator identity system or a trusted admin-role mechanism. Reuse it if it is secure and functional.
+
+If no safe admin system exists, implement a minimal server-verified admin authentication mechanism compatible with the existing backend and deployment environment.
+
+Security requirements:
+
+- Never hardcode admin passwords, API secrets, or production credentials into source code.
+- Never store privileged credentials in browser localStorage or sessionStorage.
+- Never treat a hidden URL, frontend-only route guard, client-side role flag, or user-editable metadata as proof of administrator access.
+- Verify admin authorization on the server for every protected admin API.
+- Use secure session cookies when supported by the current deployment architecture: `HttpOnly`, `Secure` in production, appropriate `SameSite`, and suitable expiration.
+- If the existing guest-token architecture is retained for ordinary users, do not automatically treat a guest session as an administrator session.
+- Protect login against brute-force attempts using appropriate rate limits and safe error messages.
+- Validate session expiration and logout invalidation.
+- Protect state-changing requests against CSRF when cookie-based authentication is used.
+- Validate all admin inputs server-side.
+- Do not expose environment variables, service-role keys, session secrets, password hashes, or stack traces in API responses.
+- Restrict sensitive actions to authorized administrator roles.
+- Keep an audit trail for security-sensitive administrative changes.
+- If secure bootstrap of the first administrator requires an environment secret or one-time setup process, document it and implement it without a hardcoded default account.
+- Do not invent credentials or display a fake successful login.
+
+Add a clear unauthorized state and redirect unauthenticated visitors to `/admin/login`. Authenticated non-admin users must be denied access.
+
+## 3.2 Admin login page design
+
+Design a polished, modern, production-quality login page that matches the existing ChatLustora branding.
+
+Design direction:
+
+- Premium dark UI with tasteful blue/purple accents, if compatible with the current brand.
+- ChatLustora logo/wordmark using existing assets where available.
+- Clear “Administrator Login” heading.
+- Email/username and password inputs appropriate to the implemented authentication system.
+- Show/hide password control.
+- Loading, validation, authentication-error, and disabled states.
+- Accessible keyboard navigation and visible focus states.
+- Mobile-first responsive layout.
+- Clear success/logout behavior without revealing sensitive authentication details.
+- Do not add a public admin-registration route.
+- Do not put admin credentials or secret configuration in the UI.
+
+The design must be implemented in the real application, not delivered only as a mockup.
+
+---
+
+# PHASE 4 — COMPLETE ADMIN DASHBOARD
+
+Build the real dashboard and connect each feature to authorized backend APIs and actual available data. Do not fabricate analytics or show hardcoded records as real users, deposits, messages, or reports.
+
+## 4.1 Admin layout
+
+Create a consistent administration shell:
+
+- Responsive sidebar and mobile navigation.
+- Dashboard header with administrator identity and logout.
+- Breadcrumbs or clear page titles.
+- Loading, empty, error, and success states.
+- Search, filtering, pagination, and confirmation dialogs where appropriate.
+- Accessible tables and forms.
+- Responsive charts only when reliable source data exists.
+- Consistent spacing, typography, cards, status indicators, and design tokens.
+- Clear distinction between destructive and non-destructive actions.
+
+## 4.2 Overview
+
+Show available, verifiable metrics, such as:
+
+- Registered/authenticated users, if supported by the database.
+- Active guest sessions, only if accurately measurable.
+- Conversation and message counts.
+- Public chat-room activity.
+- Pending user reports.
+- Recent moderation actions.
+- Service or realtime health indicators only when backed by actual checks.
+
+Use efficient server-side aggregation. Avoid fetching entire message histories to calculate totals.
+
+Label unavailable metrics honestly rather than inventing values.
+
+## 4.3 User and guest management
+
+Where supported by existing data, provide:
+
+- User search and profile summary.
+- Account/session status.
+- Creation date and relevant safe metadata.
+- Ban, unban, suspend, or revoke-session actions only if the underlying data model and authorization support them.
+- Confirmation dialogs for consequential actions.
+- Audit logs for administrative changes.
+
+Do not expose passwords, session tokens, private message contents, or unnecessary personal information in lists.
+
+## 4.4 Chat rooms and moderation
+
+Where the existing application supports the necessary operations, implement:
+
+- Chat-room overview and status.
+- Participant counts based on a reliable source.
+- Reported content/user queue.
+- Review and resolution status for reports.
+- Moderation notes and action history.
+- Authorized removal or restriction of violating content/users, if supported.
+- Clear error messages when an operation is unavailable or fails.
+
+Do not create fake moderation records or destructive controls that do nothing.
+
+## 4.5 Private DM administration
+
+Provide only the minimum administrative visibility required for support and security.
+
+- Conversation metadata and participant references, subject to a documented authorization policy.
+- Delivery/connection diagnostics that avoid leaking message content.
+- Access-controlled investigation tools if genuinely needed.
+- Audit logs for sensitive administrative access.
+
+Do not create an unrestricted “read every user's private messages” feature by default. Any exceptional access must have an explicit authorization policy, minimum privilege, and audit trail.
+
+## 4.6 Reports and audit logs
+
+If supported by the schema, implement:
+
+- Report list and status.
+- Filtering and pagination.
+- Review/resolve/dismiss workflow.
+- Moderator notes.
+- Admin action history with actor, action, target, timestamp, and outcome.
+- Server-side validation and authorization for every mutation.
+
+If required tables or APIs do not exist, propose the minimum safe schema migration instead of rendering fake data.
+
+## 4.7 Settings
+
+Add only settings that can be safely persisted and enforced, such as:
+
+- Administrator profile and session management.
+- Moderation configuration supported by the backend.
+- Safe system status information.
+
+Do not add frontend-only toggles that imply security settings are active when the backend does not enforce them.
+
+---
+
+# PHASE 5 — BACKEND API AND DATABASE SAFETY
+
+Review all new and modified API endpoints.
+
+For each endpoint, verify:
+
+- Authentication.
+- Authorization.
+- Input validation.
+- Safe query construction.
+- Pagination and rate limits where appropriate.
+- Error handling.
+- Audit logging for sensitive operations.
+- No accidental exposure of service-role credentials or private data.
+
+Use the server-side Supabase service-role key only in trusted server-side code when necessary. Never import it into frontend code.
+
+Inspect existing Row Level Security policies and the actual guest-session model before writing SQL.
+
+If a migration is needed:
+
+1. Create a clearly labeled SQL migration proposal in the repository if that matches the project's migration workflow.
+2. Check for existing tables, columns, policies, indexes, and naming conflicts.
+3. Make the migration safe to review and, where feasible, safely repeatable.
+4. Include required constraints, indexes, grants, RLS policies, and retention behavior.
+5. Ensure client-supplied session identifiers cannot impersonate another user.
+6. Do not assume `auth.uid()` represents guest users who lack Supabase Auth JWTs.
+7. Never expose event queues or private DM data to anonymous clients without an appropriate security model.
+8. Document any required environment variables by name and purpose, but never print their secret values.
+
+**IMPORTANT: Do not execute SQL against the production database. Do not change live RLS policies, production environment secrets, GitHub branches, or deployment settings without explicit authorization.** Prepare migration SQL and precise application instructions instead.
+
+---
+
+# PHASE 6 — PRESERVE EXISTING FUNCTIONALITY
+
+Before and after the implementation, inspect the current application and preserve:
+
+- Existing public chat rooms and their URLs.
+- Guest login and session lifecycle.
+- Existing authenticated-user flows.
+- Private DM windows, unread counts, notification behavior, and conversation history.
+- Message deduplication and ordering.
+- Realtime reconnection and polling fallback where safely needed.
+- Existing branding and responsive layout.
+- Current Cloudflare Worker and SPA routing.
+- Existing Supabase integration and environment variable names unless a justified change is necessary.
+
+Do not replace working features with placeholders. Do not delete existing components merely to simplify the dashboard.
+
+Avoid broad refactoring outside the scope of these tasks.
+
+---
+
+# PHASE 7 — AUTOMATED TESTS AND REGRESSION VALIDATION
+
+Inspect the current test setup. If no test framework exists, add the smallest compatible test setup that fits the current project and does not destabilize production dependencies.
+
+Create tests for at least the following security cases:
+
+### Private DM authentication
+
+1. Missing token on POST returns `401`.
+2. Invalid token on POST returns `401`.
+3. Expired token returns `401`.
+4. Forged `senderId` is ignored; the verified identity is used.
+5. Forged `recipientId` cannot redirect a private message.
+6. A non-member cannot read conversation history.
+7. A non-member cannot retrieve a private conversation through the list/history APIs.
+8. Client-supplied `userId` cannot impersonate another user.
+9. Valid participants can read their own authorized history.
+10. Membership authorization still works after the server restarts.
+11. A private notification cannot be subscribed to by an unrelated user.
+12. Event payloads are deduplicated and do not leak to another conversation.
+
+### Admin authentication
+
+1. `/admin/login` loads directly.
+2. Unauthenticated access to `/admin` is denied.
+3. Ordinary users and guests cannot access admin APIs.
+4. Invalid admin credentials are rejected.
+5. Expired or revoked admin sessions are rejected.
+6. Admin mutations require valid administrator authorization.
+7. Logout invalidates the relevant session.
+8. Client-side role manipulation cannot grant administrator access.
+9. Rate limiting and safe authentication errors behave as intended.
+
+### Dashboard functionality
+
+1. Dashboard pages load with authorized credentials.
+2. Empty/loading/error states render correctly.
+3. Search and pagination do not leak unauthorized records.
+4. Moderation changes are persisted and audited if implemented.
+5. Failed API requests do not show false success messages.
+
+### Build and quality checks
+
+Run the actual repository scripts, including where available:
+
+- `npm run build`
+- `npm run lint`
+- Type-check script
+- Relevant automated tests
+
+Use the actual scripts in `package.json`; do not claim a test passed if it was not run.
+
+Fix regressions introduced by your changes. Inspect the final Git diff for accidental secret exposure, unrelated deletions, unsafe route changes, and generated artifacts.
+
+Do not claim production E2E success based solely on a successful build.
+
+---
+
+# PHASE 8 — MANUAL STAGING CHECKLIST
+
+Provide a clear checklist for the owner to test on a staging environment or controlled local environment:
+
+1. Login as two separate users/guests in separate browsers.
+2. Send private messages in both directions without refreshing.
+3. Disconnect/reconnect and verify missed-event recovery.
+4. Attempt to read another user's conversation by changing query parameters.
+5. Attempt to forge sender and recipient identities.
+6. Restart the server and verify membership and authorized history remain intact.
+7. Attempt unauthorized subscription to another user's private notifications.
+8. Open `/admin/login` directly.
+9. Verify a guest cannot access `/admin` or admin APIs.
+10. Log in with the configured administrator account and test each implemented dashboard feature.
+11. Test logout, session expiry, invalid credentials, and mobile layout.
+12. Verify the current public chat and existing navigation still work.
+
+Mark each item PASS, FAIL, or NOT TESTED based on actual evidence.
+
+---
+
+# PHASE 9 — SAFE ROLLBACK AND DEPLOYMENT GATE
+
+Never recommend rolling back to insecure client-supplied sender IDs or trusting arbitrary query-string identities. If a regression occurs, preserve the authorization fixes and roll back only the problematic implementation to a known secure version.
+
+Before declaring readiness, confirm:
+
+- No known unauthorized DM history/list access.
+- No client-controlled sender, recipient, or admin identity trust.
+- Persistent authoritative membership checks are in place.
+- Private notification authorization is secure.
+- Cross-instance delivery claims are supported by tests or explicitly marked unverified.
+- Admin APIs enforce server-side authorization.
+- No secrets are committed to frontend assets or Git.
+- Build, lint, type-check, and relevant tests have actual results.
+- Existing app functionality has been regression-checked.
+- Database migrations and required environment variables are documented.
+- No production database or deployment action occurred without approval.
+
+**Do not push to GitHub, trigger a production deployment, run production SQL, or alter live secrets.** The repository is connected to an automatic deployment pipeline, so treat any push as a potential production release.
+
+If this environment has permission to edit files, implement the changes in the working tree and report the exact changed files. Do not claim that changes were committed or deployed unless that actually happened.
+
+---
+
+# REQUIRED FINAL REPORT
+
+At the end, provide one concise but complete report containing:
+
+1. Files inspected and changed.
+2. Private-DM security issues fixed and evidence.
+3. Persistent membership and realtime architecture chosen.
+4. Broadcast fallback status and justification.
+5. Admin login route and authentication mechanism.
+6. Dashboard pages/features genuinely implemented.
+7. Database migration SQL prepared, if any, and whether it remains unapplied.
+8. Environment variables required, without secret values.
+9. Build, lint, type-check, automated test, and E2E results.
+10. Known limitations and unresolved risks.
+11. Manual staging checklist.
+12. Final status: `READY FOR STAGING`, `NOT READY FOR STAGING`, or `READY FOR PRODUCTION REVIEW`.
+
+Never label the application production-ready if a critical authorization vulnerability remains or the required security behavior is unverified.
+
+## FINAL EXECUTION INSTRUCTION
+
+Complete the scoped work as one integrated implementation. Prefer secure, minimal, backward-compatible changes over unnecessary rewrites. Do not stop after producing an audit or plan if code implementation is available. Do not fabricate tests, database results, UI functionality, or deployment success. If a required action needs the owner's permission or production access, prepare the necessary artifact and explain the exact next step without performing the protected action.

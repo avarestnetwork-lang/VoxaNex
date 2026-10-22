@@ -806,6 +806,9 @@ export default {
           if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
             try {
               const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages`;
+              const isSenderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(senderId);
+              const isConvUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId);
+
               await fetch(supabaseUrl, {
                 method: 'POST',
                 headers: {
@@ -815,8 +818,9 @@ export default {
                   'Prefer': 'return=minimal',
                 },
                 body: JSON.stringify({
-                  conversation_id: convId,
-                  sender_user_id: senderId,
+                  conversation_id: isConvUuid ? convId : null,
+                  sender_user_id: isSenderUuid ? senderId : null,
+                  sender_guest_id: !isSenderUuid ? senderId : null,
                   sender_nickname: senderNickname || 'User',
                   sender_avatar: senderAvatar || '👤',
                   content: cleanContent,

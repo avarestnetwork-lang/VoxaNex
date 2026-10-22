@@ -68,7 +68,6 @@ export const Footer: React.FC = () => {
               <li><button onClick={() => navigate('/faq')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'সাধারণ প্রশ্ন (FAQ)' : 'FAQ'}</button></li>
               <li><button onClick={() => navigate('/sitemap')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'সাইটম্যাপ' : 'Sitemap'}</button></li>
               <li><button onClick={() => navigate('/safety')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'নিরাপত্তা টিপস' : 'Safety Tips'}</button></li>
-              <li><button onClick={() => navigate('/admin')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'প্রশাসন' : 'Administration'}</button></li>
             </ul>
           </div>
 

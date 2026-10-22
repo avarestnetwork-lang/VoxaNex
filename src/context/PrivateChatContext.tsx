@@ -309,12 +309,13 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
   }, [user.id, autoOpenPrivateChats]);
 
-  // Fix 1: Global Notifications (SSE + Supabase)
+  // Fix 1: Global Notifications (SSE Stream authenticated via guestToken)
   useEffect(() => {
     if (!user.id) return;
 
+    const token = guestSessionService.getStoredToken();
     const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
-    const userEventSource = new EventSource(`${API_BASE}/api/chat/user/${user.id}/events`);
+    const userEventSource = new EventSource(`${API_BASE}/api/chat/user/${user.id}/events?guestToken=${encodeURIComponent(token || '')}`);
     userEventSource.addEventListener('incoming_dm', (e) => {
       try {
         const data = JSON.parse(e.data);

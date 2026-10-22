@@ -195,6 +195,9 @@ export const PrivateMessagingPage: React.FC = () => {
             : c
         )
       );
+    } else {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      alert(result.error || 'Private message sending failed. Please check your connection and try again.');
     }
   };
 

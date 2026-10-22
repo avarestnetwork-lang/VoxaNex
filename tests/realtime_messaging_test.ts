@@ -88,43 +88,40 @@ async function runMessagingTests() {
   registerConversationMembers(convId, ['alice', 'bob']);
 
   // Alice sends message to Bob
-  const dmRes = postConversationMessage({
+  const dmRes = await postConversationMessage({
     conversationId: convId,
     senderId: 'alice',
     senderNickname: 'Alice',
     senderAvatar: '🌸',
-    recipientId: 'bob',
     rawContent: 'Hello Bob! Secret meeting at Dhaka lounge.',
   });
   assert(dmRes.success === true, '6. Authorized member (Alice) successfully sends direct message');
 
   // Unauthorized third party (Charlie) attempts to send into conv_alice_bob
-  const charlieSend = postConversationMessage({
+  const charlieSend = await postConversationMessage({
     conversationId: convId,
     senderId: 'charlie',
     senderNickname: 'Charlie',
     senderAvatar: '🕵️',
-    recipientId: 'bob',
     rawContent: 'Hacking into conversation',
   });
   assert(charlieSend.success === false, '7. Unauthorized third-party (Charlie) cannot post to conversation');
 
   // Charlie attempts to read conv_alice_bob messages
-  const charlieRead = getConversationMessages(convId, 'charlie');
+  const charlieRead = await getConversationMessages(convId, 'charlie');
   assert(charlieRead.length === 0, '8. Unauthorized third-party cannot read private conversation messages');
 
   // Bob reads conversation
-  const bobRead = getConversationMessages(convId, 'bob');
+  const bobRead = await getConversationMessages(convId, 'bob');
   assert(bobRead.length > 0 && bobRead[0].senderId === 'alice', '9. Authorized participant (Bob) reads message');
 
   // Test 5: Peer Blocking Enforcement
   setUserBlock('bob', 'alice', true); // Bob blocks Alice
-  const blockedSend = postConversationMessage({
+  const blockedSend = await postConversationMessage({
     conversationId: convId,
     senderId: 'alice',
     senderNickname: 'Alice',
     senderAvatar: '🌸',
-    recipientId: 'bob',
     rawContent: 'Can you hear me now?',
   });
   assert(blockedSend.success === false, '10. Blocked peer (Alice) is rejected when attempting to message Bob');
