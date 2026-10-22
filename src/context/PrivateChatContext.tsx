@@ -3,6 +3,7 @@ import { DirectConversation, ChatMessage } from '../types';
 import { useAuth } from './AuthContext';
 import { messagingService } from '../services/messagingService';
 import { guestSessionService } from '../services/guestSessionService';
+import { databaseService } from '../services/databaseService';
 
 export interface FloatingChatWindow {
   conversationId: string;
@@ -336,11 +337,15 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     userEventSource.addEventListener('incoming_dm', (e) => {
       try {
         const data = JSON.parse(e.data);
-        // data contains { conversationId, message }
         handleIncomingMessage(data.message, data.conversationId);
       } catch (err) {
-        console.error('Failed to parse incoming DM from notification stream', err);
+        console.error('Failed to parse incoming DM from SSE stream', err);
       }
+    });
+
+    // Bridge cross-runtime delivery via Supabase Realtime
+    const unsubSupabase = databaseService.subscribeToUserDMs(user.id, (conversationId: string, message: ChatMessage) => {
+      handleIncomingMessage(message, conversationId);
     });
 
     // 2. Periodic polling sync fallback for ALL known conversations (even when window is closed)
@@ -374,6 +379,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return () => {
       clearInterval(syncInterval);
       userEventSource.close();
+      unsubSupabase();
     };
   }, [user.id, openWindows, handleIncomingMessage]);
 
