@@ -242,54 +242,63 @@ export const databaseService = {
     const supabase = getSupabaseClient();
     if (!supabase) return () => {};
 
-    const channelName = `public_room_presence:${roomId}`;
-    const channel = supabase.channel(channelName, {
-      config: {
-        presence: {
-          key: member.id,
+    let channel: any = null;
+    try {
+      const channelName = `public_room_presence:${roomId}`;
+      channel = supabase.channel(channelName, {
+        config: {
+          presence: {
+            key: member.id,
+          },
         },
-      },
-    });
+      });
 
-    channel
-      .on('presence', { event: 'sync' }, () => {
-        const state = channel.presenceState();
-        const members: any[] = [];
-        Object.values(state).forEach((presences: any) => {
-          if (Array.isArray(presences)) {
-            presences.forEach((p) => {
-              members.push({
-                id: p.id || p.user_id,
-                nickname: p.nickname || 'User',
-                avatar: p.avatar || '👤',
-                isGuest: Boolean(p.isGuest),
-                gender: p.gender,
-                lastSeen: p.lastSeen || Date.now(),
-              });
+      channel
+        .on('presence', { event: 'sync' }, () => {
+          try {
+            const state = channel.presenceState();
+            const members: any[] = [];
+            Object.values(state).forEach((presences: any) => {
+              if (Array.isArray(presences)) {
+                presences.forEach((p) => {
+                  members.push({
+                    id: p.id || p.user_id,
+                    nickname: p.nickname || 'User',
+                    avatar: p.avatar || '👤',
+                    isGuest: Boolean(p.isGuest),
+                    gender: p.gender,
+                    lastSeen: p.lastSeen || Date.now(),
+                  });
+                });
+              }
             });
+            onSync(members);
+          } catch {}
+        })
+        .subscribe(async (status: string) => {
+          if (status === 'SUBSCRIBED' && channel) {
+            try {
+              await channel.track({
+                id: member.id,
+                nickname: member.nickname,
+                avatar: member.avatar,
+                isGuest: member.isGuest,
+                gender: member.gender,
+                lastSeen: Date.now(),
+              });
+            } catch {}
           }
         });
-        onSync(members);
-      })
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          try {
-            await channel.track({
-              id: member.id,
-              nickname: member.nickname,
-              avatar: member.avatar,
-              isGuest: member.isGuest,
-              gender: member.gender,
-              lastSeen: Date.now(),
-            });
-          } catch {}
-        }
-      });
+    } catch {
+      // Return safe cleanup if realtime presence channel fails to initialize
+    }
 
     return () => {
       try {
-        channel.untrack();
-        supabase.removeChannel(channel);
+        if (channel) {
+          channel.untrack();
+          supabase.removeChannel(channel);
+        }
       } catch {}
     };
   },
