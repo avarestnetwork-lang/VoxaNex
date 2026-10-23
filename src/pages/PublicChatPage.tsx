@@ -16,6 +16,7 @@ import { ReportModal } from '../components/chat/ReportModal';
 import { UserActionMenu } from '../components/chat/UserActionMenu';
 import { MentionAutocomplete } from '../components/chat/MentionAutocomplete';
 import { UserProfileModal } from '../components/chat/UserProfileModal';
+import { PrivateChatPane } from '../components/chat/PrivateChatPane';
 import { safetyService } from '../services/safetyService';
 import { Button } from '../components/ui/Button';
 import { SEOHead } from '../components/common/SEOHead';
@@ -161,6 +162,16 @@ export const PublicChatPage: React.FC = () => {
   const [sidebarTab, setSidebarTab] = useState<'users' | 'private' | 'rooms'>('users');
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+
+  // Active Direct Conversation Tab
+  const [activePrivatePartner, setActivePrivatePartner] = useState<{
+    id: string;
+    nickname: string;
+    avatar: string;
+    gender?: string;
+    isGuest?: boolean;
+  } | null>(null);
+  const [activeChatView, setActiveChatView] = useState<'room' | 'private'>('room');
 
   // Direct conversations list for the Private tab
   const [directConversations, setDirectConversations] = useState<
@@ -614,7 +625,7 @@ export const PublicChatPage: React.FC = () => {
     });
   };
 
-  // Open Direct 1-on-1 Chat with Partner (Compact Floating Window)
+  // Open Direct 1-on-1 Chat with Partner
   const handleOpenPrivateChat = (partner: {
     id: string;
     nickname: string;
@@ -623,6 +634,8 @@ export const PublicChatPage: React.FC = () => {
     isGuest?: boolean;
   }) => {
     openChat(partner);
+    setActivePrivatePartner(partner);
+    setActiveChatView('private');
     setShowMobileSidebar(false);
 
     // Ensure conversation exists in direct list
@@ -649,6 +662,7 @@ export const PublicChatPage: React.FC = () => {
   const handleMentionFromMenu = (nickname: string) => {
     setInputText((prev) => (prev ? `${prev} @${nickname} ` : `@${nickname} `));
     inputRef.current?.focus();
+    setActiveChatView('room');
   };
 
   // Render mentions highlighted in chat messages
@@ -719,14 +733,51 @@ export const PublicChatPage: React.FC = () => {
             <Compass className="w-5 h-5 text-cyan-400" />
           </button>
 
-          {/* Current Room Badge */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#080d19] border border-slate-800/90 text-white text-xs font-semibold">
-            <Hash className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-            <span className="truncate">{activeRoom.name[language]}</span>
-            {activeRoom.is18Plus && (
-              <span className="text-[9px] bg-rose-950/80 text-rose-300 border border-rose-800 px-1 py-0.2 rounded shrink-0">
-                18+
-              </span>
+          {/* Active View Tabs (Public Room vs Active Private Chat) */}
+          <div className="flex items-center gap-1.5 min-w-0 bg-[#080d19] p-1 rounded-xl border border-slate-800/90">
+            <button
+              onClick={() => setActiveChatView('room')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer truncate ${
+                activeChatView === 'room'
+                  ? 'bg-cyan-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <Hash className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{activeRoom.name[language]}</span>
+              {activeRoom.is18Plus && (
+                <span className="text-[9px] bg-rose-950/80 text-rose-300 border border-rose-800 px-1 py-0.2 rounded shrink-0">
+                  18+
+                </span>
+              )}
+            </button>
+
+            {activePrivatePartner && (
+              <div
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  activeChatView === 'private'
+                    ? 'bg-violet-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <button
+                  onClick={() => setActiveChatView('private')}
+                  className="flex items-center gap-1.5 truncate cursor-pointer"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{activePrivatePartner.nickname}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setActivePrivatePartner(null);
+                    setActiveChatView('room');
+                  }}
+                  className="hover:text-rose-300 rounded p-0.5"
+                  title="Close private chat"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -799,7 +850,17 @@ export const PublicChatPage: React.FC = () => {
 
       {/* Main Container */}
       <div className="flex-1 flex overflow-hidden border-x border-b border-slate-800 rounded-b-2xl bg-[#090d18] relative shadow-2xl">
-        <div className="flex-1 flex flex-col justify-between overflow-hidden relative">
+        {/* ACTIVE VIEW: Public Room Chat OR Direct 1-on-1 Chat */}
+        {activeChatView === 'private' && activePrivatePartner ? (
+          <PrivateChatPane
+            conversationId={`conv_${[user.id, activePrivatePartner.id].sort().join('_')}`}
+            partner={activePrivatePartner}
+            currentUser={{ id: user.id, nickname: user.nickname, avatar: user.avatar }}
+            onClose={() => setActiveChatView('room')}
+            language={language}
+          />
+        ) : (
+          <div className="flex-1 flex flex-col justify-between overflow-hidden relative">
             {/* Safety & Retention Notification Strip */}
             <div className="px-4 py-2 bg-[#0c1324] border-b border-slate-800 text-[11px] text-slate-400 font-mono flex items-center justify-between shrink-0">
               <div className="flex items-center gap-1.5">
@@ -1093,8 +1154,8 @@ export const PublicChatPage: React.FC = () => {
                 </Button>
               </form>
             </div>
-        </div>
-
+          </div>
+        )}
 
         {/* Right Sidebar: Tabs for Users | Private Chats | Rooms */}
         <div
@@ -1274,7 +1335,11 @@ export const PublicChatPage: React.FC = () => {
                             gender: conv.partnerGender,
                           })
                         }
-                        className="p-2.5 rounded-xl border transition-all cursor-pointer bg-[#101729] hover:bg-[#141d33] border-slate-800/80 hover:border-violet-500/40"
+                        className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                          activePrivatePartner?.id === conv.partnerId
+                            ? 'bg-violet-950/40 border-violet-600 shadow-md'
+                            : 'bg-[#101729] hover:bg-[#141d33] border-slate-800/80 hover:border-violet-500/40'
+                        }`}
                       >
                         <div className="flex items-center justify-between gap-1.5 mb-1">
                           <div className="flex items-center gap-2 min-w-0">
@@ -1313,6 +1378,7 @@ export const PublicChatPage: React.FC = () => {
                         key={r.id}
                         onClick={() => {
                           navigate('/chat', { roomId: r.slug });
+                          setActiveChatView('room');
                           setShowMobileSidebar(false);
                         }}
                         className={`w-full p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
