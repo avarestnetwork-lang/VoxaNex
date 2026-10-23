@@ -245,6 +245,7 @@ export const databaseService = {
     let channel: any = null;
     try {
       const channelName = `public_room_presence:${roomId}`;
+      console.log('[VX-PRESENCE] Initializing channel:', channelName, 'for user:', member.id.slice(0, 8));
       channel = supabase.channel(channelName, {
         config: {
           presence: {
@@ -257,6 +258,7 @@ export const databaseService = {
         .on('presence', { event: 'sync' }, () => {
           try {
             const state = channel.presenceState();
+            console.log('[VX-PRESENCE] Sync event received for room:', roomId, 'state keys:', Object.keys(state));
             const members: any[] = [];
             Object.values(state).forEach((presences: any) => {
               if (Array.isArray(presences)) {
@@ -272,10 +274,14 @@ export const databaseService = {
                 });
               }
             });
+            console.log('[VX-PRESENCE] Aggregated online count:', members.length);
             onSync(members);
-          } catch {}
+          } catch (err) {
+            console.warn('[VX-PRESENCE] Error processing presence sync:', err);
+          }
         })
-        .subscribe(async (status: string) => {
+        .subscribe(async (status: string, err?: any) => {
+          console.log('[VX-PRESENCE] Subscription status:', status, 'room:', roomId, err || '');
           if (status === 'SUBSCRIBED' && channel) {
             try {
               await channel.track({
@@ -286,11 +292,14 @@ export const databaseService = {
                 gender: member.gender,
                 lastSeen: Date.now(),
               });
-            } catch {}
+              console.log('[VX-PRESENCE] Successfully tracked presence for:', member.id.slice(0, 8));
+            } catch (trackErr) {
+              console.warn('[VX-PRESENCE] Failed to track presence payload:', trackErr);
+            }
           }
         });
-    } catch {
-      // Return safe cleanup if realtime presence channel fails to initialize
+    } catch (initErr) {
+      console.warn('[VX-PRESENCE] Channel initialization error:', initErr);
     }
 
     return () => {
