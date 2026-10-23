@@ -312,7 +312,10 @@ export default {
 
         if (env?.SUPABASE_URL && env?.SUPABASE_ANON_KEY) {
           try {
-            const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?room_id=eq.${roomId}&order=created_at.desc&limit=${limit}`;
+            // Resolve slug to real UUID for database query
+            const realRoomId = await databaseService.resolveRoomId(roomId);
+            
+            const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?room_id=eq.${realRoomId}&order=created_at.desc&limit=${limit}`;
             const headers: Record<string, string> = {
               'apikey': env.SUPABASE_ANON_KEY,
             };
@@ -431,6 +434,9 @@ export default {
           // Secure server-side Supabase persistence using service-role key if configured
           if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
             try {
+              // Resolve slug to real UUID for database persistence
+              const realRoomId = await databaseService.resolveRoomId(roomId);
+              
               await fetch(`${env.SUPABASE_URL}/rest/v1/messages`, {
                 method: 'POST',
                 headers: {
@@ -441,7 +447,7 @@ export default {
                 },
                 body: JSON.stringify({
                   id: message.id,
-                  room_id: roomId,
+                  room_id: realRoomId,
                   sender_guest_id: senderType === 'guest' ? verifiedSenderId : null,
                   sender_user_id: senderType === 'registered' ? verifiedSenderId : null,
                   sender_nickname: verifiedNickname,
@@ -728,7 +734,21 @@ export default {
 
         if (env?.SUPABASE_URL && env?.SUPABASE_ANON_KEY) {
           try {
-            const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?conversation_id=eq.${convId}&order=created_at.asc`;
+            // Resolve conversation identity
+            let dbConvId = convId;
+            if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
+                // We don't have the partnerId here easily from the URL, 
+                // but we can try to derive it if reqUserId is present
+                if (reqUserId) {
+                   const parts = convId.replace('conv_', '').split('_');
+                   const partnerId = parts.find(p => p !== reqUserId);
+                   if (partnerId) {
+                      dbConvId = await databaseService.getDeterministicConvId(reqUserId, partnerId);
+                   }
+                }
+            }
+
+            const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?conversation_id=eq.${dbConvId}&order=created_at.asc`;
             const headers: Record<string, string> = {
               'apikey': env.SUPABASE_ANON_KEY,
             };
@@ -851,7 +871,23 @@ export default {
             try {
               const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages`;
               const isSenderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(verifiedSenderId);
-              const isConvUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId);
+              
+              // Resolve deterministic conversation UUID if needed
+              let dbConvId = convId;
+              if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
+                 dbConvId = await databaseService.getDeterministicConvId(verifiedSenderId, recipientId);
+                 // Ensure the conversation record exists in DB to satisfy foreign key
+                 await fetch(`${env.SUPABASE_URL}/rest/v1/conversations`, {
+                   method: 'POST',
+                   headers: {
+                     'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+                     'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+                     'Content-Type': 'application/json',
+                     'Prefer': 'resolution=merge-duplicates'
+                   },
+                   body: JSON.stringify({ id: dbConvId, type: 'direct' })
+                 }).catch(() => {});
+              }
 
               persistencePromise = fetch(supabaseUrl, {
                 method: 'POST',
@@ -862,7 +898,7 @@ export default {
                   'Prefer': 'return=minimal',
                 },
                 body: JSON.stringify({
-                  conversation_id: isConvUuid ? convId : null,
+                  conversation_id: dbConvId,
                   sender_user_id: isSenderUuid ? verifiedSenderId : null,
                   sender_guest_id: !isSenderUuid ? verifiedSenderId : null,
                   sender_nickname: verifiedNickname,

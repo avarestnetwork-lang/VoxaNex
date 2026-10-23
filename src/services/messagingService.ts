@@ -221,8 +221,11 @@ export const messagingService = {
     // 1. Subscribe to Supabase Realtime (WebSocket Broadcast + Postgres Changes)
     let unsubSupabase = () => {};
     if (isSupabaseConfigured()) {
-      unsubSupabase = databaseService.subscribeToRoom(roomId, (msg) => {
+      databaseService.subscribeToRoom(roomId, (msg) => {
         emitUniqueMessage(msg);
+      }).then(unsub => {
+        if (isClosed) unsub();
+        else unsubSupabase = unsub;
       });
     }
 
@@ -591,9 +594,13 @@ export const messagingService = {
     }
 
     // 4. Supabase Realtime Private channel subscription (Shared state)
-    const unsubSupabase = databaseService.subscribeToDM(convId, userId, (msg) => {
+    let unsubSupabase = () => {};
+    databaseService.subscribeToDM(convId, userId, (msg) => {
       console.log('[VX-DM] Received new_dm event from Supabase for conversation:', convId);
       emitUniqueDm(msg);
+    }).then(unsub => {
+      if (isClosed) unsub();
+      else unsubSupabase = unsub;
     });
 
     // 3. Fallback auto-sync every 4s

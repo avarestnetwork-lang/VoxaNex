@@ -49,6 +49,62 @@ export const databaseService = {
   },
 
   /**
+   * Resolve a roomId (which could be a slug or a UUID) to the authoritative UUID
+   */
+  async resolveRoomId(roomId: string): Promise<string> {
+    if (!roomId) return roomId;
+    // If it's already a UUID, return as is
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId)) {
+      return roomId;
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return roomId;
+
+    try {
+      const slug = roomId.replace(/^room-/, '');
+      const { data } = await supabase
+        .from('chat_rooms')
+        .select('id')
+        .eq('slug', slug)
+        .single();
+      
+      return data?.id || roomId;
+    } catch {
+      return roomId;
+    }
+  },
+
+  /**
+   * Generate a deterministic UUID for a 1-on-1 conversation based on participant IDs
+   */
+  async getDeterministicConvId(userId1: string, userId2: string): Promise<string> {
+    const sorted = [userId1, userId2].sort();
+    const input = `conv:${sorted[0]}:${sorted[1]}`;
+    
+    // Simple deterministic UUID-like string from hash if full UUID v5 isn't available
+    // In production, we'll try to use a real UUID format that the DB accepts.
+    try {
+      const msgUint8 = new TextEncoder().encode(input);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      
+      // Format as UUID: 8-4-4-4-12
+      return [
+        hashHex.substring(0, 8),
+        hashHex.substring(8, 12),
+        hashHex.substring(12, 16),
+        hashHex.substring(16, 20),
+        hashHex.substring(20, 32)
+      ].join('-');
+    } catch {
+      // Fallback to the legacy string if crypto fails (unlikely)
+      return `conv_${sorted[0]}_${sorted[1]}`;
+    }
+  },
+
+  /**
    * Fetch messages for a specific room
    */
   async getRoomMessages(roomId: string): Promise<ChatMessage[]> {
@@ -56,10 +112,13 @@ export const databaseService = {
     if (!supabase) return [];
 
     try {
+      // Ensure we use the real UUID for the query
+      const realId = await this.resolveRoomId(roomId);
+
       const { data, error } = await supabase
         .from('messages')
         .select('*')
-        .eq('room_id', roomId)
+        .eq('room_id', realId)
         .order('created_at', { ascending: true })
         .limit(50);
 
@@ -83,15 +142,25 @@ export const databaseService = {
   /**
    * Fetch messages for a specific conversation
    */
-  async getConversationMessages(convId: string, overrideClient?: any): Promise<ChatMessage[]> {
+  async getConversationMessages(convId: string, userId?: string, overrideClient?: any): Promise<ChatMessage[]> {
     const supabase = overrideClient || getSupabaseClient();
     if (!supabase) return [];
 
     try {
+      // Resolve deterministic identity if legacy string provided
+      let dbConvId = convId;
+      if (userId && convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
+          const parts = convId.replace('conv_', '').split('_');
+          const partnerId = parts.find(p => p !== userId);
+          if (partnerId) {
+              dbConvId = await this.getDeterministicConvId(userId, partnerId);
+          }
+      }
+
       const { data, error } = await supabase
         .from('messages')
         .select('*')
-        .eq('conversation_id', convId)
+        .eq('conversation_id', dbConvId)
         .order('created_at', { ascending: true });
 
       if (error || !data) return [];
@@ -119,11 +188,14 @@ export const databaseService = {
     const supabase = overrideClient || getSupabaseClient();
     if (!supabase) return 'no_client';
     try {
-      const channel = supabase.channel(`room_hub:${roomId}`);
+      // Resolve ID to authoritative UUID for channel consistency
+      const realId = await this.resolveRoomId(roomId);
+      
+      const channel = supabase.channel(`room_hub:${realId}`);
       const status = await channel.send({
         type: 'broadcast',
         event: 'new_message',
-        payload: message,
+        payload: { ...message, roomId: realId },
       });
       return status;
     } catch (e) {
@@ -166,11 +238,14 @@ export const databaseService = {
     if (!supabase) return newMsg;
 
     try {
+      // Resolve slug to authoritative UUID for database persistence
+      const realRoomId = await this.resolveRoomId(params.roomId);
+
       const { data, error } = await supabase
         .from('messages')
         .insert({
           id: msgId,
-          room_id: params.roomId,
+          room_id: realRoomId,
           sender_user_id: params.senderUserId || null,
           sender_guest_id: params.senderGuestId || null,
           sender_nickname: params.senderNickname,
@@ -209,11 +284,14 @@ export const databaseService = {
   /**
    * Subscribe to Supabase Realtime changes and WebSocket broadcasts for a room
    */
-  subscribeToRoom(roomId: string, onMessage: (msg: ChatMessage) => void) {
+  async subscribeToRoom(roomId: string, onMessage: (msg: ChatMessage) => void): Promise<() => void> {
     const supabase = getSupabaseClient();
     if (!supabase) return () => {};
 
-    const channelName = `room_hub:${roomId}`;
+    // Ensure we use the real UUID for the Supabase subscription
+    const realId = await this.resolveRoomId(roomId);
+
+    const channelName = `room_hub:${realId}`;
     
     console.log(`[VX-RT] Subscribing to Supabase channel: ${channelName}`);
 
@@ -458,11 +536,21 @@ export const databaseService = {
   /**
    * Subscribe to direct messages via secure Supabase Realtime channel
    */
-  subscribeToDM(convId: string, userId: string, onMessage: (msg: ChatMessage) => void): () => void {
+  async subscribeToDM(convId: string, userId: string, onMessage: (msg: ChatMessage) => void): Promise<() => void> {
     const supabase = getSupabaseClient();
     if (!supabase) return () => {};
 
-    const channelName = `dm:${convId}:${userId}`;
+    // Resolve deterministic identity
+    let dbConvId = convId;
+    if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
+        const parts = convId.replace('conv_', '').split('_');
+        const partnerId = parts.find(p => p !== userId);
+        if (partnerId) {
+            dbConvId = await this.getDeterministicConvId(userId, partnerId);
+        }
+    }
+
+    const channelName = `dm:${dbConvId}:${userId}`;
     
     // Direct conversation channels are usually unique per instance but we still share to be safe
     let entry = sharedChannels.get(channelName);
@@ -502,11 +590,17 @@ export const databaseService = {
     const supabase = overrideClient || getSupabaseClient();
     if (!supabase) return 'no_client';
     try {
-      const channel = supabase.channel(`dm:${convId}:${recipientId}`);
+      // Resolve deterministic identity
+      let dbConvId = convId;
+      if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
+          dbConvId = await this.getDeterministicConvId(message.senderId, recipientId);
+      }
+
+      const channel = supabase.channel(`dm:${dbConvId}:${recipientId}`);
       const status = await channel.send({
         type: 'broadcast',
         event: 'new_dm',
-        payload: message,
+        payload: { ...message, conversationId: dbConvId },
       });
       return status;
     } catch (e) {
@@ -572,6 +666,15 @@ export const databaseService = {
     const supabase = overrideClient || getSupabaseClient();
     if (!supabase) return 'no_client';
     try {
+      // For incoming DMs, ensure conversationId is resolved to UUID if it's a legacy string
+      if (event === 'incoming_dm' && payload?.conversationId && payload?.message?.senderId) {
+          const convId = payload.conversationId;
+          if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
+              payload.conversationId = await this.getDeterministicConvId(payload.message.senderId, userId);
+              if (payload.message) payload.message.conversationId = payload.conversationId;
+          }
+      }
+
       const channel = supabase.channel(`user_dm:${userId}`);
       const status = await channel.send({
         type: 'broadcast',
