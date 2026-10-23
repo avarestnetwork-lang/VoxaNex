@@ -76,8 +76,8 @@ export const databaseService = {
   /**
    * Fetch messages for a specific conversation
    */
-  async getConversationMessages(convId: string): Promise<ChatMessage[]> {
-    const supabase = getSupabaseClient();
+  async getConversationMessages(convId: string, overrideClient?: any): Promise<ChatMessage[]> {
+    const supabase = overrideClient || getSupabaseClient();
     if (!supabase) return [];
 
     try {
@@ -433,16 +433,23 @@ export const databaseService = {
   /**
    * Broadcast DM via secure Supabase Realtime channel
    */
-  broadcastDM(convId: string, recipientId: string, message: ChatMessage) {
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
+  broadcastDM(convId: string, recipientId: string, message: ChatMessage, overrideClient?: any) {
+    const supabase = overrideClient || getSupabaseClient();
+    if (!supabase) {
+      console.warn('[VX-DM] Cannot broadcastDM: Supabase client not initialized');
+      return;
+    }
     try {
       supabase.channel(`dm:${convId}:${recipientId}`).send({
         type: 'broadcast',
         event: 'new_dm',
         payload: message,
+      }).then((res: any) => {
+        if (res !== 'ok') console.warn(`[VX-DM] broadcastDM state: ${res} for conv: ${convId}`);
       });
-    } catch {}
+    } catch (e) {
+      console.error('[VX-DM] broadcastDM exception:', e);
+    }
   },
 
   /**
@@ -453,14 +460,21 @@ export const databaseService = {
    */
   subscribeToUserDMs(userId: string, onMessage: (conversationId: string, message: ChatMessage) => void): () => void {
     const supabase = getSupabaseClient();
-    if (!supabase) return () => {};
+    if (!supabase) {
+      console.warn('[VX-DM] Cannot subscribeToUserDMs: Supabase client not initialized');
+      return () => {};
+    }
 
     const channel = supabase.channel(`user_dm:${userId}`);
     channel
       .on('broadcast', { event: 'incoming_dm' }, (payload) => {
         onMessage(payload.payload.conversationId, payload.payload.message);
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status !== 'SUBSCRIBED') {
+            console.warn(`[VX-DM] subscribeToUserDMs status: ${status} for user: ${userId}`);
+        }
+      });
 
     return () => {
       try {
@@ -472,15 +486,22 @@ export const databaseService = {
   /**
    * Broadcast event to a specific user via secure Supabase Realtime channel
    */
-  broadcastToUser(userId: string, event: string, payload: any) {
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
+  broadcastToUser(userId: string, event: string, payload: any, overrideClient?: any) {
+    const supabase = overrideClient || getSupabaseClient();
+    if (!supabase) {
+      console.warn(`[VX-DM] Cannot broadcastToUser (${event}): Supabase client not initialized`);
+      return;
+    }
     try {
       supabase.channel(`user_dm:${userId}`).send({
         type: 'broadcast',
         event: event,
         payload: payload,
+      }).then((res: any) => {
+        if (res !== 'ok') console.warn(`[VX-DM] broadcastToUser (${event}) state: ${res} for user: ${userId}`);
       });
-    } catch {}
+    } catch (e) {
+      console.error(`[VX-DM] broadcastToUser (${event}) exception:`, e);
+    }
   },
 };

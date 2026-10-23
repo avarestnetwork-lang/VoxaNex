@@ -1,4 +1,5 @@
 import { databaseService } from './services/databaseService';
+import { getSupabaseClientFromEnv } from './lib/supabaseClient';
 
 /**
  * ChatLustora Cloudflare Workers Edge Entrypoint
@@ -152,6 +153,7 @@ function sanitizeContent(input: string): string {
 export default {
   async fetch(request: Request, env: any, ctx: any): Promise<Response> {
     const url = new URL(request.url);
+    const supabaseClient = getSupabaseClientFromEnv(env);
 
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
@@ -823,8 +825,8 @@ export default {
 
           // Broadcast via Supabase
           try {
-            databaseService.broadcastDM(convId, recipientId, message as any);
-            databaseService.broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message });
+            databaseService.broadcastDM(convId, recipientId, message as any, supabaseClient);
+            databaseService.broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message }, supabaseClient);
           } catch (e) {
             console.error('[VX-DM] Failed to broadcast DM via Supabase:', e);
             return jsonResponse({ success: false, error: 'Message delivery failed.' }, 500);

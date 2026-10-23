@@ -42,6 +42,30 @@ export const getSupabaseClient = (): SupabaseClient | null => {
   return clientInstance;
 };
 
+/**
+ * Creates a Supabase client using provided Cloudflare Worker environment bindings.
+ * This is used for server-side operations where process.env is not available.
+ */
+export const getSupabaseClientFromEnv = (env: any): SupabaseClient | null => {
+  const url = env?.SUPABASE_URL || supabaseUrl;
+  const key = env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_ANON_KEY || supabaseAnonKey;
+
+  if (!url || !key || url.includes('your-project-ref')) {
+    return null;
+  }
+
+  return createClient(url, key, {
+    auth: {
+      persistSession: false,
+    },
+    realtime: {
+      params: {
+        eventsPerSecond: 10,
+      },
+    },
+  });
+};
+
 export const getSupabaseStatus = (): {
   configured: boolean;
   url: string;
