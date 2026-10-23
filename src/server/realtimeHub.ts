@@ -330,11 +330,19 @@ export function postRoomMessage(params: {
     list.shift();
   }
 
-  // Broadcast to all listening clients in this room
+  // Broadcast to all listening clients in this room via local SSE
   broadcastToRoom(roomId, 'new_message', message);
+
+  // Cross-environment delivery: Broadcast to Supabase Realtime if configured
+  try {
+    databaseService.broadcastMessage(roomId, message as any);
+  } catch (e) {
+    console.warn('[VX-RT] Failed to broadcast room message to Supabase:', e);
+  }
 
   return { success: true, message };
 }
+
 
 export function updateRoomPresence(roomId: string, member: PresenceMember) {
   // Adult room presence gate: Never permit unverified participants or minors
@@ -576,8 +584,11 @@ export async function postConversationMessage(params: {
 
   // Broadcast via Supabase
   try {
-    databaseService.broadcastDM(conversationId, recipientId, message as any);
-    databaseService.broadcastToUser(recipientId, 'incoming_dm', { conversationId, message });
+    const [status1, status2] = await Promise.all([
+      databaseService.broadcastDM(conversationId, recipientId, message as any),
+      databaseService.broadcastToUser(recipientId, 'incoming_dm', { conversationId, message })
+    ]);
+    console.log(`[VX-DM] [${conversationId}] Supabase broadcast results: ${status1}, ${status2}`);
   } catch (e) {
     console.error('[VX-DM] Failed to broadcast DM via Supabase:', e);
     return { success: false, error: 'Message persistence or delivery failed.' };
@@ -585,6 +596,7 @@ export async function postConversationMessage(params: {
   
   return { success: true, message };
 }
+
 
 export function setUserBlock(blockerId: string, targetId: string, blocked: boolean) {
   if (!userBlocks.has(blockerId)) {

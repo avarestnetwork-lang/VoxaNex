@@ -20,11 +20,25 @@ export const isSupabaseConfigured = (): boolean => {
 let clientInstance: SupabaseClient | null = null;
 
 export const getSupabaseClient = (): SupabaseClient | null => {
-  if (!isSupabaseConfigured()) {
+  const isBrowser = typeof window !== 'undefined';
+  const configured = isSupabaseConfigured();
+  
+  if (!configured) {
+    if (isBrowser) {
+      const hasUrl = !!supabaseUrl && !supabaseUrl.includes('your-project-ref');
+      const hasKey = !!supabaseAnonKey && !supabaseAnonKey.includes('your-anon-key');
+      const hostname = hasUrl ? new URL(supabaseUrl).hostname : 'none';
+      console.warn(`[VX-SUPABASE] Client not configured. URL: ${hasUrl} (${hostname}), Key: ${hasKey}. Check VITE_SUPABASE_URL/KEY.`);
+    }
     return null;
   }
 
   if (!clientInstance) {
+    if (isBrowser) {
+      const hostname = new URL(supabaseUrl).hostname;
+      const source = (import.meta as any).env?.VITE_SUPABASE_URL ? 'Vite' : 'Process';
+      console.log(`[VX-SUPABASE] Initializing client for ${hostname} (Source: ${source})`);
+    }
     clientInstance = createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
         autoRefreshToken: true,
@@ -41,6 +55,8 @@ export const getSupabaseClient = (): SupabaseClient | null => {
 
   return clientInstance;
 };
+
+
 
 /**
  * Creates a Supabase client using provided Cloudflare Worker environment bindings.

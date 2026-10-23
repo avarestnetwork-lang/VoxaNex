@@ -2,6 +2,13 @@ import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabaseClient';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { Room, ChatMessage, SafetyReport, ForumTopic, BlogArticle } from '../types';
 
+// Internal state for managing shared realtime channels to prevent "callbacks after subscribe" and accidental disconnects
+const sharedChannels = new Map<string, { 
+  channel: any; 
+  refs: number; 
+  listeners: Set<(...args: any[]) => void>;
+}>();
+
 export const databaseService = {
   /**
    * Fetch active chat rooms from database or fallback configuration
@@ -108,18 +115,20 @@ export const databaseService = {
   /**
    * Broadcast a chat message directly via Supabase Realtime WebSocket broadcast
    */
-  broadcastMessage(roomId: string, message: ChatMessage) {
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
+  async broadcastMessage(roomId: string, message: ChatMessage, overrideClient?: any): Promise<string> {
+    const supabase = overrideClient || getSupabaseClient();
+    if (!supabase) return 'no_client';
     try {
       const channel = supabase.channel(`room_hub:${roomId}`);
-      channel.send({
+      const status = await channel.send({
         type: 'broadcast',
         event: 'new_message',
         payload: message,
       });
+      return status;
     } catch (e) {
       console.warn('[VX-RT] Failed to broadcast message:', e);
+      return 'error';
     }
   },
 
@@ -188,11 +197,11 @@ export const databaseService = {
           };
 
       // Broadcast immediately across all browser clients in this room
-      this.broadcastMessage(params.roomId, savedMsg);
+      await this.broadcastMessage(params.roomId, savedMsg);
 
       return savedMsg;
     } catch {
-      this.broadcastMessage(params.roomId, newMsg);
+      await this.broadcastMessage(params.roomId, newMsg);
       return newMsg;
     }
   },
@@ -206,12 +215,6 @@ export const databaseService = {
 
     const channelName = `room_hub:${roomId}`;
     
-    // Clean up any existing channel with the same name
-    const existingChannel = supabase.getChannels().find(c => c.topic === `realtime:${channelName}`);
-    if (existingChannel) {
-      supabase.removeChannel(existingChannel);
-    }
-
     console.log(`[VX-RT] Subscribing to Supabase channel: ${channelName}`);
 
     const seenIds = new Set<string>();
@@ -226,56 +229,83 @@ export const databaseService = {
       onMessage(msg);
     };
 
-    const channel = supabase
-      .channel(channelName, { config: { broadcast: { self: false } } })
-      .on(
-        'broadcast',
-        { event: 'new_message' },
-        (payload: any) => {
-          const msg = payload?.payload;
-          if (msg && msg.roomId === roomId) {
-            console.log(`[VX-RT] Broadcast message received for room ${roomId}:`, msg.id);
-            markAndEmit(msg);
+    // Shared channel logic to prevent duplicate subscriptions
+    let entry = sharedChannels.get(channelName);
+    if (!entry) {
+      const channel = supabase.channel(channelName, { config: { broadcast: { self: false } } });
+      entry = { channel, refs: 0, listeners: new Set() };
+      sharedChannels.set(channelName, entry);
+
+      channel
+        .on(
+          'broadcast',
+          { event: 'new_message' },
+          (payload: any) => {
+            const msg = payload?.payload;
+            if (msg && msg.roomId === roomId) {
+              console.log(`[VX-RT] [${channelName}] Received broadcast:`, msg.id, msg.content?.slice(0, 20));
+              entry!.listeners.forEach(l => l(msg));
+            }
           }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `room_id=eq.${roomId}`,
-        },
-        (payload: any) => {
-          const row = payload?.new;
-          if (row && row.room_id === roomId) {
-            console.log(`[VX-RT] INSERT event received for room ${roomId}:`, row.id);
-            markAndEmit({
-              id: row.id,
-              roomId: row.room_id,
-              senderId: row.sender_user_id || row.sender_guest_id || 'usr',
-              senderNickname: row.sender_nickname,
-              senderAvatar: row.sender_avatar,
-              content: row.content,
-              timestamp: row.created_at,
-              status: 'delivered',
-            });
+
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: `room_id=eq.${roomId}`,
+          },
+          (payload: any) => {
+            const row = payload?.new;
+            if (row && row.room_id === roomId) {
+              console.log(`[VX-RT] [${channelName}] Received INSERT:`, row.id);
+              const msg = {
+                id: row.id,
+                roomId: row.room_id,
+                senderId: row.sender_user_id || row.sender_guest_id || 'usr',
+                senderNickname: row.sender_nickname,
+                senderAvatar: row.sender_avatar,
+                content: row.content,
+                timestamp: row.created_at,
+                status: 'delivered' as const,
+              };
+              entry!.listeners.forEach(l => l(msg));
+            }
+
           }
-        }
-      )
-      .subscribe((status, err) => {
-        console.log(`[VX-RT] Subscription status for ${channelName}: ${status}`, err || '');
-      });
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log(`[VX-RT] [${channelName}] Subscription success`);
+          } else {
+            console.warn(`[VX-RT] [${channelName}] Subscription status: ${status}`, err || '');
+          }
+        });
+
+    }
+
+    entry.refs++;
+    const listener = (msg: ChatMessage) => markAndEmit(msg);
+    entry.listeners.add(listener);
 
     return () => {
-      console.log(`[VX-RT] Unsubscribing: ${channelName}`);
-      supabase.removeChannel(channel);
+      const currentEntry = sharedChannels.get(channelName);
+      if (currentEntry) {
+        currentEntry.listeners.delete(listener);
+        currentEntry.refs--;
+        if (currentEntry.refs <= 0) {
+          console.log(`[VX-RT] Final unsubscribe: ${channelName}`);
+          supabase.removeChannel(currentEntry.channel);
+          sharedChannels.delete(channelName);
+        }
+      }
     };
   },
 
   /**
-   * Track presence state via Supabase Realtime Presence
+   * Track presence state and listen for updates via Supabase Realtime Presence
    */
   trackPresence(roomId: string, member: { id: string; nickname: string; avatar: string; isGuest: boolean; gender?: string }, onSync: (members: any[]) => void): () => void {
     const supabase = getSupabaseClient();
@@ -283,16 +313,10 @@ export const databaseService = {
 
     const channelName = `public_room_presence:${roomId}`;
     
-    // Clean up any existing channel with the same name to avoid "callbacks after subscribe" errors
-    const existingChannel = supabase.getChannels().find(c => c.topic === `realtime:${channelName}`);
-    if (existingChannel) {
-      supabase.removeChannel(existingChannel);
-    }
-
-    let channel: any = null;
-    try {
-      console.log('[VX-PRESENCE] Initializing channel:', channelName, 'for user:', member.id.slice(0, 8));
-      channel = supabase.channel(channelName, {
+    let entry = sharedChannels.get(channelName);
+    if (!entry) {
+      console.log('[VX-PRESENCE] Initializing shared presence channel:', channelName);
+      const channel = supabase.channel(channelName, {
         config: {
           presence: {
             key: member.id,
@@ -300,12 +324,14 @@ export const databaseService = {
         },
       });
 
-      // Register ALL callbacks BEFORE calling subscribe()
+      entry = { channel, refs: 0, listeners: new Set() };
+      sharedChannels.set(channelName, entry);
+
+      // Register ALL event types before subscribing
       channel
         .on('presence', { event: 'sync' }, () => {
           try {
             const state = channel.presenceState();
-            console.log('[VX-PRESENCE] Sync event received for room:', roomId, 'state keys:', Object.keys(state));
             const members: any[] = [];
             Object.values(state).forEach((presences: any) => {
               if (Array.isArray(presences)) {
@@ -321,15 +347,20 @@ export const databaseService = {
                 });
               }
             });
-            console.log('[VX-PRESENCE] Aggregated online count:', members.length);
-            onSync(members);
+            entry!.listeners.forEach(l => l(members));
           } catch (err) {
-            console.warn('[VX-PRESENCE] Error processing presence sync:', err);
+            console.warn('[VX-PRESENCE] Sync error:', err);
+          }
+        })
+        .on('broadcast', { event: 'presence' }, (payload) => {
+          // Compatibility shim for legacy broadcast-based presence
+          if (payload.payload?.status === 'offline' && payload.payload.id) {
+             // We can't easily trigger a sync here, but the untrack() on leave handles this mostly.
           }
         })
         .subscribe(async (status: string, err?: any) => {
-          console.log('[VX-PRESENCE] Subscription status:', status, 'room:', roomId, err || '');
-          if (status === 'SUBSCRIBED' && channel) {
+          if (status === 'SUBSCRIBED') {
+            console.log(`[VX-PRESENCE] [${channelName}] Subscribed successfully`);
             try {
               await channel.track({
                 id: member.id,
@@ -339,34 +370,46 @@ export const databaseService = {
                 gender: member.gender,
                 lastSeen: Date.now(),
               });
-              console.log('[VX-PRESENCE] Successfully tracked presence for:', member.id.slice(0, 8));
             } catch (trackErr) {
-              console.warn('[VX-PRESENCE] Failed to track presence payload:', trackErr);
+              console.error(`[VX-PRESENCE] [${channelName}] Track failed:`, trackErr);
             }
+          } else {
+            console.warn(`[VX-PRESENCE] [${channelName}] Status: ${status}`, err || '');
           }
         });
-    } catch (initErr) {
-      console.warn('[VX-PRESENCE] Channel initialization error:', initErr);
     }
 
+    entry.refs++;
+    const listener = (members: any[]) => onSync(members);
+    entry.listeners.add(listener);
+
     return () => {
-      try {
-        if (channel) {
-          channel.untrack();
-          supabase.removeChannel(channel);
+      const currentEntry = sharedChannels.get(channelName);
+      if (currentEntry) {
+        currentEntry.listeners.delete(listener);
+        currentEntry.refs--;
+        if (currentEntry.refs <= 0) {
+          console.log('[VX-PRESENCE] Cleaning up shared presence channel:', channelName);
+          currentEntry.channel.untrack().catch(() => {});
+          supabase.removeChannel(currentEntry.channel);
+          sharedChannels.delete(channelName);
         }
-      } catch {}
+      }
     };
   },
 
   /**
    * Broadcast presence update (compatibility shim)
    */
-  broadcastPresence(roomId: string, presence: any) {
+  async broadcastPresence(roomId: string, presence: any) {
     const supabase = getSupabaseClient();
     if (!supabase) return;
     try {
-      supabase.channel(`public_room_presence:${roomId}`).send({
+      const channelName = `public_room_presence:${roomId}`;
+      let entry = sharedChannels.get(channelName);
+      const channel = entry ? entry.channel : supabase.channel(channelName);
+      
+      await channel.send({
         type: 'broadcast',
         event: 'presence',
         payload: presence,
@@ -376,23 +419,12 @@ export const databaseService = {
 
   /**
    * Subscribe to presence updates (compatibility shim)
+   * Note: This now hooks into the same shared channel used by trackPresence
    */
   subscribePresence(roomId: string, onUpdate: (presence: any) => void) {
-    const supabase = getSupabaseClient();
-    if (!supabase) return () => {};
-
-    const channel = supabase.channel(`public_room_presence:${roomId}`);
-    channel
-      .on('broadcast', { event: 'presence' }, (payload) => {
-        onUpdate(payload.payload);
-      })
-      .subscribe();
-
-    return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
-    };
+    // This is now effectively a no-op or a shim because trackPresence handles the sync.
+    // For legacy support, we just return a no-op unsetter.
+    return () => {};
   },
 
   /**
@@ -432,111 +464,125 @@ export const databaseService = {
 
     const channelName = `dm:${convId}:${userId}`;
     
-    // Clean up any existing channel with the same name
-    const existingChannel = supabase.getChannels().find(c => c.topic === `realtime:${channelName}`);
-    if (existingChannel) {
-      supabase.removeChannel(existingChannel);
+    // Direct conversation channels are usually unique per instance but we still share to be safe
+    let entry = sharedChannels.get(channelName);
+    if (!entry) {
+      const channel = supabase.channel(channelName);
+      entry = { channel, refs: 0, listeners: new Set() };
+      sharedChannels.set(channelName, entry);
+
+      channel
+        .on('broadcast', { event: 'new_dm' }, (payload) => {
+          entry!.listeners.forEach(l => l(payload.payload));
+        })
+        .subscribe();
     }
 
-    // Use authorized private channel
-    const channel = supabase.channel(channelName);
-    channel
-      .on('broadcast', { event: 'new_dm' }, (payload) => {
-        onMessage(payload.payload);
-      })
-      .subscribe();
+    entry.refs++;
+    const listener = (msg: ChatMessage) => onMessage(msg);
+    entry.listeners.add(listener);
 
     return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {}
+      const currentEntry = sharedChannels.get(channelName);
+      if (currentEntry) {
+        currentEntry.listeners.delete(listener);
+        currentEntry.refs--;
+        if (currentEntry.refs <= 0) {
+          supabase.removeChannel(currentEntry.channel);
+          sharedChannels.delete(channelName);
+        }
+      }
     };
   },
 
   /**
    * Broadcast DM via secure Supabase Realtime channel
    */
-  broadcastDM(convId: string, recipientId: string, message: ChatMessage, overrideClient?: any) {
+  async broadcastDM(convId: string, recipientId: string, message: ChatMessage, overrideClient?: any): Promise<string> {
     const supabase = overrideClient || getSupabaseClient();
-    if (!supabase) {
-      console.warn('[VX-DM] Cannot broadcastDM: Supabase client not initialized');
-      return;
-    }
+    if (!supabase) return 'no_client';
     try {
-      supabase.channel(`dm:${convId}:${recipientId}`).send({
+      const channel = supabase.channel(`dm:${convId}:${recipientId}`);
+      const status = await channel.send({
         type: 'broadcast',
         event: 'new_dm',
         payload: message,
-      }).then((res: any) => {
-        if (res !== 'ok') console.warn(`[VX-DM] broadcastDM state: ${res} for conv: ${convId}`);
       });
+      return status;
     } catch (e) {
-      console.error('[VX-DM] broadcastDM exception:', e);
+      console.error('[VX-DM] broadcastDM error:', e);
+      return 'error';
     }
   },
 
   /**
    * Subscribe to direct message notifications for a specific user via secure Supabase broadcast
    */
-  /**
-   * Subscribe to direct message notifications for a specific user via secure Supabase broadcast
-   */
   subscribeToUserDMs(userId: string, onMessage: (conversationId: string, message: ChatMessage) => void): () => void {
     const supabase = getSupabaseClient();
-    if (!supabase) {
-      console.warn('[VX-DM] Cannot subscribeToUserDMs: Supabase client not initialized');
-      return () => {};
-    }
+    if (!supabase) return () => {};
 
     const channelName = `user_dm:${userId}`;
     
-    // Clean up any existing channel with the same name
-    const existingChannel = supabase.getChannels().find(c => c.topic === `realtime:${channelName}`);
-    if (existingChannel) {
-      console.log(`[VX-DM] Removing existing channel for: ${channelName}`);
-      supabase.removeChannel(existingChannel);
+    let entry = sharedChannels.get(channelName);
+    if (!entry) {
+      console.log(`[VX-DM] Creating shared user_dm channel: ${channelName}`);
+      const channel = supabase.channel(channelName);
+      entry = { channel, refs: 0, listeners: new Set() };
+      sharedChannels.set(channelName, entry);
+
+      channel
+        .on('broadcast', { event: 'incoming_dm' }, (payload) => {
+          console.log(`[VX-DM] [${channelName}] Received incoming_dm:`, payload.payload?.message?.id);
+          entry!.listeners.forEach(l => l(payload.payload.conversationId, payload.payload.message));
+        })
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log(`[VX-DM] [${channelName}] Subscription success`);
+          } else {
+            console.warn(`[VX-DM] [${channelName}] Subscription status: ${status}`, err || '');
+          }
+        });
+
+
     }
 
-    const channel = supabase.channel(channelName);
-    channel
-      .on('broadcast', { event: 'incoming_dm' }, (payload) => {
-        onMessage(payload.payload.conversationId, payload.payload.message);
-      })
-      .subscribe((status) => {
-        if (status !== 'SUBSCRIBED') {
-            console.warn(`[VX-DM] subscribeToUserDMs status for ${channelName}: ${status}`);
-        } else {
-            console.log(`[VX-DM] subscribeToUserDMs success for ${channelName}`);
-        }
-      });
+    entry.refs++;
+    const listener = (conversationId: string, message: ChatMessage) => onMessage(conversationId, message);
+    entry.listeners.add(listener);
 
     return () => {
-      try {
-        console.log(`[VX-DM] Unsubscribing from: ${channelName}`);
-        supabase.removeChannel(channel);
-      } catch {}
+      const currentEntry = sharedChannels.get(channelName);
+      if (currentEntry) {
+        currentEntry.listeners.delete(listener);
+        currentEntry.refs--;
+        if (currentEntry.refs <= 0) {
+          console.log(`[VX-DM] Final cleanup for shared channel: ${channelName}`);
+          supabase.removeChannel(currentEntry.channel);
+          sharedChannels.delete(channelName);
+        }
+      }
     };
   },
 
   /**
    * Broadcast event to a specific user via secure Supabase Realtime channel
    */
-  broadcastToUser(userId: string, event: string, payload: any, overrideClient?: any) {
+  async broadcastToUser(userId: string, event: string, payload: any, overrideClient?: any): Promise<string> {
     const supabase = overrideClient || getSupabaseClient();
-    if (!supabase) {
-      console.warn(`[VX-DM] Cannot broadcastToUser (${event}): Supabase client not initialized`);
-      return;
-    }
+    if (!supabase) return 'no_client';
     try {
-      supabase.channel(`user_dm:${userId}`).send({
+      const channel = supabase.channel(`user_dm:${userId}`);
+      const status = await channel.send({
         type: 'broadcast',
         event: event,
         payload: payload,
-      }).then((res: any) => {
-        if (res !== 'ok') console.warn(`[VX-DM] broadcastToUser (${event}) state: ${res} for user: ${userId}`);
       });
+      return status;
     } catch (e) {
-      console.error(`[VX-DM] broadcastToUser (${event}) exception:`, e);
+      console.error(`[VX-DM] broadcastToUser (${event}) error:`, e);
+      return 'error';
     }
   },
 };
+

@@ -455,13 +455,44 @@ export default {
             }
           }
 
-          // Broadcast to all active SSE subscribers in this room
+          // Broadcast to all active SSE subscribers in this room (Isolate-local)
           broadcastToRoom(roomId, 'new_message', message);
+
+          const rtDiag: any = {
+              platform: 'Cloudflare Worker',
+              hasSupabaseUrl: !!env?.SUPABASE_URL,
+              hasServiceRoleKey: !!env?.SUPABASE_SERVICE_ROLE_KEY,
+              supabaseClientReady: !!supabaseClient,
+              senderType
+          };
+
+          // Broadcast to Supabase Realtime (Cross-environment / Cross-isolate)
+          const rtPromise = (async () => {
+              if (!supabaseClient) {
+                  rtDiag.rtStatus = 'no_client';
+                  return;
+              }
+              try {
+                  const status = await databaseService.broadcastMessage(roomId, message as any, supabaseClient);
+                  rtDiag.rtStatus = status;
+                  console.log(`[Worker] Supabase RT broadcast status for room ${roomId}: ${status}`);
+              } catch (e: any) {
+                  rtDiag.rtError = e.message || 'Unknown RT error';
+                  console.warn(`[Worker] Supabase RT broadcast failed for room ${roomId}:`, e);
+              }
+          })();
+
+          if (ctx?.waitUntil) {
+              ctx.waitUntil(rtPromise);
+          }
 
           return jsonResponse({
             success: true,
             message,
+            serverDiag: rtDiag
           });
+
+
         } catch (err: any) {
           return jsonResponse({ success: false, error: 'Failed to process message: ' + (err.message || 'Malformed body') }, 400);
         }
@@ -774,13 +805,36 @@ export default {
           }
 
           const cleanContent = sanitizeContent(content || '');
+          const correlationId = `dm_tx_${crypto.randomUUID().slice(0, 8)}`;
+          
+          let verifiedSenderType: 'registered' | 'guest' = 'registered';
+          let verifiedSenderId = senderId;
+          let verifiedNickname = senderNickname || 'User';
+          let verifiedAvatar = senderAvatar || '👤';
+
+          // Authorize guest sessions if guest token provided
+          if (guestToken && guestSessions.has(guestToken)) {
+            const gSession = guestSessions.get(guestToken)!;
+            if (gSession.id !== senderId) {
+              return jsonResponse({ success: false, error: 'Unauthorized: Guest token mismatch.' }, 403);
+            }
+            verifiedSenderType = 'guest';
+            verifiedSenderId = gSession.id;
+            verifiedNickname = gSession.nickname;
+            verifiedAvatar = gSession.avatar;
+          } else if (senderId.startsWith('guest_')) {
+              // If it looks like a guest ID but no token was provided/valid
+              return jsonResponse({ success: false, error: 'Unauthorized: Valid guest session required for guest IDs.' }, 401);
+          }
+
           const message: HubMessage = {
             id: crypto.randomUUID(),
-            roomId: convId,
-            senderId,
-            senderNickname: senderNickname || 'User',
-            senderAvatar: senderAvatar || '👤',
-            senderType: 'registered',
+            roomId: convId, // Legacy shim
+            conversationId: convId,
+            senderId: verifiedSenderId,
+            senderNickname: verifiedNickname,
+            senderAvatar: verifiedAvatar,
+            senderType: verifiedSenderType,
             content: cleanContent,
             rawContent: content,
             mediaUrl,
@@ -792,13 +846,14 @@ export default {
           };
 
           // Persist to Supabase if configured
+          let persistencePromise: Promise<any> = Promise.resolve();
           if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
             try {
               const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages`;
-              const isSenderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(senderId);
+              const isSenderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(verifiedSenderId);
               const isConvUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId);
 
-              await fetch(supabaseUrl, {
+              persistencePromise = fetch(supabaseUrl, {
                 method: 'POST',
                 headers: {
                   'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
@@ -808,31 +863,71 @@ export default {
                 },
                 body: JSON.stringify({
                   conversation_id: isConvUuid ? convId : null,
-                  sender_user_id: isSenderUuid ? senderId : null,
-                  sender_guest_id: !isSenderUuid ? senderId : null,
-                  sender_nickname: senderNickname || 'User',
-                  sender_avatar: senderAvatar || '👤',
+                  sender_user_id: isSenderUuid ? verifiedSenderId : null,
+                  sender_guest_id: !isSenderUuid ? verifiedSenderId : null,
+                  sender_nickname: verifiedNickname,
+                  sender_avatar: verifiedAvatar,
                   content: cleanContent,
                   media_url: mediaUrl,
                   media_type: mediaType,
                   client_nonce: clientNonce,
                 }),
+              }).catch(e => {
+                console.error(`[VX-DM] [${correlationId}] Persistence error:`, e);
+                return null;
               });
             } catch (dbErr) {
-              console.warn('Supabase service-role DM persistence warning:', dbErr);
+              console.warn(`[VX-DM] [${correlationId}] Supabase persistence config error:`, dbErr);
             }
           }
 
-          // Broadcast via Supabase
+
+          const rtDiag: any = {
+              platform: 'Cloudflare Worker',
+              hasSupabaseUrl: !!env?.SUPABASE_URL,
+              hasServiceRoleKey: !!env?.SUPABASE_SERVICE_ROLE_KEY,
+              supabaseClientReady: !!supabaseClient
+          };
+
+          // Broadcast via local SSE for immediate delivery to clients on THIS isolate
           try {
-            databaseService.broadcastDM(convId, recipientId, message as any, supabaseClient);
-            databaseService.broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message }, supabaseClient);
-          } catch (e) {
-            console.error('[VX-DM] Failed to broadcast DM via Supabase:', e);
-            return jsonResponse({ success: false, error: 'Message delivery failed.' }, 500);
+              broadcastToConversation(convId, 'new_dm', message);
+              broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message });
+              rtDiag.localSseAttempted = true;
+          } catch (sseErr: any) {
+              rtDiag.localSseError = sseErr.message || 'SSE error';
+              console.warn(`[VX-DM] [${correlationId}] Local SSE broadcast error:`, sseErr);
           }
 
-          return jsonResponse({ success: true, message });
+          // Broadcast via Supabase Realtime for cross-isolate delivery
+          const broadcastPromise = (async () => {
+              if (!supabaseClient) {
+                  rtDiag.rtStatus = 'no_client';
+                  return;
+              }
+              try {
+                const results = await Promise.all([
+                    databaseService.broadcastDM(convId, recipientId, message as any, supabaseClient),
+                    databaseService.broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message }, supabaseClient)
+                ]);
+                rtDiag.rtResults = results;
+                console.log(`[VX-DM] [${correlationId}] Supabase broadcast results:`, results);
+              } catch (e: any) {
+                rtDiag.rtError = e.message || 'Unknown RT error';
+                console.error(`[VX-DM] [${correlationId}] Supabase broadcast fatal error:`, e);
+              }
+          })();
+
+          // Ensure background work finishes even if we return the response
+          if (ctx?.waitUntil) {
+              ctx.waitUntil(Promise.all([persistencePromise, broadcastPromise]));
+          } else {
+              await Promise.all([persistencePromise, broadcastPromise]);
+          }
+
+          return jsonResponse({ success: true, message, correlationId, serverDiag: rtDiag });
+
+
         } catch (err: any) {
           return jsonResponse({ success: false, error: 'Failed to deliver message' }, 400);
         }

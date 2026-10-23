@@ -425,13 +425,26 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
   }, [user.id, handleIncomingMessage]);
 
-  // Fix 2: Per-window Subscriptions
+  // Fix 2: Per-window Subscriptions (Incremental management)
   useEffect(() => {
     if (!user.id) return;
 
+    const currentConvIds = new Set(openWindows.map(w => w.conversationId));
+
+    // 1. Unsubscribe from windows that are no longer open
+    activeSubscriptionsRef.current.forEach((unsub, convId) => {
+      if (!currentConvIds.has(convId)) {
+        console.log('[VX-DM] Window closed, unsubscribing from:', convId);
+        unsub();
+        activeSubscriptionsRef.current.delete(convId);
+      }
+    });
+
+    // 2. Subscribe to newly opened windows
     openWindows.forEach((win) => {
       if (activeSubscriptionsRef.current.has(win.conversationId)) return;
       
+      console.log('[VX-DM] New window detected, subscribing to:', win.conversationId);
       const unsub = messagingService.subscribeToConversation(win.conversationId, user.id, {
         onMessage: (msg) => {
           handleIncomingMessage(msg, win.conversationId, {
@@ -445,20 +458,8 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       activeSubscriptionsRef.current.set(win.conversationId, unsub);
     });
 
-    // Cleanup unsubscribed windows
-    const openConvIds = new Set(openWindows.map(w => w.conversationId));
-    activeSubscriptionsRef.current.forEach((unsub, convId) => {
-        if (!openConvIds.has(convId)) {
-            unsub();
-            activeSubscriptionsRef.current.delete(convId);
-        }
-    });
-
-    return () => {
-      activeSubscriptionsRef.current.forEach((unsub) => unsub());
-      activeSubscriptionsRef.current.clear();
-    };
   }, [user.id, openWindows, handleIncomingMessage]);
+
 
   // Fix 3: Polling Sync
   useEffect(() => {

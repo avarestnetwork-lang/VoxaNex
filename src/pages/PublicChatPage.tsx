@@ -294,12 +294,6 @@ export const PublicChatPage: React.FC = () => {
 
   // 2. Realtime SSE & Supabase Realtime stream subscription
   useEffect(() => {
-    const unsubPresence = databaseService.subscribePresence(activeRoom.id, (presence) => {
-      if (presence.payload.status === 'offline') {
-        setOnlineMembers((prev) => prev.filter((m) => m.id !== presence.payload.id));
-      }
-    });
-
     const unsubscribe = messagingService.subscribeToRoom(activeRoom.id, {
       onMessage: (newMsg) => {
         setMessages((prev) => {
@@ -375,7 +369,6 @@ export const PublicChatPage: React.FC = () => {
 
     return () => {
       unsubscribe();
-      unsubPresence();
     };
   }, [activeRoom.id, user.nickname, scrollToBottom]);
 

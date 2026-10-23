@@ -204,13 +204,43 @@ export const authService = {
     if (!supabase) return null;
 
     try {
-      const { data, error } = await supabase
+      const { data, error, status } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single();
 
-      if (error || !data) return null;
+      if (error) {
+        // Detailed logging for PostgREST errors (e.g. PGRST205 / 404)
+        console.warn(`[VX-AUTH] Profile fetch error for ${userId.slice(0, 8)}:`, {
+          code: error.code,
+          message: error.message,
+          status,
+          hint: error.hint
+        });
+        
+        // If the table is missing or the record is missing, we might want to return 
+        // a minimal profile from the auth metadata as a last-resort fallback
+        if (status === 404) {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user && user.id === userId) {
+             return {
+               id: user.id,
+               nickname: user.user_metadata?.nickname || user.email?.split('@')[0] || 'User',
+               avatar: user.user_metadata?.avatar_url || '🛡️',
+               isGuest: false,
+               is18Verified: false,
+               languagePreference: 'en',
+               safeFilterEnabled: true,
+               notificationSounds: true,
+               createdAt: user.created_at,
+             };
+          }
+        }
+        return null;
+      }
+
+      if (!data) return null;
 
       return {
         id: data.id,
@@ -226,7 +256,8 @@ export const authService = {
         notificationSounds: Boolean(data.notification_sounds),
         createdAt: data.created_at,
       };
-    } catch {
+    } catch (e) {
+      console.error('[VX-AUTH] Unexpected profile fetch exception:', e);
       return null;
     }
   },
