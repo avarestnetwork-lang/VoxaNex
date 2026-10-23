@@ -236,26 +236,87 @@ export const databaseService = {
   },
 
   /**
-   * Broadcast presence update via Supabase Realtime
+   * Track presence state via Supabase Realtime Presence
+   */
+  trackPresence(roomId: string, member: { id: string; nickname: string; avatar: string; isGuest: boolean; gender?: string }, onSync: (members: any[]) => void): () => void {
+    const supabase = getSupabaseClient();
+    if (!supabase) return () => {};
+
+    const channelName = `public_room_presence:${roomId}`;
+    const channel = supabase.channel(channelName, {
+      config: {
+        presence: {
+          key: member.id,
+        },
+      },
+    });
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const members: any[] = [];
+        Object.values(state).forEach((presences: any) => {
+          if (Array.isArray(presences)) {
+            presences.forEach((p) => {
+              members.push({
+                id: p.id || p.user_id,
+                nickname: p.nickname || 'User',
+                avatar: p.avatar || '👤',
+                isGuest: Boolean(p.isGuest),
+                gender: p.gender,
+                lastSeen: p.lastSeen || Date.now(),
+              });
+            });
+          }
+        });
+        onSync(members);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          try {
+            await channel.track({
+              id: member.id,
+              nickname: member.nickname,
+              avatar: member.avatar,
+              isGuest: member.isGuest,
+              gender: member.gender,
+              lastSeen: Date.now(),
+            });
+          } catch {}
+        }
+      });
+
+    return () => {
+      try {
+        channel.untrack();
+        supabase.removeChannel(channel);
+      } catch {}
+    };
+  },
+
+  /**
+   * Broadcast presence update (compatibility shim)
    */
   broadcastPresence(roomId: string, presence: any) {
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    supabase.channel(`room_presence:${roomId}`).send({
-      type: 'broadcast',
-      event: 'presence',
-      payload: presence,
-    });
+    try {
+      supabase.channel(`public_room_presence:${roomId}`).send({
+        type: 'broadcast',
+        event: 'presence',
+        payload: presence,
+      });
+    } catch {}
   },
 
   /**
-   * Subscribe to presence updates via Supabase Realtime broadcast
+   * Subscribe to presence updates (compatibility shim)
    */
   subscribePresence(roomId: string, onUpdate: (presence: any) => void) {
     const supabase = getSupabaseClient();
     if (!supabase) return () => {};
 
-    const channel = supabase.channel(`room_presence:${roomId}`);
+    const channel = supabase.channel(`public_room_presence:${roomId}`);
     channel
       .on('broadcast', { event: 'presence' }, (payload) => {
         onUpdate(payload.payload);
@@ -263,7 +324,9 @@ export const databaseService = {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   },
 

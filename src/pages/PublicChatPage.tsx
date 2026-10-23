@@ -379,12 +379,30 @@ export const PublicChatPage: React.FC = () => {
     };
   }, [activeRoom.id, user.nickname, scrollToBottom]);
 
-  // 3. Presence Heartbeat
+  // 3. Presence Tracking via Supabase Realtime Presence & HTTP fallback
   useEffect(() => {
+    if (!user.id) return;
     let isMounted = true;
+
+    // 1. Subscribe to true Supabase Realtime Presence if configured
+    const untrackSupabase = databaseService.trackPresence(
+      activeRoom.id,
+      {
+        id: user.id,
+        nickname: user.nickname || 'You',
+        avatar: user.avatar || '👤',
+        isGuest: Boolean(user.isGuest),
+        gender: user.gender,
+      },
+      (members) => {
+        if (isMounted && Array.isArray(members) && members.length > 0) {
+          setOnlineMembers(members);
+        }
+      }
+    );
+
+    // 2. HTTP heartbeat fallback for environments without Supabase configured
     const sendHeartbeat = async () => {
-      if (!user.id) return;
-      console.log('[DIAGNOSTIC] presence_session_registered', { userId: user.id, nickname: user.nickname, roomId: activeRoom.id });
       try {
         const members = await messagingService.sendPresence(activeRoom.id, {
           id: user.id,
@@ -393,19 +411,15 @@ export const PublicChatPage: React.FC = () => {
           isGuest: Boolean(user.isGuest),
           gender: user.gender,
         });
-        if (isMounted && Array.isArray(members)) {
-          if (members.length > 0) {
-            setOnlineMembers(members);
-          } else if (user?.id) {
-            setOnlineMembers([{
-              id: user.id,
-              nickname: user.nickname || 'You',
-              avatar: user.avatar || '👤',
-              isGuest: Boolean(user.isGuest),
-              gender: user.gender,
-              lastSeen: Date.now(),
-            }]);
-          }
+        if (isMounted && Array.isArray(members) && members.length > 0) {
+          setOnlineMembers((prev) => {
+            // Merge gracefully without wiping out real-time presence
+            const merged = [...members];
+            prev.forEach((m) => {
+              if (!merged.some((x) => x.id === m.id)) merged.push(m);
+            });
+            return merged;
+          });
         }
       } catch (err) {
         console.warn('Presence heartbeat non-fatal error:', err);
@@ -414,9 +428,11 @@ export const PublicChatPage: React.FC = () => {
 
     sendHeartbeat();
     const interval = setInterval(sendHeartbeat, 25000);
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      untrackSupabase();
       if (user?.id) {
         messagingService.leaveRoom(activeRoom.id, user.id);
       }
