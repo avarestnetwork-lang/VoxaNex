@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
+import { usePrivateChat } from '../context/PrivateChatContext';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { ChatMessage, Room } from '../types';
 import { formatDhakaTime } from '../utils/date';
@@ -15,10 +16,10 @@ import { ReportModal } from '../components/chat/ReportModal';
 import { UserActionMenu } from '../components/chat/UserActionMenu';
 import { MentionAutocomplete } from '../components/chat/MentionAutocomplete';
 import { UserProfileModal } from '../components/chat/UserProfileModal';
-import { PrivateChatPane } from '../components/chat/PrivateChatPane';
 import { safetyService } from '../services/safetyService';
 import { Button } from '../components/ui/Button';
 import { SEOHead } from '../components/common/SEOHead';
+import { PrivateChatPane } from '../components/chat/PrivateChatPane';
 import {
   messagingService,
   RealtimePresenceMember,
@@ -47,6 +48,7 @@ import {
   Menu,
   ChevronRight,
   Hash,
+  Minimize2,
 } from 'lucide-react';
 
 interface ExtendedChatMessage extends ChatMessage {
@@ -119,9 +121,38 @@ export const PublicChatPage: React.FC = () => {
   const { params, navigate } = useRouter();
   const { language, t } = useLanguage();
   const { user, hasActiveSession, is18Verified } = useAuth();
+  const { openChat, openWindows, minimizeChat, closeChat } = usePrivateChat();
 
   const currentRoomSlug = params.roomId || 'bangla';
   const activeRoom = ROOMS_CONFIG.find((r) => r.slug === currentRoomSlug) || ROOMS_CONFIG[0];
+
+  // Authoritative main view tab: 'room' for public group chat, or conversationId for maximized private chat
+  const [activeMainTab, setActiveMainTab] = useState<'room' | string>('room');
+
+  // Rule 6 & 7: The expanded/tab-style renderer must render ONLY conversations whose mode is 'maximized'
+  const maximizedWindows = openWindows.filter(
+    (win) => win.isOpen && win.displayMode === 'maximized'
+  );
+  const activeMaximizedWindow = maximizedWindows.find((w) => w.conversationId === activeMainTab);
+
+  // If a window is newly maximized, switch active tab to it
+  const prevMaximizedCountRef = useRef(maximizedWindows.length);
+  useEffect(() => {
+    if (maximizedWindows.length > prevMaximizedCountRef.current) {
+      const latestMaximized = maximizedWindows[maximizedWindows.length - 1];
+      if (latestMaximized) {
+        setActiveMainTab(latestMaximized.conversationId);
+      }
+    }
+    prevMaximizedCountRef.current = maximizedWindows.length;
+  }, [maximizedWindows]);
+
+  // If active tab was a maximized private chat that is closed/minimized, fallback cleanly to 'room'
+  useEffect(() => {
+    if (activeMainTab !== 'room' && !maximizedWindows.some((w) => w.conversationId === activeMainTab)) {
+      setActiveMainTab('room');
+    }
+  }, [activeMainTab, maximizedWindows]);
 
   // Mandatory Sign-In Gateway & 18+ Access Gate enforcement
   useEffect(() => {
@@ -160,16 +191,6 @@ export const PublicChatPage: React.FC = () => {
   const [sidebarTab, setSidebarTab] = useState<'users' | 'private' | 'rooms'>('users');
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
-
-  // Active Direct Conversation Tab
-  const [activePrivatePartner, setActivePrivatePartner] = useState<{
-    id: string;
-    nickname: string;
-    avatar: string;
-    gender?: string;
-    isGuest?: boolean;
-  } | null>(null);
-  const [activeChatView, setActiveChatView] = useState<'room' | 'private'>('room');
 
   // Direct conversations list for the Private tab
   const [directConversations, setDirectConversations] = useState<
@@ -623,7 +644,7 @@ export const PublicChatPage: React.FC = () => {
     });
   };
 
-  // Open Direct 1-on-1 Chat with Partner
+  // Open Direct 1-on-1 Chat with Partner (Rule 1 & 8: exactly ONE compact floating window, main view stays on room tab)
   const handleOpenPrivateChat = (partner: {
     id: string;
     nickname: string;
@@ -631,9 +652,9 @@ export const PublicChatPage: React.FC = () => {
     gender?: string;
     isGuest?: boolean;
   }) => {
-    setActivePrivatePartner(partner);
-    setActiveChatView('private');
+    openChat(partner);
     setShowMobileSidebar(false);
+    setActiveMainTab('room');
 
     // Ensure conversation exists in direct list
     setDirectConversations((prev) => {
@@ -659,7 +680,6 @@ export const PublicChatPage: React.FC = () => {
   const handleMentionFromMenu = (nickname: string) => {
     setInputText((prev) => (prev ? `${prev} @${nickname} ` : `@${nickname} `));
     inputRef.current?.focus();
-    setActiveChatView('room');
   };
 
   // Render mentions highlighted in chat messages
@@ -721,7 +741,7 @@ export const PublicChatPage: React.FC = () => {
       {/* Top Navigation & Channel Header Bar */}
       <div className="p-3 rounded-t-2xl border border-slate-800 bg-[#0c1222] flex items-center justify-between gap-3 shrink-0 shadow-lg">
         {/* Left: Brand/Room info & Switcher tabs */}
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-x-auto no-scrollbar">
           <button
             onClick={() => navigate('/rooms')}
             className="p-2 text-slate-400 hover:text-white hover:bg-slate-800/80 rounded-xl transition-colors cursor-pointer shrink-0"
@@ -730,53 +750,81 @@ export const PublicChatPage: React.FC = () => {
             <Compass className="w-5 h-5 text-cyan-400" />
           </button>
 
-          {/* Active View Tabs (Public Room vs Active Private Chat) */}
-          <div className="flex items-center gap-1.5 min-w-0 bg-[#080d19] p-1 rounded-xl border border-slate-800/90">
-            <button
-              onClick={() => setActiveChatView('room')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer truncate ${
-                activeChatView === 'room'
-                  ? 'bg-cyan-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Hash className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{activeRoom.name[language]}</span>
-              {activeRoom.is18Plus && (
-                <span className="text-[9px] bg-rose-950/80 text-rose-300 border border-rose-800 px-1 py-0.2 rounded shrink-0">
-                  18+
-                </span>
-              )}
-            </button>
+          {/* Public Room Tab (Rule 9: always preserved) */}
+          <button
+            type="button"
+            data-testid="public-room-tab"
+            onClick={() => setActiveMainTab('room')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer shrink-0 ${
+              activeMainTab === 'room'
+                ? 'bg-[#080d19] border-cyan-500/80 text-white shadow-sm ring-1 ring-cyan-500/30'
+                : 'bg-[#080d19]/60 border-slate-800/90 text-slate-400 hover:text-white hover:border-slate-700'
+            }`}
+          >
+            <Hash className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="truncate">{activeRoom.name[language]}</span>
+            {activeRoom.is18Plus && (
+              <span className="text-[9px] bg-rose-950/80 text-rose-300 border border-rose-800 px-1 py-0.2 rounded shrink-0">
+                18+
+              </span>
+            )}
+          </button>
 
-            {activePrivatePartner && (
+          {/* Maximized Private Conversation Tabs (Rule 6: ONLY rendered when displayMode === 'maximized') */}
+          {maximizedWindows.map((win) => {
+            const isTabActive = activeMainTab === win.conversationId;
+            return (
               <div
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  activeChatView === 'private'
-                    ? 'bg-violet-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                key={win.conversationId}
+                data-testid={`maximized-private-tab-${win.conversationId}`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all shrink-0 ${
+                  isTabActive
+                    ? 'bg-violet-950/60 border-violet-500 text-white shadow-sm ring-1 ring-violet-500/30'
+                    : 'bg-[#080d19] border-slate-800/90 text-slate-400 hover:text-white hover:border-slate-700'
                 }`}
               >
                 <button
-                  onClick={() => setActiveChatView('private')}
-                  className="flex items-center gap-1.5 truncate cursor-pointer"
+                  type="button"
+                  onClick={() => setActiveMainTab(win.conversationId)}
+                  className="flex items-center gap-1.5 min-w-0 cursor-pointer"
                 >
-                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{activePrivatePartner.nickname}</span>
+                  <span className="text-sm select-none">{win.partnerAvatar || '👤'}</span>
+                  <span className="truncate max-w-[100px] sm:max-w-[140px]">{win.partnerNickname}</span>
+                  {win.unreadCount > 0 && (
+                    <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
+                      {win.unreadCount}
+                    </span>
+                  )}
                 </button>
                 <button
-                  onClick={() => {
-                    setActivePrivatePartner(null);
-                    setActiveChatView('room');
+                  type="button"
+                  data-testid={`minimize-private-tab-${win.conversationId}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    minimizeChat(win.conversationId);
+                    setActiveMainTab('room');
                   }}
-                  className="hover:text-rose-300 rounded p-0.5"
-                  title="Close private chat"
+                  className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white shrink-0 cursor-pointer"
+                  title="Restore to compact floating window"
+                >
+                  <Minimize2 className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  data-testid={`close-private-tab-${win.conversationId}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeChat(win.conversationId);
+                    setActiveMainTab('room');
+                  }}
+                  className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-rose-400 shrink-0 cursor-pointer"
+                  title="Close tab"
                 >
                   <X className="w-3 h-3" />
                 </button>
               </div>
-            )}
-          </div>
+            );
+          })}
         </div>
 
         {/* Right: Network indicator & Action Controls */}
@@ -847,15 +895,28 @@ export const PublicChatPage: React.FC = () => {
 
       {/* Main Container */}
       <div className="flex-1 flex overflow-hidden border-x border-b border-slate-800 rounded-b-2xl bg-[#090d18] relative shadow-2xl">
-        {/* ACTIVE VIEW: Public Room Chat OR Direct 1-on-1 Chat */}
-        {activeChatView === 'private' && activePrivatePartner ? (
-          <PrivateChatPane
-            conversationId={`conv_${[user.id, activePrivatePartner.id].sort().join('_')}`}
-            partner={activePrivatePartner}
-            currentUser={{ id: user.id, nickname: user.nickname, avatar: user.avatar }}
-            onClose={() => setActiveChatView('room')}
-            language={language}
-          />
+        {activeMaximizedWindow ? (
+          <div className="flex-1 flex flex-col overflow-hidden relative" data-testid="maximized-private-pane">
+            <PrivateChatPane
+              conversationId={activeMaximizedWindow.conversationId}
+              partner={{
+                id: activeMaximizedWindow.partnerId,
+                nickname: activeMaximizedWindow.partnerNickname,
+                avatar: activeMaximizedWindow.partnerAvatar,
+                gender: activeMaximizedWindow.partnerGender,
+              }}
+              currentUser={{
+                id: user.id,
+                nickname: user.nickname,
+                avatar: user.avatar,
+              }}
+              onClose={() => {
+                minimizeChat(activeMaximizedWindow.conversationId);
+                setActiveMainTab('room');
+              }}
+              language={language}
+            />
+          </div>
         ) : (
           <div className="flex-1 flex flex-col justify-between overflow-hidden relative">
             {/* Safety & Retention Notification Strip */}
@@ -1332,11 +1393,7 @@ export const PublicChatPage: React.FC = () => {
                             gender: conv.partnerGender,
                           })
                         }
-                        className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                          activePrivatePartner?.id === conv.partnerId
-                            ? 'bg-violet-950/40 border-violet-600 shadow-md'
-                            : 'bg-[#101729] hover:bg-[#141d33] border-slate-800/80 hover:border-violet-500/40'
-                        }`}
+                        className="p-2.5 rounded-xl border transition-all cursor-pointer bg-[#101729] hover:bg-[#141d33] border-slate-800/80 hover:border-violet-500/40"
                       >
                         <div className="flex items-center justify-between gap-1.5 mb-1">
                           <div className="flex items-center gap-2 min-w-0">
@@ -1375,7 +1432,6 @@ export const PublicChatPage: React.FC = () => {
                         key={r.id}
                         onClick={() => {
                           navigate('/chat', { roomId: r.slug });
-                          setActiveChatView('room');
                           setShowMobileSidebar(false);
                         }}
                         className={`w-full p-2.5 rounded-xl border text-left transition-all cursor-pointer ${

@@ -7,6 +7,7 @@ import { communityService } from '../services/communityService';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { formatDhakaDate } from '../utils/date';
+import { SEOHead } from '../components/common/SEOHead';
 import {
   BookOpen,
   Clock,
@@ -180,8 +181,44 @@ export const BlogPage: React.FC = () => {
     }
   };
 
+  const blogSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'Blog',
+    name: 'ChatLustora Community & Safety Blog',
+    description: 'Community guidelines, online safety tips, chat room etiquette, and platform updates on ChatLustora.',
+    publisher: {
+      '@type': 'Organization',
+      name: 'ChatLustora',
+      url: 'https://chatlustora.com',
+    },
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-12 px-4 sm:px-6 lg:px-8 transition-colors">
+      <SEOHead
+        title={
+          activeArticle
+            ? `${activeArticle.title[language]} | ChatLustora Blog`
+            : activeGuide
+            ? `${activeGuide.title[language]} | ChatLustora Safety Guide`
+            : 'Community Knowledge & Safety Center | ChatLustora'
+        }
+        description={
+          activeArticle
+            ? activeArticle.summary[language]
+            : activeGuide
+            ? activeGuide.summary[language]
+            : 'Explore safety guides, chat tips, and community guidelines for ChatLustora users.'
+        }
+        canonicalPath={
+          activeArticle
+            ? `/blog?articleId=${activeArticle.slug}`
+            : activeGuide
+            ? `/blog?articleId=${activeGuide.slug}`
+            : '/blog'
+        }
+        jsonLd={blogSchema}
+      />
       <div className="max-w-5xl mx-auto space-y-8">
         {/* Page Title & Navigation */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useRouter } from '../../context/RouterContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { MessageSquare, Globe, Shield, Lock, Sun, Moon, Monitor } from 'lucide-react';
+import { MessageSquare, Globe, Shield, Lock, Sun, Moon, Monitor, Facebook } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 
 export const Footer: React.FC = () => {
@@ -15,29 +15,64 @@ export const Footer: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-10">
           {/* Col 1: Logo & Summary */}
           <div className="space-y-4 md:col-span-1">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-rose-600 to-orange-500 text-white flex items-center justify-center font-bold shadow-md shadow-rose-500/20">
-                <MessageSquare className="w-4 h-4 fill-white text-rose-500" />
-              </div>
+            <button
+              onClick={() => navigate('/')}
+              className="flex items-center gap-2.5 text-left group focus:outline-none focus:ring-2 focus:ring-rose-500 rounded-lg cursor-pointer"
+            >
+              <img
+                src="/logo.png"
+                alt="ChatLustora Logo"
+                className="w-8 h-8 object-contain drop-shadow-[0_2px_8px_rgba(236,72,153,0.35)] group-hover:scale-105 transition-transform"
+                width={32}
+                height={32}
+              />
               <span className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">
                 Chat<span className="text-rose-600 dark:text-rose-400">Lustora</span>
               </span>
-            </div>
+            </button>
             <p className="text-slate-600 dark:text-slate-400 text-xs leading-relaxed">
               {language === 'bn' 
                 ? '১৮+ প্রাপ্তবয়স্কদের জন্য বাংলা ও দেশি চ্যাট, ডেটিং এবং প্রাইভেট মেসেজিং। কোনো রেজিস্ট্রেশন ছাড়াই সম্পূর্ণ নিরাপদ ও সার্বক্ষণিক মডারেটেড।'
                 : '18+ adult chat and dating community for Bengali, Desi, and international adults. Real-time public rooms, private messaging, and respectful flirting without registration.'}
             </p>
-            <div className="flex items-center gap-3 pt-1">
-              <button onClick={() => navigate('/safety')} className="w-7 h-7 rounded bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700 cursor-pointer">
-                ✕
-              </button>
-              <button onClick={() => navigate('/safety')} className="w-7 h-7 rounded bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700 cursor-pointer">
-                f
-              </button>
-              <button onClick={() => navigate('/safety')} className="w-7 h-7 rounded bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700 cursor-pointer">
-                ▶
-              </button>
+            {/* Official Social Media Links */}
+            <div className="flex items-center gap-2.5 pt-1" aria-label="ChatLustora Social Media">
+              <a
+                href="https://www.facebook.com/chatlustora"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="ChatLustora on Facebook"
+                title="ChatLustora on Facebook"
+                className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-white hover:bg-[#1877F2] dark:hover:bg-[#1877F2] hover:border-[#1877F2] transition-all border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 cursor-pointer shadow-xs"
+              >
+                <Facebook className="w-4 h-4" />
+              </a>
+
+              <a
+                href="https://x.com/chatlustora"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="ChatLustora on X"
+                title="ChatLustora on X"
+                className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-white hover:bg-black dark:hover:bg-black hover:border-black transition-all border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 cursor-pointer shadow-xs"
+              >
+                <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
+              </a>
+
+              <a
+                href="https://t.me/ChatLustora"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="ChatLustora on Telegram"
+                title="ChatLustora on Telegram"
+                className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-white hover:bg-[#229ED9] dark:hover:bg-[#229ED9] hover:border-[#229ED9] transition-all border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 cursor-pointer shadow-xs"
+              >
+                <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z" />
+                </svg>
+              </a>
             </div>
           </div>
 

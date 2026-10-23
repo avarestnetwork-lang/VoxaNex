@@ -1661,7 +1661,8 @@ async function startServer() {
     cleanupExpiredSessions();
   }, 15 * 60 * 1000);
 
-  // Serve robots.txt and sitemap.xml
+  // Serve static assets from public folder (logos, favicons, robots.txt, sitemap.xml, manifest.json)
+  app.use(express.static(path.resolve(__dirname, 'public')));
   app.get('/robots.txt', (req, res) => {
     res.sendFile(path.resolve(__dirname, 'public', 'robots.txt'));
   });

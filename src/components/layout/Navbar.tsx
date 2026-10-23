@@ -88,11 +88,15 @@ export const Navbar: React.FC = () => {
           <div className="flex items-center gap-3">
             <button
               onClick={() => handleNav('/')}
-              className="flex items-center gap-2.5 text-left group focus:outline-none cursor-pointer"
+              className="flex items-center gap-2.5 text-left group focus:outline-none focus:ring-2 focus:ring-rose-500 rounded-lg cursor-pointer"
             >
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-600 to-orange-500 text-white flex items-center justify-center font-extrabold shadow-md shadow-rose-500/25 group-hover:opacity-90 transition-opacity">
-                <MessageSquare className="w-5 h-5 fill-white text-rose-500" />
-              </div>
+              <img
+                src="/logo.png"
+                alt="ChatLustora Logo"
+                className="w-9 h-9 object-contain drop-shadow-[0_2px_10px_rgba(236,72,153,0.35)] group-hover:scale-105 transition-transform"
+                width={36}
+                height={36}
+              />
               <div className="flex items-center gap-2">
                 <span className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
                   Chat<span className="text-rose-600 dark:text-rose-400">Lustora</span>

@@ -12,9 +12,9 @@ export interface SEOHeadProps {
 
 const DEFAULT_TITLE = 'ChatLustora – Bangla & Desi Adult Chat, Dating and Private Messaging';
 const DEFAULT_DESC =
-  'Discover ChatLustora, an 18+ chat and dating community for adults interested in Bangla and desi chat, private messaging, flirting and meeting new people online. Connect respectfully and protect your privacy.';
+  'ChatLustora is an online chat community where you can meet new people, join chat rooms, and discover conversations with people around the world.';
 const BASE_DOMAIN = 'https://chatlustora.com';
-const DEFAULT_OG_IMAGE = 'https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?auto=format&fit=crop&w=1200&q=80';
+const DEFAULT_OG_IMAGE = 'https://chatlustora.com/logo.png';
 
 export const SEOHead: React.FC<SEOHeadProps> = ({
   title,
@@ -27,13 +27,34 @@ export const SEOHead: React.FC<SEOHeadProps> = ({
 }) => {
   const fullTitle = title ? (title.includes('ChatLustora') ? title : `${title} | ChatLustora`) : DEFAULT_TITLE;
   const metaDesc = description || DEFAULT_DESC;
-  const canonicalUrl = `${BASE_DOMAIN}${canonicalPath.startsWith('/') ? canonicalPath : `/${canonicalPath}`}`;
+
+  // Sanitize canonical URL: ensure leading slash, remove query params, avoid double slashes, retain single '/' for root
+  let cleanPath = canonicalPath.split('?')[0].split('#')[0];
+  if (!cleanPath.startsWith('/')) {
+    cleanPath = `/${cleanPath}`;
+  }
+  if (cleanPath.length > 1 && cleanPath.endsWith('/')) {
+    cleanPath = cleanPath.slice(0, -1);
+  }
+  const canonicalUrl = `${BASE_DOMAIN}${cleanPath}`;
 
   useEffect(() => {
     // 1. Update Title
     document.title = fullTitle;
 
-    // 2. Helper to set or create meta tag
+    // 2. Push SPA virtual pageview to Google Tag Manager dataLayer
+    if (typeof window !== 'undefined') {
+      const win = window as any;
+      win.dataLayer = win.dataLayer || [];
+      win.dataLayer.push({
+        event: 'virtual_pageview',
+        page_location: canonicalUrl,
+        page_path: cleanPath,
+        page_title: fullTitle,
+      });
+    }
+
+    // 3. Helper to set or create meta tag
     const setMetaTag = (attribute: 'name' | 'property', attrValue: string, content: string) => {
       let element = document.querySelector(`meta[${attribute}="${attrValue}"]`) as HTMLMetaElement | null;
       if (!element) {

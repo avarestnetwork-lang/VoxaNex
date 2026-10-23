@@ -56,7 +56,8 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
     await sendMessage(win.conversationId, '', { url: gif.url, type: 'gif' });
   };
 
-  if (!win.isOpen) return null;
+  // Rule 5 & 7: Only render when isOpen AND displayMode === 'floating'
+  if (!win.isOpen || win.displayMode !== 'floating') return null;
 
   // Minimized view: small tab at bottom-right
   if (win.isMinimized) {
@@ -88,14 +89,14 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
           )}
           <button
             onClick={() => minimizeChat(win.conversationId)}
-            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white"
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
             title="Restore"
           >
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => closeChat(win.conversationId)}
-            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white"
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
             title="Close"
           >
             <X className="w-3.5 h-3.5" />
@@ -105,10 +106,8 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
     );
   }
 
-  // Maximized vs Compact dimensions
-  const containerClasses = win.isMaximized
-    ? 'fixed inset-4 sm:inset-10 z-50 flex flex-col bg-[#0b101d] border border-slate-700 rounded-2xl shadow-2xl overflow-hidden'
-    : 'w-full sm:w-[360px] h-[480px] bg-[#0d1424] border border-slate-700/80 rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden z-50';
+  const containerClasses =
+    'w-full sm:w-[360px] h-[480px] bg-[#0d1424] border border-slate-700/80 rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden z-50';
 
   return (
     <div className={containerClasses}>
@@ -128,21 +127,21 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
         <div className="flex items-center gap-1">
           <button
             onClick={() => minimizeChat(win.conversationId)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
             title="Minimize"
           >
             <Minimize2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => maximizeChat(win.conversationId)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            title={win.isMaximized ? 'Restore Size' : 'Maximize'}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            title="Maximize to large tab"
           >
-            {win.isMaximized ? <Square className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            <Maximize2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => closeChat(win.conversationId)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
             title="Close"
           >
             <X className="w-3.5 h-3.5" />
@@ -263,6 +262,11 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
 export const FloatingChatManager: React.FC = () => {
   const { openWindows, latestToast, clearToast, openChat } = usePrivateChat();
 
+  // Rule 5 & 7: The floating manager must render ONLY conversations whose mode is 'floating'
+  const floatingWindows = openWindows.filter(
+    (win) => win.isOpen && win.displayMode === 'floating'
+  );
+
   return (
     <>
       {/* Floating Toast Notification */}
@@ -279,7 +283,7 @@ export const FloatingChatManager: React.FC = () => {
             </div>
             <button
               onClick={clearToast}
-              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 shrink-0"
+              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 shrink-0 cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -289,7 +293,7 @@ export const FloatingChatManager: React.FC = () => {
 
       {/* Floating Chat Windows Stack at Bottom-Right */}
       <div className="fixed bottom-0 right-4 z-50 flex items-end gap-3 flex-wrap justify-end pointer-events-none">
-        {openWindows.map((win) => (
+        {floatingWindows.map((win) => (
           <div key={win.conversationId} className="pointer-events-auto">
             <FloatingChatWindowView window={win} />
           </div>

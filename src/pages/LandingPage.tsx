@@ -237,14 +237,14 @@ export const LandingPage: React.FC = () => {
     <div className="bg-[#F8FAFC] dark:bg-slate-950 text-[#0F172A] dark:text-slate-100 min-h-screen font-sans selection:bg-rose-500 selection:text-white transition-colors">
       <SEOHead
         title="ChatLustora – Bangla & Desi Adult Chat, Dating and Private Messaging"
-        description="Discover ChatLustora, an 18+ chat and dating community for adults interested in Bangla and desi chat, private messaging, flirting and meeting new people online. Connect respectfully and protect your privacy."
+        description="ChatLustora is an online chat community where you can meet new people, join chat rooms, and discover conversations with people around the world."
         canonicalPath="/"
         jsonLd={{
           '@context': 'https://schema.org',
           '@type': 'WebSite',
           name: 'ChatLustora',
           url: 'https://chatlustora.com',
-          description: 'Bangla & Desi Adult Chat, Dating and Private Messaging Community for adults aged 18+.',
+          description: 'ChatLustora is an online chat community where you can meet new people, join chat rooms, and discover conversations with people around the world.',
         }}
       />
 
@@ -259,15 +259,15 @@ export const LandingPage: React.FC = () => {
               <span>{language === 'bn' ? '১৮+ প্রাপ্তবয়স্ক কমিউনিটি · ২৪/৭ লাইভ' : '18+ Adult Community · Open 24/7'}</span>
             </div>
 
-            {/* Suggested Phase 5.A H1 */}
+            {/* Semantic visible H1 */}
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-[#0F172A] dark:text-white leading-[1.12]">
               {language === 'bn' ? (
                 <>
-                  প্রাপ্তবয়স্কদের জন্য <span className="text-rose-600 dark:text-rose-400">বাংলা ও দেশি চ্যাট</span>
+                  চ্যাটলাস্টোরায় <span className="text-rose-600 dark:text-rose-400">নতুন মানুষের সাথে পরিচিত হোন</span>
                 </>
               ) : (
                 <>
-                  Bangla & Desi <span className="text-rose-600 dark:text-rose-400">Chat for Adults</span>
+                  Meet New People on <span className="text-rose-600 dark:text-rose-400">ChatLustora</span>
                 </>
               )}
             </h1>

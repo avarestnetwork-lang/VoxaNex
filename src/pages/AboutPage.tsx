@@ -26,9 +26,13 @@ export const AboutPage: React.FC = () => {
       <div className="max-w-4xl mx-auto space-y-12">
         {/* Header */}
         <div className="text-center space-y-4">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-600 to-orange-500 text-white shadow-xl shadow-rose-500/20 mb-2">
-            <MessageSquare className="w-8 h-8 fill-white text-rose-500" />
-          </div>
+          <img
+            src="/logo.png"
+            alt="ChatLustora Logo"
+            className="w-16 h-16 object-contain drop-shadow-[0_4px_16px_rgba(236,72,153,0.35)] mx-auto mb-2"
+            width={64}
+            height={64}
+          />
           <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
             {language === 'bn' ? 'ChatLustora সম্পর্কে' : 'About ChatLustora'}
           </h1>

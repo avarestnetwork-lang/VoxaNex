@@ -34,11 +34,13 @@ import { HelpPage } from './pages/HelpPage';
 import { FaqPage } from './pages/FaqPage';
 import { SitemapPage } from './pages/SitemapPage';
 import { IndianChatLandingPage } from './pages/IndianChatLandingPage';
+import { BanglaChatLandingPage } from './pages/BanglaChatLandingPage';
+import { RoomLandingPage } from './pages/RoomLandingPage';
 import { DatingLandingPage } from './pages/DatingLandingPage';
 
 const AppRoutes: React.FC = () => {
-  const { currentRoute } = useRouter();
-  const { isLoading } = useAuth();
+  const { currentRoute, params } = useRouter();
+  const { isLoading, hasActiveSession } = useAuth();
 
   if (isLoading) {
     return (
@@ -58,8 +60,16 @@ const AppRoutes: React.FC = () => {
         return <GuestEntryPage />;
       case '/rooms':
         return <RoomDirectoryPage />;
+      case '/chat/bangla':
+        return hasActiveSession ? <PublicChatPage /> : <BanglaChatLandingPage />;
       case '/chat':
-        return <PublicChatPage />;
+        return hasActiveSession ? (
+          <PublicChatPage />
+        ) : params.roomId ? (
+          <RoomLandingPage roomSlug={params.roomId} />
+        ) : (
+          <BanglaChatLandingPage />
+        );
       case '/messages':
         return <PrivateMessagingPage />;
       case '/random':

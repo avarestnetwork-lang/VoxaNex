@@ -7,6 +7,7 @@ import { communityService } from '../services/communityService';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { toRelativeTime, formatDhakaDate } from '../utils/date';
+import { SEOHead } from '../components/common/SEOHead';
 import {
   MessageSquare,
   Users,
@@ -204,6 +205,11 @@ export const ForumPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-12 px-4 sm:px-6 lg:px-8 transition-colors">
+      <SEOHead
+        title={language === 'bn' ? 'কমিউনিটি ফোরাম ও আলোচনা – ChatLustora' : 'Community Forum & Discussions – ChatLustora'}
+        description="Join community discussions, share experiences, and explore topic threads in the ChatLustora adult community forum."
+        canonicalPath="/forum"
+      />
       <div className="max-w-6xl mx-auto space-y-8">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

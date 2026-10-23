@@ -2,7 +2,10 @@ User-agent: *
 Allow: /
 Allow: /rooms
 Allow: /dating
+Allow: /chat/bangla
 Allow: /chat/indian
+Allow: /forum
+Allow: /blog
 Allow: /safety
 Allow: /privacy
 Allow: /terms

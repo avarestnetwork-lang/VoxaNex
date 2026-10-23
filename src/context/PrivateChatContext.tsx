@@ -5,13 +5,17 @@ import { messagingService } from '../services/messagingService';
 import { guestSessionService } from '../services/guestSessionService';
 import { databaseService } from '../services/databaseService';
 
+export type ConversationDisplayMode = 'closed' | 'floating' | 'maximized';
+
 export interface FloatingChatWindow {
   conversationId: string;
   partnerId: string;
   partnerNickname: string;
   partnerAvatar: string;
+  partnerGender?: string;
   isMinimized: boolean;
   isMaximized: boolean;
+  displayMode: ConversationDisplayMode;
   messages: ChatMessage[];
   unreadCount: number;
   draft: string;
@@ -23,7 +27,7 @@ interface PrivateChatContextType {
   openWindows: FloatingChatWindow[];
   autoOpenPrivateChats: boolean;
   setAutoOpenPrivateChats: (val: boolean) => void;
-  openChat: (partner: { id: string; nickname: string; avatar: string }) => Promise<void>;
+  openChat: (partner: { id: string; nickname: string; avatar: string; gender?: string }) => Promise<void>;
   closeChat: (conversationId: string) => void;
   minimizeChat: (conversationId: string) => void;
   maximizeChat: (conversationId: string) => void;
@@ -46,6 +50,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const activeSubscriptionsRef = useRef<Map<string, () => void>>(new Map());
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const knownConversationIdsRef = useRef<Set<string>>(new Set());
+  const closedConversationIdsRef = useRef<Set<string>>(new Set());
 
   // Play subtle notification sound
   const playBeep = () => {
@@ -121,13 +126,14 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     initConvs();
   }, [user.id]);
 
-  // Open or focus a chat window with a partner
-  const openChat = useCallback(async (partner: { id: string; nickname: string; avatar: string }) => {
+  // Open or focus a chat window with a partner (Rule 1: Always starts in 'floating' mode)
+  const openChat = useCallback(async (partner: { id: string; nickname: string; avatar: string; gender?: string }) => {
     if (!user.id || partner.id === user.id) return;
 
     const sortedIds = [user.id, partner.id].sort();
     const conversationId = `conv_${sortedIds[0]}_${sortedIds[1]}`;
     trackConversation(conversationId);
+    closedConversationIdsRef.current.delete(conversationId);
 
     console.log('[DIAGNOSTIC] private_popup_opened', { conversationId, partnerId: partner.id });
     await messagingService.getOrCreateConversation(user.id, partner.id);
@@ -137,7 +143,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (existing) {
         return prev.map((w) =>
           w.conversationId === conversationId
-            ? { ...w, isOpen: true, isMinimized: false, unreadCount: 0 }
+            ? { ...w, isOpen: true, displayMode: 'floating', isMaximized: false, isMinimized: false, unreadCount: 0 }
             : w
         );
       } else {
@@ -148,8 +154,10 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
             partnerId: partner.id,
             partnerNickname: partner.nickname,
             partnerAvatar: partner.avatar,
+            partnerGender: partner.gender,
             isMinimized: false,
             isMaximized: false,
+            displayMode: 'floating',
             messages: [],
             unreadCount: 0,
             draft: '',
@@ -161,6 +169,9 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const res = await messagingService.fetchConversationMessages(conversationId, user.id);
     if (res.success) {
+      res.messages.forEach((m) => {
+        if (m.id) seenMessageIdsRef.current.add(m.id);
+      });
       setOpenWindows((prev) =>
         prev.map((w) =>
           w.conversationId === conversationId
@@ -172,18 +183,50 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, [user.id]);
 
   const closeChat = useCallback((conversationId: string) => {
-    setOpenWindows((prev) => prev.filter((w) => w.conversationId !== conversationId));
-  }, []);
-
-  const minimizeChat = useCallback((conversationId: string) => {
+    closedConversationIdsRef.current.add(conversationId);
     setOpenWindows((prev) =>
-      prev.map((w) => (w.conversationId === conversationId ? { ...w, isMinimized: !w.isMinimized } : w))
+      prev
+        .map((w) =>
+          w.conversationId === conversationId
+            ? { ...w, isOpen: false, isMaximized: false, displayMode: 'closed' as ConversationDisplayMode }
+            : w
+        )
+        .filter((w) => w.conversationId !== conversationId)
     );
   }, []);
 
+  // Rule 10: Minimize from maximized transitions it back to floating. If already floating, toggle isMinimized.
+  const minimizeChat = useCallback((conversationId: string) => {
+    setOpenWindows((prev) =>
+      prev.map((w) => {
+        if (w.conversationId !== conversationId) return w;
+        if (w.displayMode === 'maximized' || w.isMaximized) {
+          return {
+            ...w,
+            displayMode: 'floating' as ConversationDisplayMode,
+            isMaximized: false,
+            isMinimized: false,
+          };
+        }
+        return { ...w, isMinimized: !w.isMinimized };
+      })
+    );
+  }, []);
+
+  // Rule 10: Only an explicit maximize action may transition a private conversation from floating to maximized.
   const maximizeChat = useCallback((conversationId: string) => {
     setOpenWindows((prev) =>
-      prev.map((w) => (w.conversationId === conversationId ? { ...w, isMaximized: !w.isMaximized, isMinimized: false } : w))
+      prev.map((w) => {
+        if (w.conversationId !== conversationId) return w;
+        const willMaximize = w.displayMode !== 'maximized';
+        const nextMode: ConversationDisplayMode = willMaximize ? 'maximized' : 'floating';
+        return {
+          ...w,
+          displayMode: nextMode,
+          isMaximized: willMaximize,
+          isMinimized: false,
+        };
+      })
     );
   }, []);
 
@@ -193,6 +236,8 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     );
   }, []);
 
+  // Rule 2 & 3: Sending a message must never automatically create a large private-chat tab,
+  // and send-success callback must not change the window mode to maximized.
   const sendMessage = useCallback(async (conversationId: string, content: string, media?: { url: string; type: 'gif' | 'image' }) => {
     const clean = content.trim();
     if ((!clean && !media) || !user.id) return false;
@@ -243,6 +288,9 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
             ? {
                 ...w,
                 messages: w.messages.map((m) => (m.id === tempId ? confirmed : m)),
+                // Authoritative check: Preserve existing displayMode, NEVER set to maximized!
+                displayMode: (w.displayMode === 'maximized' ? 'maximized' : 'floating') as ConversationDisplayMode,
+                isMaximized: w.displayMode === 'maximized',
               }
             : w
         )
@@ -264,9 +312,32 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, [user, openWindows]);
 
   // Handle incoming message processing
-  const handleIncomingMessage = useCallback((msg: ChatMessage, conversationId: string, partnerInfo?: { id: string; nickname: string; avatar: string }) => {
+  const handleIncomingMessage = useCallback((msg: ChatMessage, conversationId: string, partnerInfo?: { id: string; nickname: string; avatar: string; gender?: string }) => {
     if (!msg || !msg.id) return;
-    if (msg.senderId === user.id) return; // Don't notify for own messages
+
+    // Rule 4: A sender echo event must update the conversation's messages without opening another UI or changing mode
+    if (msg.senderId === user.id) {
+      setOpenWindows((prev) =>
+        prev.map((w) => {
+          if (w.conversationId !== conversationId) return w;
+          const exists = w.messages.some((m) => m.id === msg.id);
+          if (exists) return w;
+          const hasTemp = w.messages.some((m) => m.id.startsWith('temp_') && m.content === msg.content);
+          if (hasTemp) {
+            return {
+              ...w,
+              messages: w.messages.map((m) => (m.id.startsWith('temp_') && m.content === msg.content ? msg : m)),
+            };
+          }
+          return {
+            ...w,
+            messages: [...w.messages, msg],
+          };
+        })
+      );
+      return;
+    }
+
     if (seenMessageIdsRef.current.has(msg.id)) return; // Deduplicate
 
     seenMessageIdsRef.current.add(msg.id);
@@ -276,6 +347,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const partnerId = partnerInfo?.id || msg.senderId;
     const partnerNickname = partnerInfo?.nickname || msg.senderNickname || 'User';
     const partnerAvatar = partnerInfo?.avatar || msg.senderAvatar || '👤';
+    const partnerGender = partnerInfo?.gender;
 
     setOpenWindows((prev) => {
       const existing = prev.find((w) => w.conversationId === conversationId);
@@ -290,6 +362,8 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 unreadCount: isFocused ? 0 : w.unreadCount + 1,
                 isOpen: autoOpenPrivateChats ? true : w.isOpen,
                 isMinimized: autoOpenPrivateChats ? false : w.isMinimized,
+                // Default mode is floating; do not switch to maximized automatically
+                displayMode: (w.displayMode === 'maximized' ? 'maximized' : (autoOpenPrivateChats ? 'floating' : (w.displayMode || 'closed'))) as ConversationDisplayMode,
               }
             : w
         );
@@ -301,8 +375,10 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
             partnerId,
             partnerNickname,
             partnerAvatar,
+            partnerGender,
             isMinimized: false,
             isMaximized: false,
+            displayMode: autoOpenPrivateChats ? 'floating' : 'closed',
             messages: [msg],
             unreadCount: 1,
             draft: '',
@@ -396,14 +472,17 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
           const res = await messagingService.fetchConversationMessages(convId, user.id);
           if (res.success && res.messages.length > 0) {
             for (const m of res.messages) {
-              if (!seenMessageIdsRef.current.has(m.id) && m.senderId !== user.id) {
-                const parts = convId.replace('conv_', '').split('_');
-                const partnerId = parts[0] === user.id ? parts[1] : parts[0];
-                handleIncomingMessage(m, convId, {
-                  id: partnerId,
-                  nickname: m.senderNickname || 'User',
-                  avatar: m.senderAvatar || '👤',
-                });
+              if (!seenMessageIdsRef.current.has(m.id)) {
+                seenMessageIdsRef.current.add(m.id);
+                if (m.senderId !== user.id && !closedConversationIdsRef.current.has(convId)) {
+                  const parts = convId.replace('conv_', '').split('_');
+                  const partnerId = parts[0] === user.id ? parts[1] : parts[0];
+                  handleIncomingMessage(m, convId, {
+                    id: partnerId,
+                    nickname: m.senderNickname || 'User',
+                    avatar: m.senderAvatar || '👤',
+                  });
+                }
               }
             }
           }
