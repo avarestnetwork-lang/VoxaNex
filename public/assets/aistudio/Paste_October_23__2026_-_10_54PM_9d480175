@@ -1,0 +1,723 @@
+# ChatLustora — Final Master Implementation, Navigation, AI Chat & Production Security Prompt
+
+**Project:** ChatLustora  
+**Production website:** https://chatlustora.com  
+**Live Cam subdomain:** https://cam.chatlustora.com  
+**Technology:** React, Vite, TypeScript, Cloudflare Workers and Supabase  
+**Scope:** Admin Authentication, Moderator Management, Clean Authentication Routes, Member Dashboard, Existing Chat Integration, AI Chat Participants, Header/Footer Navigation and Consolidated Security Audit.
+
+---
+
+## 1. PRIMARY OBJECTIVE
+
+Continue development of the existing ChatLustora project without rebuilding or replacing the working website.
+
+The current website and existing chat functionality must be preserved. Implement the requested features incrementally, based on the actual repository, current configuration and verified production behavior.
+
+The priority order is:
+
+1. Inspect the current project without changing files.
+2. Implement Admin Authentication and Moderator Management.
+3. Implement or complete the Member Dashboard, existing Chat Integration and AI Chat Participants.
+4. Perform a consolidated security, functionality and regression audit of Phases 1–3.
+5. Keep Dating, Cam and Shop navigation visible for future development without implementing those features now.
+
+**Important:** Previous diagnostic reports are supporting context only. Inspect the latest source and configuration before deciding what is missing. Do not assume that a previously reported bug still exists or that a previously reported fix is currently working.
+
+## 2. MANDATORY ENGINEERING RULES
+
+Follow these rules throughout the project:
+
+- Do not rebuild the existing website.
+- Do not remove, replace or unnecessarily refactor working features.
+- Inspect existing files, routes, authentication, database access, authorization and environment configuration before editing.
+- Make the smallest safe changes that satisfy the requirements.
+- Preserve existing guest access, registered-member authentication, public chatrooms, private messaging, message persistence, presence and existing integrations.
+- Do not expose passwords, API secrets, Supabase service-role keys, session secrets or private credentials in source code, frontend bundles, logs or reports.
+- Never put private credentials in frontend environment variables such as `VITE_*`.
+- Use Cloudflare secrets for sensitive Worker-side configuration where appropriate.
+- Do not modify database schemas, migrations, RLS policies, DNS, nameservers or unrelated environment variables without a verified technical reason.
+- Do not invent existing routes, credentials, users, database tables, API endpoints, test results or provider configurations.
+- Do not fabricate moderators or human participants.
+- Do not deploy, publish or push changes to GitHub without explicit approval.
+- Do not claim that a test, deployment, authentication flow or feature succeeded without evidence.
+- Keep all current working features and unrelated functionality intact.
+- Never move to the next major phase until the current phase has been reviewed and explicitly approved.
+
+If repository access is unavailable, request the repository or the relevant source files. Do not pretend to have inspected or modified the code.
+
+---
+
+# PHASE 0 — READ-ONLY PROJECT AUDIT
+
+Before modifying anything, inspect the actual current implementation.
+
+### 0.1 Application structure
+
+Identify:
+
+- React, Vite and TypeScript configuration.
+- Current application entry points and routing implementation.
+- Header, footer and responsive navigation components.
+- Guest entry, sign-in, registration and dashboard pages.
+- Admin and moderator pages, if present.
+- Public chatroom components and services.
+- Private messaging components and state management.
+- Member profile and avatar management.
+- AI participant implementation, if present.
+- Cloudflare Worker entry points, routing rules and deployment configuration.
+- Supabase client initialization, authentication, database access, Realtime subscriptions and relevant RLS policies.
+- Existing tests, build scripts and type-check commands.
+
+Inspect actual file names rather than assuming that files from older reports still exist.
+
+### 0.2 Existing behavior
+
+Determine which features are implemented, partially implemented, broken or missing.
+
+Check:
+
+- Existing guest access and guest session handling.
+- Registered-member login and registration.
+- Admin authentication and authorization.
+- Moderator role enforcement.
+- Existing public and private messaging.
+- Message persistence and realtime delivery.
+- Participant presence and room isolation.
+- Existing member dashboard.
+- Existing theme and language controls.
+- Existing chatroom navigation and mobile navigation.
+- Current production routing and Cloudflare fallback behavior.
+
+### 0.3 Initial report
+
+Produce a read-only report containing:
+
+1. Current architecture.
+2. Relevant files and routes.
+3. Verified working functionality.
+4. Missing or broken functionality.
+5. Security risks and configuration gaps.
+6. Required database or environment changes, if any.
+7. A proposed minimal-change implementation plan.
+8. Tests required for each phase.
+
+**STOP after the read-only report. Do not edit any files until I explicitly approve Phase 1.**
+
+---
+
+# PHASE 1 — ADMIN AUTHENTICATION & MODERATOR MANAGEMENT
+
+## 1A. Secure Admin Authentication
+
+Inspect the existing admin login, dashboard, authorization logic, Worker APIs and environment variables.
+
+Identify the exact missing configuration or implementation before making changes.
+
+### Requirements
+
+- Preserve the existing admin interface and application architecture wherever possible.
+- Use the existing authentication system if it can securely support administrative access.
+- If dedicated admin credentials are necessary, validate them exclusively on the server.
+- Store sensitive credentials using the appropriate Cloudflare Worker secret mechanism.
+- Never hardcode production credentials in source code.
+- Never expose admin passwords, password hashes, session secrets or privileged Supabase keys to the browser.
+- Use secure password handling and constant-time comparison where applicable.
+- Apply appropriate session security, including expiration, secure cookies where supported, HttpOnly, Secure and suitable SameSite settings.
+- Protect state-changing operations against CSRF where the authentication architecture requires it.
+- Rate-limit repeated failed login attempts where practical.
+- Ensure logout invalidates the server-side session or otherwise prevents continued use of revoked sessions.
+- Do not rely on frontend route guards as the only authorization mechanism.
+
+### Admin authorization
+
+Verify that every admin API and privileged operation checks authorization on the server.
+
+A hidden button, protected React route or client-side role value is not sufficient.
+
+Inspect:
+
+- Admin dashboard APIs.
+- Admin user and role management.
+- Moderator assignment and removal.
+- AI participant configuration and controls.
+- Any other existing privileged endpoints.
+
+Use least-privilege access. Do not give guests, ordinary members or moderators unrestricted admin permissions.
+
+### Required tests
+
+- Correct admin credentials.
+- Incorrect username.
+- Incorrect password.
+- Missing credentials.
+- Logout and subsequent access.
+- Expired or invalid session.
+- Direct access to admin routes without authorization.
+- Direct API requests without authorization.
+- Attempts by an ordinary member, guest and moderator to perform admin-only operations.
+- Session and cookie security where applicable.
+
+Never reveal real credentials in the test report.
+
+## 1B. Moderator Management
+
+Inspect the existing role model and moderator-related implementation.
+
+Build on the current system rather than introducing a conflicting role architecture.
+
+### Requirements
+
+- Allow authorized administrators to assign, change and remove moderator roles.
+- Support room-specific moderator assignments where the current architecture permits.
+- Enforce moderator permissions on the server.
+- Keep admin, moderator, registered member, guest and AI participant identities distinct.
+- Prevent ordinary members or guests from granting themselves moderator privileges.
+- Validate room IDs, target user IDs and requested role changes.
+- Audit sensitive administrative actions where appropriate.
+- Avoid exposing private member information unnecessarily.
+
+### Room coverage
+
+The intended arrangement is one suitable male moderator and one suitable female moderator per room, where actual authorized moderators are available.
+
+Do not fabricate human users or falsely display AI participants as human moderators. Report unfilled positions honestly.
+
+### Phase 1 verification
+
+Test moderator assignment, role changes, removal, room-specific authorization and unauthorized role escalation.
+
+### Phase approval gate
+
+After implementation, report exact file changes, environment requirements, security controls and test results.
+
+**STOP and wait for my explicit approval before beginning Phase 2.**
+
+---
+
+# PHASE 2 — CLEAN AUTHENTICATION ROUTES
+
+Implement or verify clean, history-based routing without hash-based application navigation.
+
+## 2.1 Required public URLs
+
+- Continue as Guest: `https://chatlustora.com/guest-entry`
+- Sign In: `https://chatlustora.com/`
+- Create Account: `https://chatlustora.com/register`
+- Member Dashboard: `https://chatlustora.com/dashboard`
+
+The application must not require routes such as `/#/guest-entry`.
+
+## 2.2 Routing requirements
+
+- Inspect the existing router and Cloudflare Worker/static asset routing before making changes.
+- Use clean browser-history URLs.
+- Ensure direct navigation and page refresh work on all four URLs.
+- Preserve existing guest sessions and registered-member authentication.
+- Preserve email verification, password recovery, OAuth callbacks and relevant query parameters where supported.
+- Protect `/dashboard` using the existing secure authentication flow.
+- Ensure unauthorized visitors cannot access protected member data by directly entering a URL.
+- Preserve existing public chatroom, private messaging, admin and moderator routes.
+- Configure SPA fallback behavior only if inspection confirms it is necessary.
+- Do not allow static asset fallbacks to intercept API requests.
+- Do not interfere with Worker endpoints, authentication callbacks or realtime/SSE endpoints.
+- Do not introduce duplicate authentication systems.
+
+## 2.3 Authentication behavior
+
+Verify the correct behavior for:
+
+- Guests entering through `/guest-entry`.
+- Members signing in through `/`.
+- New members registering through `/register`.
+- Authenticated members opening `/dashboard`.
+- Unauthenticated visitors opening `/dashboard`.
+- Direct navigation and browser refresh.
+- Invalid, expired or incomplete authentication states.
+
+Preserve the application's current intended access model. Do not force guests to register merely to use features that are already available to guests.
+
+---
+
+# PHASE 3 — MEMBER DASHBOARD, CHAT INTEGRATION & AI CHAT PARTICIPANTS
+
+This phase combines Member Dashboard, existing Chat Integration and AI Chat Participants into one implementation phase.
+
+Inspect the current implementation before changing any component, service, database access or routing.
+
+## 3A. Member Dashboard
+
+Complete or improve the existing member dashboard while preserving the established design and authentication flow.
+
+### Member features
+
+Where supported by the existing data model, provide:
+
+- Member profile and display name.
+- Profile editing.
+- Avatar/profile image management.
+- Relevant account information.
+- Existing member chat access.
+- Private messaging access.
+- Account settings and logout.
+- Clear navigation between the dashboard and existing chatrooms.
+
+Use existing components and data structures where practical.
+
+### Privacy and validation
+
+- Validate profile updates on the server or through properly secured database operations.
+- Enforce ownership so members cannot edit another member's profile without permission.
+- Validate avatar file type, size and storage permissions where uploads are supported.
+- Do not expose private account information to guests or unrelated members.
+- Respect existing Supabase authentication, RLS policies and storage policies.
+- Do not weaken RLS to make the dashboard appear functional.
+
+## 3B. Existing Chat Integration
+
+Preserve the current public chatrooms, private messaging, guest access and realtime architecture.
+
+Do not replace the chat system simply to make dashboard integration easier.
+
+### Public chatrooms
+
+Verify:
+
+- Messages are persisted using the existing authorized architecture.
+- Messages appear in the correct room.
+- Realtime delivery works across separate browser sessions without requiring a refresh.
+- Reconnection does not create duplicate messages.
+- Message history loads correctly.
+- Room isolation prevents messages from appearing in unrelated rooms.
+- Participant counts and presence are based on actual participants, not AI character definitions.
+- Existing chatroom links continue to work.
+
+### Private messaging
+
+Inspect the existing private chat state and UI.
+
+Preserve or implement the following behavior where applicable:
+
+- Each private conversation has its own stable identity.
+- Minimized and maximized states are mutually consistent.
+- Multiple conversations do not overwrite one another's messages or UI state.
+- Reopening a conversation restores the correct conversation.
+- Messages persist and remain associated with the correct conversation.
+- Existing unread indicators and conversation state are preserved.
+- Unauthorized users cannot read or send messages in conversations they do not belong to.
+
+### Presence and reconnect behavior
+
+- Use the existing Supabase Realtime, Broadcast, database or Worker architecture where suitable.
+- Avoid using isolate-local memory as the only source of truth for persistent messages or cross-user state.
+- Handle reconnects, duplicate events and stale presence appropriately.
+- Clean up subscriptions when a room or component is left.
+- Do not claim that realtime is fixed without testing between independent browser sessions.
+
+### Security
+
+- Validate sender identity and room/conversation membership on the server or through enforced database policies.
+- Never trust client-provided role values or identity claims without verification.
+- Prevent unauthorized message reads and writes.
+- Preserve guest access through the existing intended mechanism.
+- Do not expose service-role credentials to the frontend.
+- Do not change RLS policies or schema unless the audit demonstrates a specific requirement and the change is approved.
+
+## 3C. AI Chat Participants
+
+Inspect the existing AI participant implementation, if any, before building or modifying it.
+
+The goal is to provide clearly identified AI chat characters that can participate naturally in eligible public chatrooms.
+
+### Character plan
+
+The intended initial target is up to 20 configured AI characters per eligible room:
+
+- 15 female-presenting characters.
+- 5 male-presenting characters.
+
+This is a configuration target, not permission to create 20 continuously running background agents in every room.
+
+Determine whether the current architecture can support the target safely and affordably. If not, explain the practical limits and propose a controlled implementation.
+
+### Identity and transparency
+
+- Every AI participant must be clearly identified as AI.
+- Never represent an AI character as a real human or genuine human moderator.
+- Never include AI participants in genuine human online counts.
+- Keep AI identities separate from registered member accounts.
+- Give each character a stable identity and configurable display name/personality.
+- Do not claim a character is online unless its state is actually active.
+
+### Conversation behavior
+
+- Allow administrators to enable or disable AI participation globally and per room, where supported.
+- Avoid repetitive messages, flooding and excessive simultaneous responses.
+- Use controlled response timing and message frequency.
+- Prioritize real user messages over unnecessary AI chatter.
+- Prevent characters from replying indefinitely to one another.
+- Avoid duplicate responses and self-triggering loops.
+- Apply message length, frequency and cost limits.
+- Respect room isolation and the existing chat moderation system.
+- Avoid unsolicited private messages to real members unless a separately authorized feature is explicitly designed and approved.
+
+### Admin controls
+
+Where feasible within the existing architecture, provide controls for:
+
+- Global AI enable/disable.
+- Per-room AI enable/disable.
+- Character activation and deactivation.
+- Character display names and personalities.
+- Response frequency or other safe limits.
+- Usage and cost monitoring.
+- Provider configuration status.
+
+All privileged controls must use server-side authorization.
+
+### Provider and runtime requirements
+
+- Inspect the existing AI provider integration before choosing or adding a provider.
+- Store provider API keys only in server-side secrets.
+- Never place private AI provider credentials in frontend code or public `VITE_*` variables.
+- Do not invent API keys or claim a provider is configured when it is not.
+- If a provider secret or account configuration is missing, document the exact variable name and required setup without exposing its value.
+- Use bounded, event-driven processing appropriate to Cloudflare Workers.
+- Do not assume a Worker can run an unlimited background loop or remain active indefinitely.
+- Implement appropriate timeouts, concurrency limits, error handling and cost controls.
+- Avoid unnecessary paid API calls during development and testing.
+- Do not allow AI participants to bypass existing moderation or safety controls.
+
+### AI verification
+
+Test:
+
+- Global enable/disable.
+- Per-room enable/disable.
+- AI identity labels.
+- No inflation of human online counts.
+- No cross-room message leakage.
+- Rate limits and duplicate prevention.
+- Missing provider configuration.
+- API failures and timeouts.
+- Admin-only access to AI controls.
+- Existing human chat behavior when AI is disabled.
+
+### Phase 3 approval gate
+
+Report exact file changes, database/environment requirements, security implications, build results and test evidence.
+
+**STOP and wait for my explicit approval before beginning the consolidated audit.**
+
+---
+
+# PHASE 4 — FINAL HEADER & FOOTER NAVIGATION
+
+Implement the following navigation layout while preserving the current website's visual identity.
+
+Inspect the existing header, footer, responsive navigation, theme control, language selector, authentication state and routing before making changes.
+
+## 4.1 Exact header order
+
+The header must follow this order:
+
+**Text-based navigation**
+
+1. Home
+2. Chatroom
+3. Dating
+4. Cam
+5. Shop
+
+**Icon-only controls**
+
+6. Direct Message icon
+7. Language icon
+8. Light/Dark theme toggle icon
+
+**Authentication buttons**
+
+9. Login
+10. Sign Up
+
+The navigation order must remain consistent on desktop and mobile, adapted to the existing responsive layout.
+
+## 4.2 Text and icon rules
+
+- Home, Chatroom, Dating, Cam and Shop must display text labels.
+- Direct Message must display only its icon, without a visible text label.
+- Language must display only its icon, without visible text such as “বাংলা” beside the control.
+- Light/Dark mode must display only its theme toggle icon, without a visible text label.
+- Login and Sign Up must display their text labels as buttons.
+- Use the project's existing icon library where possible.
+- Provide accessible names for icon-only controls and tooltips where appropriate.
+- Maintain readable spacing, contrast and touch-friendly control sizes.
+- Prevent icons or text from overlapping or wrapping unpredictably.
+
+## 4.3 Login and Sign Up behavior
+
+- Reuse the existing authentication routes and flows.
+- Login must lead to the existing sign-in page at `/`.
+- Sign Up must lead to the existing registration page at `/register`.
+- Do not introduce a second authentication system.
+- For authenticated users, preserve the existing logged-in account/dashboard controls rather than displaying inappropriate duplicate authentication actions.
+- Preserve the intended guest-entry flow.
+
+## 4.4 Direct Message icon
+
+- Open the existing private messaging interface.
+- Do not create a duplicate messaging feature.
+- Preserve existing conversation state, unread indicators and authorization.
+- If the current application opens messages through a floating panel or manager, reuse that mechanism.
+
+## 4.5 Language icon
+
+- Open the existing language selector.
+- Preserve supported languages and current language-switching functionality.
+- Do not remove language choices simply because the visible header label is removed.
+- Ensure the control remains usable on mobile.
+
+## 4.6 Light/Dark icon
+
+- Reuse the existing theme state and persistence mechanism.
+- Switching themes must continue to work throughout the application.
+- Use an appropriate icon for the active theme or the action available, consistent with the current implementation.
+- Do not add a second conflicting theme state.
+
+## 4.7 Future navigation: Dating, Cam and Shop
+
+Keep Dating, Cam and Shop visible in both the header and footer.
+
+These are navigation placeholders for future development. Do not implement their full features during Phases 1–4.
+
+- Inspect the current router before deciding how these links behave.
+- Reuse an existing valid destination if one already exists.
+- If a destination does not exist, use an appropriate safe placeholder consistent with the current architecture.
+- Do not invent routes and leave broken links.
+- Do not falsely indicate that these features are complete.
+
+### Live Cam restriction
+
+Live Cam development is deferred.
+
+Do not configure or modify:
+
+- Live Cam provider integration.
+- Whitelabel approval.
+- Cam DNS or nameservers.
+- Cam SSL or provider settings.
+- Cam embeds or other provider-specific functionality.
+
+Keep the Cam navigation item available for future use only. Do not alter the main domain's DNS or unrelated infrastructure.
+
+## 4.8 Footer
+
+- Keep or add Dating, Cam and Shop navigation items.
+- Preserve useful existing footer links, legal pages, contact links and other working features.
+- Reuse the current footer design.
+- Ensure future navigation items do not point to fabricated or broken destinations.
+
+## 4.9 Responsive navigation
+
+Verify desktop, tablet and mobile layouts.
+
+- Prevent horizontal overflow.
+- Preserve the required item order.
+- Use the existing mobile menu pattern when needed.
+- Keep Login and Sign Up accessible without making the header excessively crowded.
+- Ensure icon-only controls remain accessible.
+- Do not hide essential existing navigation without a clear responsive design reason.
+
+### Header and footer verification
+
+Test:
+
+- Every navigation item.
+- Login and Sign Up.
+- Direct Message icon.
+- Language icon and language switching.
+- Light/Dark theme toggle.
+- Authenticated versus unauthenticated header states.
+- Footer links.
+- Desktop and mobile layouts.
+
+---
+
+# PHASE 5 — CONSOLIDATED SECURITY & REGRESSION AUDIT
+
+This phase begins only after Phases 1–4 have been implemented and approved.
+
+Perform a consolidated audit of the actual updated source and available test/deployment evidence. Do not rely solely on earlier implementation reports.
+
+## 5.1 Authentication and authorization
+
+Test:
+
+- Admin login and logout.
+- Invalid admin credentials.
+- Protected admin APIs.
+- Moderator permission boundaries.
+- Guest entry and guest restrictions.
+- Member login and registration.
+- Protected dashboard access.
+- Profile ownership checks.
+- Private conversation membership checks.
+- Unauthorized requests and expired sessions.
+
+## 5.2 Routing and production behavior
+
+Verify:
+
+- `/guest-entry`
+- `/`
+- `/register`
+- `/dashboard`
+- Existing public chatroom routes.
+- Existing private messaging routes or entry points.
+- Existing admin and moderator routes.
+
+Test direct navigation, page refresh and browser history behavior.
+
+Confirm that SPA fallback does not intercept API routes or break Worker endpoints.
+
+## 5.3 Chat regression tests
+
+Test between independent browser sessions where possible:
+
+- Guest-to-guest public messages.
+- Guest-to-member public messages.
+- Member-to-member public messages.
+- Cross-browser message delivery without refresh.
+- Message persistence after reload.
+- Duplicate prevention.
+- Room isolation.
+- Participant presence.
+- Private messaging authorization.
+- Private chat minimize/maximize behavior.
+- AI enable/disable and identity transparency.
+
+If independent-session testing cannot be performed, clearly mark it as not verified.
+
+## 5.4 Database and Supabase security
+
+Inspect actual schema, RLS policies, storage permissions and Realtime configuration.
+
+- Verify that policies match the intended guest, member, moderator and admin permissions.
+- Do not disable RLS as a shortcut.
+- Do not introduce unrestricted anonymous writes.
+- Keep service-role credentials server-side.
+- Do not apply unapproved destructive migrations.
+- Identify any necessary migration and explain why it is required before applying it.
+
+## 5.5 Cloudflare configuration
+
+Inspect:
+
+- Worker routing.
+- Static asset routing and fallback behavior.
+- Production environment bindings.
+- Required secrets.
+- API endpoint handling.
+- Relevant request limits and error behavior.
+
+Do not modify unrelated environment variables, DNS records or nameservers.
+
+## 5.6 Code quality and build
+
+Run the appropriate commands supported by the existing repository:
+
+- TypeScript type checking.
+- Linting, if configured.
+- Relevant automated tests.
+- Production build.
+- Any relevant integration tests.
+
+Fix issues caused by the implementation without undertaking unrelated refactoring.
+
+Report the exact commands and their real results. If a test cannot run, explain why rather than marking it as passed.
+
+---
+
+# PHASE 6 — FINAL REPORT & DEPLOYMENT APPROVAL
+
+After the consolidated audit, provide a structured final report.
+
+## Required report
+
+### A. Implementation summary
+
+For each phase, list:
+
+- What was implemented.
+- What already existed and was preserved.
+- Exact files changed.
+- Relevant routes and components.
+- Any database or environment changes.
+
+### B. Security summary
+
+Explain:
+
+- Admin authentication and authorization.
+- Moderator role enforcement.
+- Session handling.
+- Guest/member access boundaries.
+- Supabase RLS and privileged key handling.
+- AI provider secret handling.
+- Any unresolved security risks.
+
+Never include actual secret values or production passwords.
+
+### C. Verification results
+
+Use explicit statuses:
+
+- PASS — test executed and passed.
+- FAIL — test executed and failed.
+- NOT RUN — test was not executed.
+- NOT VERIFIED — evidence is insufficient to confirm the behavior.
+- BLOCKED — a missing dependency, credential or permission prevented testing.
+
+Include the actual build and test results.
+
+### D. Deployment instructions
+
+Document:
+
+- Required environment variable names.
+- Which variables must be Cloudflare secrets.
+- Any approved database migrations.
+- Required deployment steps.
+- Post-deployment manual checks.
+
+Do not reveal secret values.
+
+### E. Remaining work
+
+Clearly list anything still incomplete, including any missing AI provider configuration, unfilled moderator positions, unavailable tests or unresolved production issues.
+
+Do not describe Dating, Cam or Shop as implemented features. Their navigation placeholders are the only part included in this scope.
+
+### F. Final approval
+
+Do not deploy or push changes automatically.
+
+Present the report and wait for explicit approval before publishing changes to production.
+
+---
+
+# FINAL EXECUTION INSTRUCTIONS
+
+Follow the phases in order:
+
+1. Phase 0: Read-only audit. Stop and request approval.
+2. Phase 1: Admin Authentication and Moderator Management. Stop and request approval.
+3. Phase 2: Clean Authentication Routes. Implement and verify as part of the approved implementation workflow.
+4. Phase 3: Member Dashboard, Existing Chat Integration and AI Chat Participants. Stop and request approval.
+5. Phase 4: Header and Footer Navigation. Keep the Dating, Cam and Shop menu items as future placeholders only.
+6. Phase 5: Consolidated Security and Regression Audit.
+7. Phase 6: Final report and deployment approval.
+
+Do not skip the read-only audit. Do not perform multiple major phases without approval. If any requirement conflicts with the actual architecture, explain the conflict and propose the smallest safe alternative before making a consequential change.
+
+**Success means that the requested changes are implemented in the existing project, working features remain intact, security boundaries are enforced, relevant tests provide evidence, and no unapproved production deployment occurs.**
