@@ -205,6 +205,13 @@ export const databaseService = {
     if (!supabase) return () => {};
 
     const channelName = `room_hub:${roomId}`;
+    
+    // Clean up any existing channel with the same name
+    const existingChannel = supabase.getChannels().find(c => c.topic === `realtime:${channelName}`);
+    if (existingChannel) {
+      supabase.removeChannel(existingChannel);
+    }
+
     console.log(`[VX-RT] Subscribing to Supabase channel: ${channelName}`);
 
     const seenIds = new Set<string>();
@@ -274,9 +281,16 @@ export const databaseService = {
     const supabase = getSupabaseClient();
     if (!supabase) return () => {};
 
+    const channelName = `public_room_presence:${roomId}`;
+    
+    // Clean up any existing channel with the same name to avoid "callbacks after subscribe" errors
+    const existingChannel = supabase.getChannels().find(c => c.topic === `realtime:${channelName}`);
+    if (existingChannel) {
+      supabase.removeChannel(existingChannel);
+    }
+
     let channel: any = null;
     try {
-      const channelName = `public_room_presence:${roomId}`;
       console.log('[VX-PRESENCE] Initializing channel:', channelName, 'for user:', member.id.slice(0, 8));
       channel = supabase.channel(channelName, {
         config: {
@@ -286,6 +300,7 @@ export const databaseService = {
         },
       });
 
+      // Register ALL callbacks BEFORE calling subscribe()
       channel
         .on('presence', { event: 'sync' }, () => {
           try {
@@ -415,8 +430,16 @@ export const databaseService = {
     const supabase = getSupabaseClient();
     if (!supabase) return () => {};
 
+    const channelName = `dm:${convId}:${userId}`;
+    
+    // Clean up any existing channel with the same name
+    const existingChannel = supabase.getChannels().find(c => c.topic === `realtime:${channelName}`);
+    if (existingChannel) {
+      supabase.removeChannel(existingChannel);
+    }
+
     // Use authorized private channel
-    const channel = supabase.channel(`dm:${convId}:${userId}`);
+    const channel = supabase.channel(channelName);
     channel
       .on('broadcast', { event: 'new_dm' }, (payload) => {
         onMessage(payload.payload);
@@ -465,19 +488,31 @@ export const databaseService = {
       return () => {};
     }
 
-    const channel = supabase.channel(`user_dm:${userId}`);
+    const channelName = `user_dm:${userId}`;
+    
+    // Clean up any existing channel with the same name
+    const existingChannel = supabase.getChannels().find(c => c.topic === `realtime:${channelName}`);
+    if (existingChannel) {
+      console.log(`[VX-DM] Removing existing channel for: ${channelName}`);
+      supabase.removeChannel(existingChannel);
+    }
+
+    const channel = supabase.channel(channelName);
     channel
       .on('broadcast', { event: 'incoming_dm' }, (payload) => {
         onMessage(payload.payload.conversationId, payload.payload.message);
       })
       .subscribe((status) => {
         if (status !== 'SUBSCRIBED') {
-            console.warn(`[VX-DM] subscribeToUserDMs status: ${status} for user: ${userId}`);
+            console.warn(`[VX-DM] subscribeToUserDMs status for ${channelName}: ${status}`);
+        } else {
+            console.log(`[VX-DM] subscribeToUserDMs success for ${channelName}`);
         }
       });
 
     return () => {
       try {
+        console.log(`[VX-DM] Unsubscribing from: ${channelName}`);
         supabase.removeChannel(channel);
       } catch {}
     };
