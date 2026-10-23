@@ -2178,3 +2178,107 @@ export function updatePlatformSettings(newSettings: Partial<AdminPlatformSetting
 export function getPlatformSettings(): AdminPlatformSettings {
   return currentPlatformSettings;
 }
+
+// -----------------------------------------------------------------------------
+// ROOM MODERATOR MANAGEMENT
+// -----------------------------------------------------------------------------
+export interface RoomModeratorAssignment {
+  id: string;
+  roomId: string;
+  userId: string;
+  username: string;
+  role: 'moderator';
+  gender: 'male' | 'female' | 'other';
+  assignedBy: string;
+  assignedAt: string;
+}
+
+const roomModeratorAssignments = new Map<string, RoomModeratorAssignment>();
+
+export function getRoomModerators(roomId?: string, requesterRole = 'user'): RoomModeratorAssignment[] {
+  if (requesterRole !== 'admin' && requesterRole !== 'moderator') {
+    return [];
+  }
+  const all = Array.from(roomModeratorAssignments.values());
+  if (roomId) {
+    return all.filter((m) => m.roomId === roomId);
+  }
+  return all;
+}
+
+export function assignRoomModerator(
+  params: {
+    roomId: string;
+    userId: string;
+    username: string;
+    gender: 'male' | 'female' | 'other';
+    assignedBy: string;
+  },
+  requesterRole = 'admin'
+): { success: boolean; assignment?: RoomModeratorAssignment; error?: string } {
+  if (requesterRole !== 'admin') {
+    return { success: false, error: 'Unauthorized: Only platform administrators can assign room moderators.' };
+  }
+
+  const { roomId, userId, username, gender, assignedBy } = params;
+
+  if (!roomId || !userId || !username) {
+    return { success: false, error: 'Room ID, User ID, and Username are required.' };
+  }
+
+  const assignmentId = `mod_${roomId}_${userId}`;
+  const assignment: RoomModeratorAssignment = {
+    id: assignmentId,
+    roomId,
+    userId,
+    username: username.trim(),
+    role: 'moderator',
+    gender: gender || 'other',
+    assignedBy,
+    assignedAt: new Date().toISOString(),
+  };
+
+  roomModeratorAssignments.set(assignmentId, assignment);
+
+  addModerationAuditLog({
+    actorId: assignedBy,
+    actorNickname: assignedBy,
+    actorRole: 'admin',
+    action: 'impose_restriction',
+    targetType: 'moderator_assignment',
+    targetId: assignmentId,
+    details: { roomId, userId, username, gender },
+  });
+
+  return { success: true, assignment };
+}
+
+export function revokeRoomModerator(
+  assignmentId: string,
+  revokedBy: string,
+  requesterRole = 'admin'
+): { success: boolean; error?: string } {
+  if (requesterRole !== 'admin') {
+    return { success: false, error: 'Unauthorized: Only platform administrators can revoke moderator assignments.' };
+  }
+
+  const existing = roomModeratorAssignments.get(assignmentId);
+  if (!existing) {
+    return { success: false, error: 'Moderator assignment not found.' };
+  }
+
+  roomModeratorAssignments.delete(assignmentId);
+
+  addModerationAuditLog({
+    actorId: revokedBy,
+    actorNickname: revokedBy,
+    actorRole: 'admin',
+    action: 'lift_restriction',
+    targetType: 'moderator_assignment',
+    targetId: assignmentId,
+    details: { roomId: existing.roomId, userId: existing.userId, username: existing.username },
+  });
+
+  return { success: true };
+}
+

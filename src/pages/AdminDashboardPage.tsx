@@ -42,7 +42,7 @@ export const AdminDashboardPage: React.FC = () => {
   const { language, t } = useLanguage();
 
   const [activeTab, setActiveTab] = useState<
-    'health' | 'triage' | 'restrictions' | 'appeals' | 'age_assurance' | 'audit' | 'channels' | 'supabase'
+    'health' | 'triage' | 'restrictions' | 'appeals' | 'moderators' | 'age_assurance' | 'audit' | 'channels' | 'supabase'
   >('health');
 
   // Server state
@@ -50,9 +50,16 @@ export const AdminDashboardPage: React.FC = () => {
   const [restrictions, setRestrictions] = useState<UserRestrictionRecord[]>([]);
   const [appeals, setAppeals] = useState<ModerationAppeal[]>([]);
   const [auditLogs, setAuditLogs] = useState<ModerationAuditLog[]>([]);
+  const [moderators, setModerators] = useState<any[]>([]);
   const [settings, setSettings] = useState<AdminPlatformSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+
+  // Moderator Form State
+  const [modRoomId, setModRoomId] = useState<string>('room-bangla-main');
+  const [modUserId, setModUserId] = useState<string>('');
+  const [modUsername, setModUsername] = useState<string>('');
+  const [modGender, setModGender] = useState<'male' | 'female' | 'other'>('female');
 
   // Modals & form state
   const [imposingUser, setImposingUser] = useState<string>('');
@@ -64,12 +71,13 @@ export const AdminDashboardPage: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [reps, restrs, apps, logs, settsRes] = await Promise.all([
+      const [reps, restrs, apps, logs, settsRes, modsRes] = await Promise.all([
         safetyService.fetchAdminReports('admin'),
         safetyService.fetchAdminRestrictions('admin'),
         safetyService.fetchAdminAppeals('admin'),
         safetyService.fetchAuditLogs('admin'),
         fetch('/api/admin/settings').then((r) => r.json()),
+        fetch('/api/admin/moderators').then((r) => r.json()),
       ]);
 
       setReports(reps);
@@ -78,6 +86,9 @@ export const AdminDashboardPage: React.FC = () => {
       setAuditLogs(logs);
       if (settsRes?.settings) {
         setSettings(settsRes.settings);
+      }
+      if (modsRes?.moderators) {
+        setModerators(modsRes.moderators);
       }
     } catch {
       // ignore
@@ -169,6 +180,55 @@ export const AdminDashboardPage: React.FC = () => {
     }
   };
 
+  const handleAssignModerator = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modUserId.trim() || !modUsername.trim()) return;
+
+    try {
+      const res = await fetch('/api/admin/moderators', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: modRoomId,
+          userId: modUserId.trim(),
+          username: modUsername.trim(),
+          gender: modGender,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionFeedback(`Assigned ${modUsername} as ${modGender} moderator for ${modRoomId}.`);
+        setModUserId('');
+        setModUsername('');
+        loadData();
+        setTimeout(() => setActionFeedback(null), 2500);
+      } else {
+        setActionFeedback(data.error || 'Failed to assign moderator.');
+      }
+    } catch {
+      setActionFeedback('Connection error while assigning moderator.');
+    }
+  };
+
+  const handleRevokeModerator = async (assignmentId: string) => {
+    try {
+      const res = await fetch(`/api/admin/moderators/${assignmentId}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionFeedback(`Revoked moderator assignment ${assignmentId}.`);
+        loadData();
+        setTimeout(() => setActionFeedback(null), 2500);
+      } else {
+        setActionFeedback(data.error || 'Failed to revoke moderator assignment.');
+      }
+    } catch {
+      setActionFeedback('Connection error while revoking moderator assignment.');
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Header */}
@@ -176,7 +236,7 @@ export const AdminDashboardPage: React.FC = () => {
         <div>
           <div className="flex items-center gap-2 text-xs font-mono text-cyan-400 uppercase tracking-wider mb-1">
             <Terminal className="w-4 h-4" />
-            <span>Phase 6 Trust, Safety & Operations Control</span>
+            <span>Phase 1 Admin Auth & Moderator Management</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
             {t.admin.title}
@@ -213,6 +273,7 @@ export const AdminDashboardPage: React.FC = () => {
           { id: 'triage', label: `Reports Queue (${reports.filter((r) => r.status === 'received' || r.status === 'investigating').length})`, icon: ShieldAlert },
           { id: 'restrictions', label: `Active Sanctions (${restrictions.filter((r) => r.active).length})`, icon: UserX },
           { id: 'appeals', label: `Appeals (${appeals.filter((a) => a.status === 'pending').length})`, icon: Scale },
+          { id: 'moderators', label: `Room Moderators (${moderators.length})`, icon: ShieldCheck },
           { id: 'age_assurance', label: 'Age Assurance & Laws', icon: Lock },
           { id: 'audit', label: `Audit Trail (${auditLogs.length})`, icon: History },
           { id: 'channels', label: 'Room Catalog', icon: Sliders },
@@ -576,6 +637,138 @@ export const AdminDashboardPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* TAB 4.5: Room Moderator Management */}
+      {activeTab === 'moderators' && (
+        <div className="p-6 rounded-2xl border border-slate-800 bg-[#0c1222] space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+            <div>
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>Room Moderator Management & Operational Coverage</span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Assign authorized male and female staff moderators to specific public chatrooms. Target coverage is 1 male + 1 female moderator per room where available. Unfilled slots remain honestly reported.
+              </p>
+            </div>
+
+            <span className="text-xs text-slate-400 font-mono">
+              {moderators.length} active assignment{moderators.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          {/* Form: Assign Room Moderator */}
+          <form onSubmit={handleAssignModerator} className="p-4 rounded-xl border border-slate-800 bg-[#101729] space-y-4">
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+              Assign Authorized Room Moderator
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">Target Room</label>
+                <select
+                  value={modRoomId}
+                  onChange={(e) => setModRoomId(e.target.value)}
+                  className="w-full bg-[#090e18] border border-slate-700 rounded-lg p-2 text-xs text-white"
+                >
+                  {ROOMS_CONFIG.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name.en} ({r.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">User ID</label>
+                <input
+                  type="text"
+                  placeholder="e.g. usr_mod_rahim"
+                  value={modUserId}
+                  onChange={(e) => setModUserId(e.target.value)}
+                  required
+                  className="w-full bg-[#090e18] border border-slate-700 rounded-lg p-2 text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">Display Handle</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Rahim_Staff"
+                  value={modUsername}
+                  onChange={(e) => setModUsername(e.target.value)}
+                  required
+                  className="w-full bg-[#090e18] border border-slate-700 rounded-lg p-2 text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">Gender Focus</label>
+                <select
+                  value={modGender}
+                  onChange={(e) => setModGender(e.target.value as any)}
+                  className="w-full bg-[#090e18] border border-slate-700 rounded-lg p-2 text-xs text-white"
+                >
+                  <option value="female">Female Moderator Target</option>
+                  <option value="male">Male Moderator Target</option>
+                  <option value="other">General Moderator</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <Button type="submit" variant="primary" size="sm">
+                Assign Moderator
+              </Button>
+            </div>
+          </form>
+
+          {/* Active Moderator Assignments List */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+              Current Room Assignments
+            </h4>
+
+            {moderators.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500 rounded-xl bg-[#090e18] border border-slate-800">
+                No room moderators assigned yet. Assign staff above to fill room coverage.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {moderators.map((m) => (
+                  <div
+                    key={m.id}
+                    className="p-3.5 rounded-xl border border-slate-800 bg-[#101729] flex items-center justify-between gap-3"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white text-xs">{m.username}</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-violet-950 border border-violet-800 text-violet-300">
+                          {m.gender}
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-mono">({m.userId})</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                        Room: <span className="text-cyan-400">{m.roomId}</span> · Assigned by: {m.assignedBy}
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => handleRevokeModerator(m.id)}
+                    >
+                      Revoke
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
 
       {/* TAB 5: Age Assurance Controls */}
       {activeTab === 'age_assurance' && (

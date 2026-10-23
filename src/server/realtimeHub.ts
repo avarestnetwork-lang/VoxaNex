@@ -285,13 +285,25 @@ export function postRoomMessage(params: {
     return { success: false, error: filter.reason || 'Prohibited content detected.' };
   }
 
+  if (!roomMessages.has(roomId)) {
+    roomMessages.set(roomId, []);
+  }
+
+  const list = roomMessages.get(roomId)!;
+
+  // Deduplicate by clientNonce (check before rate limits for retry resilience)
+  if (params.clientNonce && list.some((m) => m.clientNonce === params.clientNonce)) {
+    const existing = list.find((m) => m.clientNonce === params.clientNonce)!;
+    return { success: true, message: existing };
+  }
+
   // Rate limit
   const rateCheck = checkRateLimitAndSpam(senderId, rawContent);
   if (!rateCheck.allowed) {
     return { success: false, error: rateCheck.reason };
   }
 
-  // Sanitize
+  // Sanitize and construct message
   const cleanContent = sanitizeContent(rawContent);
 
   const message: HubMessage = {
@@ -311,11 +323,6 @@ export function postRoomMessage(params: {
     status: 'delivered',
   };
 
-  if (!roomMessages.has(roomId)) {
-    roomMessages.set(roomId, []);
-  }
-
-  const list = roomMessages.get(roomId)!;
   list.push(message);
 
   // Keep last 500 messages in memory per room
@@ -342,7 +349,7 @@ export function updateRoomPresence(roomId: string, member: PresenceMember) {
     roomPresence.set(roomId, new Map());
   }
   const members = roomPresence.get(roomId)!;
-  members.set(member.id, { ...member, lastSeen: Date.now() });
+  members.set(member.id, { ...member, lastSeen: member.lastSeen || Date.now() });
 
   // Clean stale presence older than 45 seconds
   const now = Date.now();
@@ -539,12 +546,25 @@ export async function postConversationMessage(params: {
     return { success: false, error: filter.reason || 'Prohibited content detected.' };
   }
 
+  if (!conversationMessages.has(conversationId)) {
+    conversationMessages.set(conversationId, []);
+  }
+
+  const list = conversationMessages.get(conversationId)!;
+
+  // Deduplicate by clientNonce (check before rate limits for retry resilience)
+  if (params.clientNonce && list.some((m) => m.clientNonce === params.clientNonce)) {
+    const existing = list.find((m) => m.clientNonce === params.clientNonce)!;
+    return { success: true, message: existing };
+  }
+
   // Rate check
   const rate = checkRateLimitAndSpam(senderId, rawContent);
   if (!rate.allowed) {
     return { success: false, error: rate.reason };
   }
 
+  // Sanitize and construct message
   const cleanContent = sanitizeContent(rawContent);
 
   const message: HubMessage = {
@@ -564,11 +584,6 @@ export async function postConversationMessage(params: {
     status: 'delivered',
   };
 
-  if (!conversationMessages.has(conversationId)) {
-    conversationMessages.set(conversationId, []);
-  }
-
-  const list = conversationMessages.get(conversationId)!;
   list.push(message);
 
   broadcastToConversation(conversationId, 'new_dm', message);

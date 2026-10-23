@@ -108,6 +108,9 @@ import {
   purgeUserData,
   updatePlatformSettings,
   getPlatformSettings,
+  getRoomModerators,
+  assignRoomModerator,
+  revokeRoomModerator,
 } from './src/server/communityAdminHub';
 import {
   validateYouTubeUrl,
@@ -1654,6 +1657,36 @@ async function startServer() {
   app.post('/api/admin/settings', adminAuthMiddleware('admin'), (req, res) => {
     const updated = updatePlatformSettings(req.body || {});
     res.json({ success: true, settings: updated });
+  });
+
+  // Admin: Room Moderator Management
+  app.get('/api/admin/moderators', adminAuthMiddleware('moderator'), (req, res) => {
+    const role = (req as any).adminUser?.role || 'admin';
+    const roomId = req.query.roomId as string | undefined;
+    const list = getRoomModerators(roomId, role);
+    res.json({ success: true, moderators: list });
+  });
+
+  app.post('/api/admin/moderators', adminAuthMiddleware('admin'), (req, res) => {
+    const { roomId, userId, username, gender } = req.body || {};
+    const actor = (req as any).adminUser?.username || 'Admin';
+    const result = assignRoomModerator(
+      { roomId, userId, username, gender, assignedBy: actor },
+      'admin'
+    );
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  });
+
+  app.delete('/api/admin/moderators/:id', adminAuthMiddleware('admin'), (req, res) => {
+    const actor = (req as any).adminUser?.username || 'Admin';
+    const result = revokeRoomModerator(req.params.id, actor, 'admin');
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
   });
 
   // Periodically clean up expired guest sessions every 15 minutes
