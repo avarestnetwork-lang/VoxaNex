@@ -1003,12 +1003,7 @@ export default {
     // 7. STATIC ASSETS FALLBACK (Vite SPA)
     // -------------------------------------------------------------------------
     if (env?.ASSETS) {
-      const assetRes = await env.ASSETS.fetch(request);
-      if (assetRes.status === 404 && request.method === 'GET' && !url.pathname.startsWith('/api/')) {
-        const indexUrl = new URL('/', request.url);
-        return env.ASSETS.fetch(new Request(indexUrl, request));
-      }
-      return assetRes;
+      return env.ASSETS.fetch(request);
     }
 
     return new Response('Not Found', { status: 404 });

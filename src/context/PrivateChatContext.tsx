@@ -46,7 +46,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const activeSubscriptionsRef = useRef<Map<string, () => void>>(new Map());
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const knownConversationIdsRef = useRef<Set<string>>(new Set());
-  const closedConversationIdsRef = useRef<Set<string>>(new Set());
 
   // Play subtle notification sound
   const playBeep = () => {
@@ -129,7 +128,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const sortedIds = [user.id, partner.id].sort();
     const conversationId = `conv_${sortedIds[0]}_${sortedIds[1]}`;
     trackConversation(conversationId);
-    closedConversationIdsRef.current.delete(conversationId);
 
     console.log('[DIAGNOSTIC] private_popup_opened', { conversationId, partnerId: partner.id });
     await messagingService.getOrCreateConversation(user.id, partner.id);
@@ -163,9 +161,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const res = await messagingService.fetchConversationMessages(conversationId, user.id);
     if (res.success) {
-      res.messages.forEach((m) => {
-        if (m.id) seenMessageIdsRef.current.add(m.id);
-      });
       setOpenWindows((prev) =>
         prev.map((w) =>
           w.conversationId === conversationId
@@ -177,7 +172,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, [user.id]);
 
   const closeChat = useCallback((conversationId: string) => {
-    closedConversationIdsRef.current.add(conversationId);
     setOpenWindows((prev) => prev.filter((w) => w.conversationId !== conversationId));
   }, []);
 
@@ -402,17 +396,14 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
           const res = await messagingService.fetchConversationMessages(convId, user.id);
           if (res.success && res.messages.length > 0) {
             for (const m of res.messages) {
-              if (!seenMessageIdsRef.current.has(m.id)) {
-                seenMessageIdsRef.current.add(m.id);
-                if (m.senderId !== user.id && !closedConversationIdsRef.current.has(convId)) {
-                  const parts = convId.replace('conv_', '').split('_');
-                  const partnerId = parts[0] === user.id ? parts[1] : parts[0];
-                  handleIncomingMessage(m, convId, {
-                    id: partnerId,
-                    nickname: m.senderNickname || 'User',
-                    avatar: m.senderAvatar || '👤',
-                  });
-                }
+              if (!seenMessageIdsRef.current.has(m.id) && m.senderId !== user.id) {
+                const parts = convId.replace('conv_', '').split('_');
+                const partnerId = parts[0] === user.id ? parts[1] : parts[0];
+                handleIncomingMessage(m, convId, {
+                  id: partnerId,
+                  nickname: m.senderNickname || 'User',
+                  avatar: m.senderAvatar || '👤',
+                });
               }
             }
           }

@@ -36,7 +36,11 @@ interface RouterContextType {
 const RouterContext = createContext<RouterContextType | undefined>(undefined);
 
 function parsePath(pathname: string): { route: AppRoute; params: Record<string, string> } {
+  // Support both hash routing and HTML5 path
   let path = pathname;
+  if (path.startsWith('#')) {
+    path = path.slice(1);
+  }
   if (!path || path === '') {
     path = '/';
   }
@@ -96,7 +100,9 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
 
 export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [routeState, setRouteState] = useState<{ route: AppRoute; params: Record<string, string> }>(() => {
-    const initial = window.location.pathname;
+    // If window.location.hash exists, use that; otherwise use location.pathname
+    const hash = window.location.hash ? window.location.hash.replace('#', '') : '';
+    const initial = hash || window.location.pathname;
     return parsePath(initial);
   });
 
@@ -106,8 +112,8 @@ export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       cleanPath = `/chat/${newParams.roomId}`;
     }
 
-    // Update history state with clean URL
-    window.history.pushState(newParams, '', cleanPath);
+    // Update history state
+    window.history.pushState(newParams, '', `#${cleanPath}`);
     const parsed = parsePath(cleanPath);
     setRouteState({
       route: parsed.route,
@@ -122,7 +128,8 @@ export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   useEffect(() => {
     const handlePopState = () => {
-      const current = window.location.pathname;
+      const hash = window.location.hash ? window.location.hash.replace('#', '') : '';
+      const current = hash || window.location.pathname;
       setRouteState(parsePath(current));
     };
 

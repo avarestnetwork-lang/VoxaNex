@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { usePrivateChat } from '../context/PrivateChatContext';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { ChatMessage, Room } from '../types';
 import { formatDhakaTime } from '../utils/date';
@@ -120,7 +119,6 @@ export const PublicChatPage: React.FC = () => {
   const { params, navigate } = useRouter();
   const { language, t } = useLanguage();
   const { user, hasActiveSession, is18Verified } = useAuth();
-  const { openChat } = usePrivateChat();
 
   const currentRoomSlug = params.roomId || 'bangla';
   const activeRoom = ROOMS_CONFIG.find((r) => r.slug === currentRoomSlug) || ROOMS_CONFIG[0];
@@ -633,7 +631,6 @@ export const PublicChatPage: React.FC = () => {
     gender?: string;
     isGuest?: boolean;
   }) => {
-    openChat(partner);
     setActivePrivatePartner(partner);
     setActiveChatView('private');
     setShowMobileSidebar(false);
