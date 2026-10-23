@@ -175,6 +175,129 @@ async function runRegressionSuite() {
   }
   assert(rateThrottled, 'Test 14: Rate-limiting and anti-spam protection triggers after excess messages');
 
+  // ---------------------------------------------------------------------------
+  // COMPREHENSIVE PRESENCE & ROOM STATE REGRESSION TESTS (1-10)
+  // ---------------------------------------------------------------------------
+  const pRoomId = 'room-bangla';
+
+  // Test 1: Guest A joins: count is 1 in both client views.
+  updateRoomPresence(pRoomId, {
+    id: 'guest_A_id',
+    nickname: 'Guest_A',
+    avatar: '⚡',
+    isGuest: true,
+    lastSeen: Date.now(),
+  });
+  let presA = getRoomPresence(pRoomId);
+  assert(presA.length === 1 && presA[0].id === 'guest_A_id', 'Test 1: Guest A joins, count is 1');
+
+  // Test 2: Guest B joins the same room from another session: count becomes 2 in both views.
+  updateRoomPresence(pRoomId, {
+    id: 'guest_B_id',
+    nickname: 'Guest_B',
+    avatar: '🌸',
+    isGuest: true,
+    lastSeen: Date.now(),
+  });
+  let presAB = getRoomPresence(pRoomId);
+  assert(presAB.length === 2 && presAB.some(m => m.id === 'guest_A_id') && presAB.some(m => m.id === 'guest_B_id'), 'Test 2: Guest B joins, count becomes 2');
+
+  // Test 3: Guest B sends multiple heartbeats: count remains 2.
+  updateRoomPresence(pRoomId, {
+    id: 'guest_B_id',
+    nickname: 'Guest_B',
+    avatar: '🌸',
+    isGuest: true,
+    lastSeen: Date.now(),
+  });
+  updateRoomPresence(pRoomId, {
+    id: 'guest_B_id',
+    nickname: 'Guest_B',
+    avatar: '🌸',
+    isGuest: true,
+    lastSeen: Date.now(),
+  });
+  let presHeartbeat = getRoomPresence(pRoomId);
+  assert(presHeartbeat.length === 2, 'Test 3: Guest B heartbeats do not increase participant count (remains 2)');
+
+  // Test 4: Guest A leaves: both views converge to count 1.
+  removeRoomPresence(pRoomId, 'guest_A_id');
+  let presLeave = getRoomPresence(pRoomId);
+  assert(presLeave.length === 1 && presLeave[0].id === 'guest_B_id', 'Test 4: Guest A leaves, count converges to 1');
+
+  // Test 5: Guest B remains connected after A leaves.
+  assert(getRoomPresence(pRoomId).some(m => m.id === 'guest_B_id'), 'Test 5: Guest B remains connected after A leaves');
+
+  // Test 6: Reconnect does not duplicate the same guest.
+  updateRoomPresence(pRoomId, {
+    id: 'guest_B_id',
+    nickname: 'Guest_B',
+    avatar: '🌸',
+    isGuest: true,
+    lastSeen: Date.now(),
+  });
+  updateRoomPresence(pRoomId, {
+    id: 'guest_B_id',
+    nickname: 'Guest_B',
+    avatar: '🌸',
+    isGuest: true,
+    lastSeen: Date.now(),
+  });
+  assert(getRoomPresence(pRoomId).length === 1, 'Test 6: Reconnect does not duplicate the same guest');
+
+  // Test 7: Two different public rooms remain isolated.
+  const otherRoomId = 'room-tech';
+  updateRoomPresence(otherRoomId, {
+    id: 'guest_C_id',
+    nickname: 'Guest_C',
+    avatar: '💻',
+    isGuest: true,
+    lastSeen: Date.now(),
+  });
+  assert(getRoomPresence(pRoomId).length === 1 && getRoomPresence(otherRoomId).length === 1, 'Test 7: Two different public rooms remain isolated');
+
+  // Test 8: Stale-session cleanup does not remove an active guest.
+  updateRoomPresence(pRoomId, {
+    id: 'guest_B_id',
+    nickname: 'Guest_B',
+    avatar: '🌸',
+    isGuest: true,
+    lastSeen: Date.now() - 10000, // 10s ago (within 45s TTL)
+  });
+  assert(getRoomPresence(pRoomId).length === 1 && getRoomPresence(pRoomId)[0].id === 'guest_B_id', 'Test 8: Recent heartbeat prevents stale-session cleanup of active guest');
+
+  // Test 9: Clients receive initial participant list and subsequent updates.
+  const initialList = getRoomPresence(pRoomId);
+  updateRoomPresence(pRoomId, {
+    id: 'guest_D_id',
+    nickname: 'Guest_D',
+    avatar: '⚡',
+    isGuest: true,
+    lastSeen: Date.now(),
+  });
+  const updatedList = getRoomPresence(pRoomId);
+  assert(initialList.length === 1 && updatedList.length === 2, 'Test 10: Clients receive initial participant list and subsequent updates');
+
+  // Test 10: Public chat history remains intact after leave and rejoin.
+  const msgRes = postRoomMessage({
+    roomId: pRoomId,
+    senderId: 'guest_B_id',
+    senderNickname: 'Guest_B',
+    senderAvatar: '🌸',
+    senderType: 'guest',
+    rawContent: 'Persistent message test',
+  });
+  removeRoomPresence(pRoomId, 'guest_B_id');
+  updateRoomPresence(pRoomId, {
+    id: 'guest_B_id',
+    nickname: 'Guest_B',
+    avatar: '🌸',
+    isGuest: true,
+    lastSeen: Date.now(),
+  });
+  const history = getRoomMessages(pRoomId);
+  assert(history.some(m => m.content === 'Persistent message test'), 'Test 10: Public chat history remains intact after leave and rejoin');
+
   console.log('\n====================================================');
   console.log(` RESULTS: ${passed} PASSED / ${failed} FAILED`);
   console.log('====================================================');
