@@ -74,6 +74,38 @@ export const databaseService = {
   },
 
   /**
+   * Fetch messages for a specific conversation
+   */
+  async getConversationMessages(convId: string): Promise<ChatMessage[]> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', convId)
+        .order('created_at', { ascending: true });
+
+      if (error || !data) return [];
+
+      return data.map((m: any) => ({
+        id: m.id,
+        conversationId: m.conversation_id,
+        senderId: m.sender_user_id || m.sender_guest_id || 'anonymous',
+        senderNickname: m.sender_nickname,
+        senderAvatar: m.sender_avatar,
+        content: m.content,
+        timestamp: m.created_at,
+        isDirect: true,
+        status: 'delivered',
+      }));
+    } catch {
+      return [];
+    }
+  },
+
+  /**
    * Broadcast a chat message directly via Supabase Realtime WebSocket broadcast
    */
   broadcastMessage(roomId: string, message: ChatMessage) {

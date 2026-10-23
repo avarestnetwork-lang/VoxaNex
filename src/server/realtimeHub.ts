@@ -475,8 +475,10 @@ export async function getConversationMessages(convId: string, requesterId: strin
   if (!(await isConversationMember(convId, requesterId))) {
     return [];
   }
-  const list = conversationMessages.get(convId) || [];
-  return list.slice(-limit);
+  
+  // Use durable source
+  const msgs = await databaseService.getConversationMessages(convId);
+  return msgs as HubMessage[];
 }
 
 export async function postConversationMessage(params: {
@@ -497,7 +499,7 @@ export async function postConversationMessage(params: {
     return { success: false, error: 'Unauthorized: You are not a member of this conversation.' };
   }
 
-  // Derive recipientId server-side from membership
+  // Derive recipientId server-side
   let members = conversationMembers.get(conversationId);
   if ((!members || members.size < 2) && conversationId.startsWith('conv_')) {
     const withoutPrefix = conversationId.slice(5);
@@ -527,7 +529,7 @@ export async function postConversationMessage(params: {
     }
   }
 
-  // Bidirectional Block check: neither party can message if blocked
+  // Bidirectional Block check
   if (isUserBlocked(senderId, recipientId)) {
     return { success: false, error: 'Unable to deliver message: Direct communication blocked between participants.' };
   }
@@ -544,18 +546,6 @@ export async function postConversationMessage(params: {
   const filter = filterProhibitedContent(rawContent);
   if (filter.flagged) {
     return { success: false, error: filter.reason || 'Prohibited content detected.' };
-  }
-
-  if (!conversationMessages.has(conversationId)) {
-    conversationMessages.set(conversationId, []);
-  }
-
-  const list = conversationMessages.get(conversationId)!;
-
-  // Deduplicate by clientNonce (check before rate limits for retry resilience)
-  if (params.clientNonce && list.some((m) => m.clientNonce === params.clientNonce)) {
-    const existing = list.find((m) => m.clientNonce === params.clientNonce)!;
-    return { success: true, message: existing };
   }
 
   // Rate check
@@ -584,16 +574,14 @@ export async function postConversationMessage(params: {
     status: 'delivered',
   };
 
-  list.push(message);
-
-  console.log('[VX-DM] Broadcasting DM to conversation:', conversationId, 'sender:', senderId, 'recipient:', recipientId);
-  broadcastToConversation(conversationId, 'new_dm', message);
-  broadcastToUser(recipientId, 'incoming_dm', { conversationId, message });
-  
-  // Bridge across environments
+  // Broadcast via Supabase
   try {
-    databaseService.broadcastDM(conversationId, recipientId, message);
-  } catch {}
+    databaseService.broadcastDM(conversationId, recipientId, message as any);
+    databaseService.broadcastToUser(recipientId, 'incoming_dm', { conversationId, message });
+  } catch (e) {
+    console.error('[VX-DM] Failed to broadcast DM via Supabase:', e);
+    return { success: false, error: 'Message persistence or delivery failed.' };
+  }
   
   return { success: true, message };
 }

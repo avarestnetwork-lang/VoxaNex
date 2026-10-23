@@ -1,3 +1,5 @@
+import { databaseService } from './services/databaseService';
+
 /**
  * ChatLustora Cloudflare Workers Edge Entrypoint
  * Handles full-featured Edge SSE streaming, message persistence, presence tracking,
@@ -724,8 +726,7 @@ export default {
           }
         }
 
-        const list = conversationMessages.get(convId) || [];
-        return jsonResponse({ success: true, messages: list });
+        return jsonResponse({ success: true, messages: [] });
       }
 
       if (request.method === 'POST') {
@@ -788,20 +789,6 @@ export default {
             status: 'delivered',
           };
 
-          if (!conversationMessages.has(convId)) {
-            conversationMessages.set(convId, []);
-          }
-          const list = conversationMessages.get(convId)!;
-
-          // Deduplicate by clientNonce
-          if (clientNonce && list.some((m) => m.clientNonce === clientNonce)) {
-            const existing = list.find((m) => m.clientNonce === clientNonce)!;
-            return jsonResponse({ success: true, message: existing });
-          }
-
-          list.push(message);
-          if (list.length > 500) list.shift();
-
           // Persist to Supabase if configured
           if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
             try {
@@ -834,29 +821,13 @@ export default {
             }
           }
 
-          // Broadcast to active SSE subscribers on this direct conversation
-          broadcastToConversation(convId, 'new_dm', message);
-          if (recipientId) {
-            broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message });
-            
-            // Bridge across environments
-            if (env?.SUPABASE_URL) {
-              try {
-                // We need to import databaseService or use its implementation.
-                // Since this is worker.ts, I will just replicate the broadcast logic here
-                // to avoid complex import issues in edge runtime if any.
-                const supabase = await import('./lib/supabaseClient').then(m => m.getSupabaseClient());
-                if (supabase) {
-                    supabase.channel(`user_dm:${recipientId}`).send({
-                        type: 'broadcast',
-                        event: 'incoming_dm',
-                        payload: { conversationId: convId, message },
-                    });
-                }
-              } catch (e) {
-                console.warn('[VX-RT] Failed to broadcast DM from worker:', e);
-              }
-            }
+          // Broadcast via Supabase
+          try {
+            databaseService.broadcastDM(convId, recipientId, message as any);
+            databaseService.broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message });
+          } catch (e) {
+            console.error('[VX-DM] Failed to broadcast DM via Supabase:', e);
+            return jsonResponse({ success: false, error: 'Message delivery failed.' }, 500);
           }
 
           return jsonResponse({ success: true, message });
