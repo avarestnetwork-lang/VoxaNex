@@ -88,7 +88,7 @@ export const Navbar: React.FC = () => {
           <div className="flex items-center gap-3">
             <button
               onClick={() => handleNav('/')}
-              className="flex items-center gap-2.5 text-left group focus:outline-none focus:ring-2 focus:ring-rose-500 rounded-lg cursor-pointer"
+              className="flex items-center gap-2.5 text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded-lg cursor-pointer"
             >
               <img
                 src="/logo.png"
