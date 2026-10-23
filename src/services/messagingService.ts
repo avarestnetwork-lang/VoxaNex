@@ -560,6 +560,7 @@ export const messagingService = {
       eventSource = new EventSource(`${API_BASE}/api/chat/conversations/${convId}/events?userId=${encodeURIComponent(userId)}${token ? `&guestToken=${encodeURIComponent(token)}` : ''}`);
       
       eventSource.addEventListener('new_dm', (e) => {
+        console.log('[VX-DM] Received new_dm event from SSE for conversation:', convId);
         try {
           const msg = JSON.parse(e.data);
           emitUniqueDm(msg);
@@ -589,6 +590,12 @@ export const messagingService = {
       // ignore
     }
 
+    // 4. Supabase Realtime Private channel subscription (Shared state)
+    const unsubSupabase = databaseService.subscribeToDM(convId, userId, (msg) => {
+      console.log('[VX-DM] Received new_dm event from Supabase for conversation:', convId);
+      emitUniqueDm(msg);
+    });
+
     // 3. Fallback auto-sync every 4s
     syncInterval = setInterval(async () => {
       if (isClosed) return;
@@ -609,6 +616,7 @@ export const messagingService = {
     return () => {
       isClosed = true;
       if (syncInterval) clearInterval(syncInterval);
+      unsubSupabase();
       if (broadcastChannel) {
         try {
           broadcastChannel.close();

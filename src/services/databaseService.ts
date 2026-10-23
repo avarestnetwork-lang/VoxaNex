@@ -377,18 +377,78 @@ export const databaseService = {
   },
 
   /**
-   * DEPRECATED: Unauthenticated public broadcast channel decommissioned for security compliance.
-   * Private DMs are routed exclusively through server-authenticated event streams and the secure event_bus.
+   * Subscribe to direct messages via secure Supabase Realtime channel
    */
-  broadcastDM(_userId: string, _conversationId: string, _message: ChatMessage) {
-    // Intentionally decommissioned to prevent public broadcast of private messages.
+  subscribeToDM(convId: string, userId: string, onMessage: (msg: ChatMessage) => void): () => void {
+    const supabase = getSupabaseClient();
+    if (!supabase) return () => {};
+
+    // Use authorized private channel
+    const channel = supabase.channel(`dm:${convId}:${userId}`);
+    channel
+      .on('broadcast', { event: 'new_dm' }, (payload) => {
+        onMessage(payload.payload);
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
   },
 
   /**
-   * DEPRECATED: Unauthenticated public broadcast subscription decommissioned.
-   * Private DM notifications use server-authenticated SSE streams (/api/chat/user/:userId/events).
+   * Broadcast DM via secure Supabase Realtime channel
    */
-  subscribeToUserDMs(_userId: string, _onMessage: (conversationId: string, message: ChatMessage) => void) {
-    return () => {};
+  broadcastDM(convId: string, recipientId: string, message: ChatMessage) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      supabase.channel(`dm:${convId}:${recipientId}`).send({
+        type: 'broadcast',
+        event: 'new_dm',
+        payload: message,
+      });
+    } catch {}
+  },
+
+  /**
+   * Subscribe to direct message notifications for a specific user via secure Supabase broadcast
+   */
+  /**
+   * Subscribe to direct message notifications for a specific user via secure Supabase broadcast
+   */
+  subscribeToUserDMs(userId: string, onMessage: (conversationId: string, message: ChatMessage) => void): () => void {
+    const supabase = getSupabaseClient();
+    if (!supabase) return () => {};
+
+    const channel = supabase.channel(`user_dm:${userId}`);
+    channel
+      .on('broadcast', { event: 'incoming_dm' }, (payload) => {
+        onMessage(payload.payload.conversationId, payload.payload.message);
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
+  },
+
+  /**
+   * Broadcast event to a specific user via secure Supabase Realtime channel
+   */
+  broadcastToUser(userId: string, event: string, payload: any) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      supabase.channel(`user_dm:${userId}`).send({
+        type: 'broadcast',
+        event: event,
+        payload: payload,
+      });
+    } catch {}
   },
 };

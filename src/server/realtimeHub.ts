@@ -586,12 +586,13 @@ export async function postConversationMessage(params: {
 
   list.push(message);
 
+  console.log('[VX-DM] Broadcasting DM to conversation:', conversationId, 'sender:', senderId, 'recipient:', recipientId);
   broadcastToConversation(conversationId, 'new_dm', message);
   broadcastToUser(recipientId, 'incoming_dm', { conversationId, message });
   
   // Bridge across environments
   try {
-    databaseService.broadcastDM(recipientId, conversationId, message);
+    databaseService.broadcastDM(conversationId, recipientId, message);
   } catch {}
   
   return { success: true, message };
