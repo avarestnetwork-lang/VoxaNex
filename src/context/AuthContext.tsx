@@ -13,7 +13,7 @@ interface AuthContextType {
   revoke18: () => void;
   setNickname: (nickname: string) => void;
   setAvatar: (avatar: string) => void;
-  loginGuest: (nickname?: string, lang?: AppLanguage, gender?: string) => Promise<void>;
+  loginGuest: (nickname?: string, lang?: AppLanguage, gender?: string) => Promise<{ success: boolean; error?: string }>;
   loginWithAccount: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   registerWithAccount: (email: string, password: string, nickname: string) => Promise<{ success: boolean; error?: string }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
@@ -177,7 +177,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const loginGuest = async (nickname?: string, lang: AppLanguage = 'en', gender?: string) => {
+  const loginGuest = async (nickname?: string, lang: AppLanguage = 'en', gender?: string): Promise<{ success: boolean; error?: string }> => {
     const chosenNick = nickname?.trim() || getRandomGuestNickname();
     const chosenAvatar = GUEST_AVATARS[Math.floor(Math.random() * GUEST_AVATARS.length)];
 
@@ -203,20 +203,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: new Date().toISOString(),
       });
       setHasActiveSession(true);
+      return { success: true };
     } else {
-      setUser({
-        id: `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        nickname: chosenNick,
-        isGuest: true,
-        is18Verified: user.is18Verified,
-        avatar: chosenAvatar,
-        gender: gender as UserGender,
-        languagePreference: lang,
-        safeFilterEnabled: true,
-        notificationSounds: true,
-        createdAt: new Date().toISOString(),
-      });
-      setHasActiveSession(true);
+      if (import.meta.env.DEV) {
+        setUser({
+          id: `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          nickname: chosenNick,
+          isGuest: true,
+          is18Verified: user.is18Verified,
+          avatar: chosenAvatar,
+          gender: gender as UserGender,
+          languagePreference: lang,
+          safeFilterEnabled: true,
+          notificationSounds: true,
+          createdAt: new Date().toISOString(),
+        });
+        setHasActiveSession(true);
+        return { success: true };
+      }
+      return { success: false, error: res.error || 'Failed to initialize guest session on server.' };
     }
   };
 

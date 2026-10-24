@@ -83,7 +83,11 @@ export const GuestEntryPage: React.FC = () => {
     }
 
     // Perform guest login with verified age & gender
-    await loginGuest(cleanNick, language, gender);
+    const loginRes = await loginGuest(cleanNick, language, gender);
+    if (loginRes && !loginRes.success) {
+      setGuestError(loginRes.error || (language === 'bn' ? 'অতিথি সেশন তৈরি করতে ব্যর্থ হয়েছে।' : 'Failed to create guest session on server.'));
+      return;
+    }
     setAvatar(selectedAvatar);
 
     if (targetRoom?.is18Plus || adultConfirmed) {

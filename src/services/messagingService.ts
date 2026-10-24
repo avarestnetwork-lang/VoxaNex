@@ -97,11 +97,15 @@ export const messagingService = {
       let guestToken =
         options.senderType === 'guest' ? guestSessionService.getStoredToken() : undefined;
       if (options.senderType === 'guest' && !guestToken) {
-        guestToken = `vx_gst_local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        try {
-          localStorage.setItem('vx_guest_token', guestToken);
-        } catch {
-          // ignore
+        if (import.meta.env.DEV) {
+          guestToken = `vx_gst_local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+          try {
+            localStorage.setItem('vx_guest_token', guestToken);
+          } catch {
+            // ignore
+          }
+        } else {
+          return { success: false, error: 'Guest session expired or missing. Please re-enter chat.' };
         }
       }
 

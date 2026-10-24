@@ -43,19 +43,22 @@ export const guestSessionService = {
       }
       return { success: false, error: 'Malformed server response' };
     } catch {
-      // Offline fallback: Generate client session record
-      const fallbackToken = `vx_gst_local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      const fallbackSession: ValidatedGuestSession = {
-        id: `guest_${Date.now()}`,
-        token: fallbackToken,
-        nickname: params.nickname,
-        avatar: params.avatar,
-        languagePref: params.languagePref,
-        is18Verified: params.is18Verified,
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      };
-      localStorage.setItem(STORAGE_KEY, fallbackToken);
-      return { success: true, session: fallbackSession };
+      // Offline fallback: Generate client session record strictly in local development mode
+      if (import.meta.env.DEV) {
+        const fallbackToken = `vx_gst_local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        const fallbackSession: ValidatedGuestSession = {
+          id: `guest_${Date.now()}`,
+          token: fallbackToken,
+          nickname: params.nickname,
+          avatar: params.avatar,
+          languagePref: params.languagePref,
+          is18Verified: params.is18Verified,
+          expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        };
+        localStorage.setItem(STORAGE_KEY, fallbackToken);
+        return { success: true, session: fallbackSession };
+      }
+      return { success: false, error: 'Network error connecting to guest session service.' };
     }
   },
 

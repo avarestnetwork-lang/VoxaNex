@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for minimal production guest session recovery fix ensuring guest messaging uses valid server-issued tokens and eliminates local fallback tokens in production.",
+  "updatedAt":  "2026-10-24T17:41:28.906767642Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}
