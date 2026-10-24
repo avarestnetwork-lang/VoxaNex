@@ -414,6 +414,7 @@ export const messagingService = {
       mediaType?: 'gif' | 'image';
       linkPreview?: LinkPreviewData;
       clientNonce?: string;
+      senderType?: 'registered' | 'guest';
     }
   ): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
     try {
@@ -421,30 +422,62 @@ export const messagingService = {
         guestSessionService.getStoredToken() ||
         (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined) ||
         undefined;
+
       const clientNonce = options.clientNonce || `nonce_dm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      let confirmedMessage: ChatMessage | null = null;
+
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...options, guestToken, clientNonce }),
       });
-      const data = await res.json();
 
-      if (data.success && data.message) {
-        // Cross-tab broadcast
-        try {
-          if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-            const bc = new BroadcastChannel(`vx_tab_dm_${convId}`);
-            bc.postMessage(data.message);
-            bc.close();
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await res.json();
+          if (data.success && data.message) {
+            confirmedMessage = data.message;
+          } else {
+            return { success: false, error: data.error || 'Direct message was not accepted' };
           }
-        } catch {
-          // ignore
+        } else {
+          const text = await res.text();
+          try {
+            const data = JSON.parse(text);
+            if (data.success && data.message) {
+              confirmedMessage = data.message;
+            } else {
+              return { success: false, error: data.error || 'Direct message was not accepted' };
+            }
+          } catch {
+            return { success: false, error: 'Invalid server response format' };
+          }
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        const errorMsg = errData?.error || `Server rejected direct message (HTTP ${res.status})`;
+        return { success: false, error: errorMsg };
       }
 
-      return data;
+      if (!confirmedMessage) {
+        return { success: false, error: 'Server did not return a confirmed direct message.' };
+      }
+
+      // Cross-tab broadcast
+      try {
+        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+          const bc = new BroadcastChannel(`vx_tab_dm_${convId}`);
+          bc.postMessage(confirmedMessage);
+          bc.close();
+        }
+      } catch {
+        // ignore
+      }
+
+      return { success: true, message: confirmedMessage };
     } catch {
-      return { success: false, error: 'Direct message delivery failed' };
+      return { success: false, error: 'Network unreachable. Direct message could not be delivered.' };
     }
   },
 
