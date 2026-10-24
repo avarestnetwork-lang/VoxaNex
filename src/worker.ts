@@ -300,7 +300,7 @@ export default {
     const guestSecretInfo = getGuestSecret(env);
 
     // Resolve Supabase environment variable binding aliases safely (SUPABASE_* or VITE_SUPABASE_*)
-    const supabaseUrl = env?.SUPABASE_URL || env?.VITE_SUPABASE_URL || '';
+    const baseSupabaseUrl = env?.SUPABASE_URL || env?.VITE_SUPABASE_URL || '';
     const supabaseAnonKey = env?.SUPABASE_ANON_KEY || env?.VITE_SUPABASE_ANON_KEY || '';
     const supabaseServiceKey = env?.SUPABASE_SERVICE_ROLE_KEY || '';
 
@@ -365,6 +365,7 @@ export default {
           try {
             controller.enqueue(encoder.encode(`event: connected\ndata: {"status":"connected","userId":"${userId}"}\n\n`));
           } catch {
+            if (intervalId) clearInterval(intervalId);
             controllers.delete(controller);
           }
 
@@ -377,16 +378,13 @@ export default {
             }
           }, 15000);
         },
-        cancel() {
+        cancel(controller) {
           if (intervalId) clearInterval(intervalId);
           const controllers = userDMStreams.get(userId);
           if (controllers) {
-            for (const c of Array.from(controllers)) {
-              try {
-                c.desiredSize;
-              } catch {
-                controllers.delete(c);
-              }
+            controllers.delete(controller);
+            if (controllers.size === 0) {
+              userDMStreams.delete(userId);
             }
           }
         },
@@ -423,6 +421,7 @@ export default {
           try {
             controller.enqueue(encoder.encode(`event: connected\ndata: {"status":"connected","roomId":"${roomId}"}\n\n`));
           } catch {
+            if (intervalId) clearInterval(intervalId);
             controllers.delete(controller);
           }
 
@@ -435,16 +434,13 @@ export default {
             }
           }, 15000);
         },
-        cancel() {
+        cancel(controller) {
           if (intervalId) clearInterval(intervalId);
           const controllers = roomStreams.get(roomId);
           if (controllers) {
-            for (const c of Array.from(controllers)) {
-              try {
-                c.desiredSize;
-              } catch {
-                controllers.delete(c);
-              }
+            controllers.delete(controller);
+            if (controllers.size === 0) {
+              roomStreams.delete(roomId);
             }
           }
         },
@@ -473,12 +469,12 @@ export default {
         const limitParam = parseInt(url.searchParams.get('limit') || '50', 10);
         const limit = Math.min(Math.max(limitParam, 1), 100);
 
-        if (supabaseUrl && supabaseAnonKey) {
+        if (baseSupabaseUrl && supabaseAnonKey) {
           try {
             // Resolve slug to real UUID for database query
             const realRoomId = await databaseService.resolveRoomId(roomId, supabaseClient);
             
-            const restUrl = `${supabaseUrl}/rest/v1/messages?room_id=eq.${realRoomId}&order=created_at.desc&limit=${limit}`;
+            const restUrl = `${baseSupabaseUrl}/rest/v1/messages?room_id=eq.${realRoomId}&order=created_at.desc&limit=${limit}`;
             const headers: Record<string, string> = {
               'apikey': supabaseAnonKey,
             };
@@ -595,12 +591,12 @@ export default {
           }
 
           // Secure server-side Supabase persistence using service-role key if configured
-          if (supabaseUrl && supabaseServiceKey) {
+          if (baseSupabaseUrl && supabaseServiceKey) {
             try {
               // Resolve slug to real UUID for database persistence
               const realRoomId = await databaseService.resolveRoomId(roomId, supabaseClient);
               
-              const dbRes = await fetch(`${supabaseUrl}/rest/v1/messages`, {
+              const dbRes = await fetch(`${baseSupabaseUrl}/rest/v1/messages`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -807,10 +803,10 @@ export default {
         }
       }
       
-      if (supabaseUrl && supabaseServiceKey) {
+      if (baseSupabaseUrl && supabaseServiceKey) {
         try {
-          const restUrl = `${supabaseUrl}/rest/v1/conversation_participants?user_id=eq.${userId}&select=conversation_id`;
-          const res = await fetch(restUrl, {
+          const convListRestUrl = `${baseSupabaseUrl}/rest/v1/conversation_participants?user_id=eq.${userId}&select=conversation_id`;
+          const res = await fetch(convListRestUrl, {
             headers: {
               'apikey': supabaseServiceKey,
               'Authorization': `Bearer ${supabaseServiceKey}`
@@ -871,6 +867,7 @@ export default {
           try {
             controller.enqueue(encoder.encode(`event: connected\ndata: {"status":"connected","convId":"${convId}"}\n\n`));
           } catch {
+            if (intervalId) clearInterval(intervalId);
             controllers.delete(controller);
           }
 
@@ -883,16 +880,13 @@ export default {
             }
           }, 15000);
         },
-        cancel() {
+        cancel(controller) {
           if (intervalId) clearInterval(intervalId);
           const controllers = conversationStreams.get(convId);
           if (controllers) {
-            for (const c of Array.from(controllers)) {
-              try {
-                c.desiredSize;
-              } catch {
-                controllers.delete(c);
-              }
+            controllers.delete(controller);
+            if (controllers.size === 0) {
+              conversationStreams.delete(convId);
             }
           }
         },
@@ -927,7 +921,7 @@ export default {
           }
         }
 
-        if (supabaseUrl && supabaseAnonKey) {
+        if (baseSupabaseUrl && supabaseAnonKey) {
           try {
             // Resolve conversation identity
             let dbConvId = convId;
@@ -941,7 +935,7 @@ export default {
                 }
             }
 
-            const restUrl = `${supabaseUrl}/rest/v1/messages?conversation_id=eq.${dbConvId}&order=created_at.asc`;
+            const convMessagesRestUrl = `${baseSupabaseUrl}/rest/v1/messages?conversation_id=eq.${dbConvId}&order=created_at.asc`;
             const headers: Record<string, string> = {
               'apikey': supabaseAnonKey,
             };
@@ -951,7 +945,7 @@ export default {
               headers['Authorization'] = `Bearer ${supabaseAnonKey}`;
             }
 
-            const res = await fetch(restUrl, { headers });
+            const res = await fetch(convMessagesRestUrl, { headers });
             const data = await res.json();
             const messages = (Array.isArray(data) ? data : []).map((m: any) => ({
               id: m.id,
@@ -1053,9 +1047,9 @@ export default {
           };
 
           // Persist to Supabase if configured
-          if (supabaseUrl && supabaseServiceKey) {
+          if (baseSupabaseUrl && supabaseServiceKey) {
             try {
-              const restUrl = `${supabaseUrl}/rest/v1/messages`;
+              const directMessagesRestUrl = `${baseSupabaseUrl}/rest/v1/messages`;
               const isSenderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(verifiedSenderId);
               
               // Resolve deterministic conversation UUID if needed
@@ -1063,7 +1057,7 @@ export default {
               if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
                  dbConvId = await databaseService.getDeterministicConvId(verifiedSenderId, recipientId);
                  // Ensure the conversation record exists in DB to satisfy foreign key
-                 await fetch(`${supabaseUrl}/rest/v1/conversations`, {
+                 await fetch(`${baseSupabaseUrl}/rest/v1/conversations`, {
                    method: 'POST',
                    headers: {
                      'apikey': supabaseServiceKey,
@@ -1075,7 +1069,7 @@ export default {
                  }).catch(() => {});
               }
 
-              const dbRes = await fetch(restUrl, {
+              const dbRes = await fetch(directMessagesRestUrl, {
                 method: 'POST',
                 headers: {
                   'apikey': supabaseServiceKey,
