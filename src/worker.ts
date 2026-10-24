@@ -917,15 +917,31 @@ export default {
 
       if (request.method === 'GET') {
         const reqUserId = url.searchParams.get('userId');
-        if (reqUserId && convId.startsWith('conv_')) {
+        const guestToken = url.searchParams.get('guestToken');
+
+        let verifiedUserId = reqUserId;
+        if (guestToken) {
+          const authCheck = await verifyGuestToken(guestToken, guestSecretInfo);
+          if (authCheck.valid && authCheck.session) {
+            verifiedUserId = authCheck.session.id;
+          } else {
+            return jsonResponse({ success: false, error: 'Unauthorized: Invalid guest session token.' }, 401);
+          }
+        }
+
+        if (verifiedUserId && convId.startsWith('conv_')) {
           const idWithoutPrefix = convId.replace(/^conv_/, '');
           const isMember =
-            idWithoutPrefix.startsWith(reqUserId + '_') ||
-            idWithoutPrefix.endsWith('_' + reqUserId) ||
-            idWithoutPrefix === reqUserId;
+            idWithoutPrefix === verifiedUserId ||
+            idWithoutPrefix.startsWith(verifiedUserId + '_') ||
+            idWithoutPrefix.endsWith('_' + verifiedUserId) ||
+            idWithoutPrefix.includes('_' + verifiedUserId + '_');
+
           if (!isMember) {
             return jsonResponse({ success: false, error: 'Unauthorized: Not a member of this conversation.' }, 403);
           }
+        } else if (!verifiedUserId && convId.startsWith('conv_')) {
+          return jsonResponse({ success: false, error: 'Unauthorized: User ID or guest token required.' }, 401);
         }
 
         if (baseSupabaseUrl && supabaseAnonKey) {
@@ -995,46 +1011,46 @@ export default {
             return jsonResponse({ success: false, error: 'Sender ID and content are required.' }, 400);
           }
 
-          // Authorize: Verify that sender is a participant in this conversation
+          let verifiedSenderId = senderId;
+          let verifiedSenderType: 'registered' | 'guest' = 'registered';
+          let verifiedNickname = senderNickname || 'User';
+          let verifiedAvatar = senderAvatar || '👤';
+
+          if (guestToken) {
+            const authCheck = await verifyGuestToken(guestToken, guestSecretInfo);
+            if (!authCheck.valid || !authCheck.session) {
+              return jsonResponse({ success: false, error: 'Unauthorized: Invalid guest session token.' }, 401);
+            }
+            if (authCheck.session.id !== senderId) {
+              return jsonResponse({ success: false, error: 'Unauthorized: Guest token mismatch.' }, 403);
+            }
+            verifiedSenderType = 'guest';
+            verifiedSenderId = authCheck.session.id;
+            verifiedNickname = authCheck.session.nickname;
+            verifiedAvatar = authCheck.session.avatar;
+          } else if (senderId.startsWith('guest_')) {
+            return jsonResponse({ success: false, error: 'Unauthorized: Valid guest session required for guest IDs.' }, 401);
+          }
+
+          // Authorize: Verify that verifiedSenderId is a participant in this conversation
           if (convId.startsWith('conv_')) {
             const idWithoutPrefix = convId.replace(/^conv_/, '');
             const isMember =
-              (recipientId && convId === `conv_${[senderId, recipientId].sort().join('_')}`) ||
-              idWithoutPrefix.startsWith(senderId + '_') ||
-              idWithoutPrefix.endsWith('_' + senderId) ||
-              idWithoutPrefix === senderId;
+              (recipientId && convId === `conv_${[verifiedSenderId, recipientId].sort().join('_')}`) ||
+              idWithoutPrefix === verifiedSenderId ||
+              idWithoutPrefix.startsWith(verifiedSenderId + '_') ||
+              idWithoutPrefix.endsWith('_' + verifiedSenderId) ||
+              idWithoutPrefix.includes('_' + verifiedSenderId + '_');
 
             if (!isMember) {
               return jsonResponse({ success: false, error: 'Unauthorized: Sender is not a member of this conversation.' }, 403);
             }
           }
 
+
+
           const cleanContent = sanitizeContent(content || '');
           const correlationId = `dm_tx_${crypto.randomUUID().slice(0, 8)}`;
-          
-          let verifiedSenderType: 'registered' | 'guest' = 'registered';
-          let verifiedSenderId = senderId;
-          let verifiedNickname = senderNickname || 'User';
-          let verifiedAvatar = senderAvatar || '👤';
-
-          // Authorize guest sessions if guest token provided or sender is a guest
-          if (guestToken) {
-            const authCheck = await verifyGuestToken(guestToken, guestSecretInfo);
-            if (authCheck.valid && authCheck.session) {
-              if (authCheck.session.id !== senderId) {
-                return jsonResponse({ success: false, error: 'Unauthorized: Guest token mismatch.' }, 403);
-              }
-              verifiedSenderType = 'guest';
-              verifiedSenderId = authCheck.session.id;
-              verifiedNickname = authCheck.session.nickname;
-              verifiedAvatar = authCheck.session.avatar;
-            } else if (senderId.startsWith('guest_')) {
-              return jsonResponse({ success: false, error: `Unauthorized: ${authCheck.reason || 'Invalid guest session.'}` }, 401);
-            }
-          } else if (senderId.startsWith('guest_')) {
-            return jsonResponse({ success: false, error: 'Unauthorized: Valid guest session required for guest IDs.' }, 401);
-          }
-
           const message: HubMessage = {
             id: crypto.randomUUID(),
             roomId: convId, // Legacy shim
