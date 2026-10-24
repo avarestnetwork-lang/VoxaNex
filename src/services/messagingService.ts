@@ -1,7 +1,7 @@
 import { ChatMessage } from '../types';
 import { guestSessionService } from './guestSessionService';
 import { databaseService } from './databaseService';
-import { isSupabaseConfigured } from '../lib/supabaseClient';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabaseClient';
 
 export interface RealtimePresenceMember {
   id: string;
@@ -39,6 +39,20 @@ export interface SendMessageOptions {
 }
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
+
+async function getIdentityHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
+  }
+  if (!headers.Authorization) {
+    const guestToken = guestSessionService.getStoredToken();
+    if (guestToken) headers['X-Guest-Token'] = guestToken;
+  }
+  return headers;
+}
 
 export const messagingService = {
   /**
@@ -377,10 +391,12 @@ export const messagingService = {
     partnerId: string
   ): Promise<{ success: boolean; conversationId?: string; error?: string }> {
     try {
+      const guestToken = guestSessionService.getStoredToken();
+      const headers = { 'Content-Type': 'application/json', ...(await getIdentityHeaders()) };
       const res = await fetch(`${API_BASE}/api/chat/conversations`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, partnerId }),
+        headers,
+        body: JSON.stringify({ userId, partnerId, guestToken }),
       });
       const data = await res.json();
       return data;
@@ -396,11 +412,11 @@ export const messagingService = {
     try {
       const guestToken = guestSessionService.getStoredToken();
       let url = `${API_BASE}/api/chat/conversations/${convId}/messages?userId=${encodeURIComponent(userId)}`;
-      if (guestToken) {
-        url += `&guestToken=${encodeURIComponent(guestToken)}`;
-      }
-      const res = await fetch(url);
-      const data = await res.json();
+      const headers = await getIdentityHeaders();
+      if (guestToken) headers['X-Guest-Token'] = guestToken;
+      const res = await fetch(url, { headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) return { success: false, messages: [], error: data.error || `History request failed (HTTP ${res.status}).` };
       return { success: true, messages: data.messages || [] };
     } catch {
       return { success: false, messages: [], error: 'Failed to fetch direct messages' };
@@ -433,7 +449,7 @@ export const messagingService = {
 
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await getIdentityHeaders()) },
         body: JSON.stringify({ ...options, guestToken, clientNonce }),
       });
 
@@ -488,11 +504,11 @@ export const messagingService = {
 
   async fetchUserConversations(userId: string, guestToken?: string): Promise<string[]> {
     try {
-      let url = `${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`;
-      if (guestToken) {
-        url += `&guestToken=${encodeURIComponent(guestToken)}`;
-      }
-      const res = await fetch(url);
+      const url = `${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`;
+      const headers = await getIdentityHeaders();
+      const effectiveToken = guestToken || guestSessionService.getStoredToken();
+      if (effectiveToken) headers['X-Guest-Token'] = effectiveToken;
+      const res = await fetch(url, { headers });
       const data = await res.json();
       return data.success && Array.isArray(data.conversations) ? data.conversations : [];
     } catch {
@@ -524,6 +540,21 @@ export const messagingService = {
     }
   },
 
+  async createUserEventsTicket(userId: string): Promise<string | null> {
+    try {
+      const guestToken = guestSessionService.getStoredToken();
+      const response = await fetch(`${API_BASE}/api/chat/user/${encodeURIComponent(userId)}/events-ticket`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await getIdentityHeaders()) },
+        body: JSON.stringify({ guestToken }),
+      });
+      const data = await response.json();
+      return response.ok && data.success ? data.ticket : null;
+    } catch {
+      return null;
+    }
+  },
+
   subscribeToConversation(
     convId: string,
     userId: string,
@@ -543,6 +574,7 @@ export const messagingService = {
     let eventSource: EventSource | null = null;
     let isClosed = false;
     let syncInterval: NodeJS.Timeout | null = null;
+    let ticketRetryTimeout: ReturnType<typeof setTimeout> | null = null;
     let broadcastChannel: BroadcastChannel | null = null;
     const seenDmIds = new Set<string>();
 
@@ -571,11 +603,21 @@ export const messagingService = {
       // ignore
     }
 
-    // 2. SSE Connection (Authenticated via guestToken)
-    try {
-      const token = guestSessionService.getStoredToken();
-      eventSource = new EventSource(`${API_BASE}/api/chat/conversations/${convId}/events?userId=${encodeURIComponent(userId)}${token ? `&guestToken=${encodeURIComponent(token)}` : ''}`);
-      
+    // SSE uses a short-lived ticket so long-lived guest credentials never appear in URLs.
+    const connectSse = async () => {
+      try {
+        const guestToken = guestSessionService.getStoredToken();
+        const response = await fetch(`${API_BASE}/api/chat/conversations/${encodeURIComponent(convId)}/events-ticket`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(await getIdentityHeaders()) },
+          body: JSON.stringify({ guestToken }),
+        });
+        const ticketData = await response.json().catch(() => ({}));
+        if (isClosed) return;
+        if (!response.ok || !ticketData.ticket) throw new Error('Event ticket unavailable');
+        eventSource?.close();
+        eventSource = new EventSource(`${API_BASE}/api/chat/conversations/${encodeURIComponent(convId)}/events?ticket=${encodeURIComponent(ticketData.ticket)}`);
+
       eventSource.addEventListener('new_dm', (e) => {
         console.log('[VX-DM] Received new_dm event from SSE for conversation:', convId);
         try {
@@ -603,19 +645,22 @@ export const messagingService = {
           // ignore
         }
       });
-    } catch {
-      // ignore
-    }
-
-    // 4. Supabase Realtime Private channel subscription (Shared state)
-    let unsubSupabase = () => {};
-    databaseService.subscribeToDM(convId, userId, (msg) => {
-      console.log('[VX-DM] Received new_dm event from Supabase for conversation:', convId);
-      emitUniqueDm(msg);
-    }).then(unsub => {
-      if (isClosed) unsub();
-      else unsubSupabase = unsub;
-    });
+        eventSource.onerror = () => {
+          eventSource?.close();
+          eventSource = null;
+          if (!isClosed && !ticketRetryTimeout) ticketRetryTimeout = setTimeout(() => {
+            ticketRetryTimeout = null;
+            void connectSse();
+          }, 1500);
+        };
+      } catch {
+        if (!isClosed && !ticketRetryTimeout) ticketRetryTimeout = setTimeout(() => {
+          ticketRetryTimeout = null;
+          void connectSse();
+        }, 3000);
+      }
+    };
+    void connectSse();
 
     // 3. Fallback auto-sync every 4s
     syncInterval = setInterval(async () => {
@@ -637,7 +682,7 @@ export const messagingService = {
     return () => {
       isClosed = true;
       if (syncInterval) clearInterval(syncInterval);
-      unsubSupabase();
+      if (ticketRetryTimeout) clearTimeout(ticketRetryTimeout);
       if (broadcastChannel) {
         try {
           broadcastChannel.close();

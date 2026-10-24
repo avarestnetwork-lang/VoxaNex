@@ -3,7 +3,6 @@ import { DirectConversation, ChatMessage } from '../types';
 import { useAuth } from './AuthContext';
 import { messagingService } from '../services/messagingService';
 import { guestSessionService } from '../services/guestSessionService';
-import { databaseService } from '../services/databaseService';
 
 export type ConversationDisplayMode = 'closed' | 'floating' | 'maximized';
 
@@ -399,29 +398,46 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
   }, [user.id, autoOpenPrivateChats]);
 
-  // Fix 1: Global Notifications (SSE Stream authenticated via guestToken)
+  // Global incoming notifications use short-lived server-issued SSE tickets.
   useEffect(() => {
     if (!user.id) return;
 
-    const token = guestSessionService.getStoredToken();
     const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
-    const userEventSource = new EventSource(`${API_BASE}/api/chat/user/${user.id}/events?guestToken=${encodeURIComponent(token || '')}`);
-    userEventSource.addEventListener('incoming_dm', (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        handleIncomingMessage(data.message, data.conversationId);
-      } catch (err) {
-        console.error('Failed to parse incoming DM from SSE stream', err);
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let userEventSource: EventSource | null = null;
+    const connect = async () => {
+      const ticket = await messagingService.createUserEventsTicket(user.id);
+      if (cancelled) return;
+      if (!ticket) {
+        retryTimer = setTimeout(() => void connect(), 3000);
+        return;
       }
-    });
-
-    const unsubSupabase = databaseService.subscribeToUserDMs(user.id, (conversationId: string, message: ChatMessage) => {
-      handleIncomingMessage(message, conversationId);
-    });
+      userEventSource?.close();
+      userEventSource = new EventSource(`${API_BASE}/api/chat/user/${encodeURIComponent(user.id)}/events?ticket=${encodeURIComponent(ticket)}`);
+      userEventSource.addEventListener('incoming_dm', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          handleIncomingMessage(data.message, data.conversationId);
+        } catch {
+          console.error('Failed to parse incoming DM event.');
+        }
+      });
+      userEventSource.onerror = () => {
+        userEventSource?.close();
+        userEventSource = null;
+        if (!cancelled && !retryTimer) retryTimer = setTimeout(() => {
+          retryTimer = null;
+          void connect();
+        }, 1500);
+      };
+    };
+    void connect();
 
     return () => {
-      userEventSource.close();
-      unsubSupabase();
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      userEventSource?.close();
     };
   }, [user.id, handleIncomingMessage]);
 
