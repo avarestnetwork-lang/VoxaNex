@@ -629,6 +629,8 @@ export default {
                   error: `Database persistence failed (HTTP ${dbRes.status}). Message was not saved.`
                 }, 500);
               }
+              // Broadcast to recipient across all instances
+              await databaseService.broadcastToUser(resolvedRecipientId, 'incoming_dm', { conversationId: dbConvId, message });
             } catch (dbErr: any) {
               console.error('[Worker] Supabase persistence exception:', dbErr);
               return jsonResponse({
@@ -709,6 +711,8 @@ export default {
               membersMap.delete(id);
               const currentMembers = Array.from(membersMap.values());
               broadcastToRoom(roomId, 'presence_update', currentMembers);
+              // Broadcast to other worker instances via Supabase
+              await databaseService.broadcastMessage(roomId, { id: 'presence_sync', roomId, content: JSON.stringify(currentMembers), senderNickname: 'system', senderAvatar: '⚡', timestamp: new Date().toISOString() } as any);
               return jsonResponse({ success: true, members: currentMembers });
             }
           }
