@@ -54,8 +54,9 @@ interface GuestSession {
 const DEFAULT_GUEST_SECRET = 'voxanex_default_secure_entropy_salt_2026';
 
 function getGuestSecret(env: any): { secret: string | null; isDevFallback: boolean } {
-  if (env?.GUEST_SESSION_SECRET && typeof env.GUEST_SESSION_SECRET === 'string' && env.GUEST_SESSION_SECRET.trim().length > 0) {
-    return { secret: env.GUEST_SESSION_SECRET.trim(), isDevFallback: false };
+  const secretValue = env?.GUEST_SESSION_SECRET || env?.VITE_GUEST_SESSION_SECRET;
+  if (secretValue && typeof secretValue === 'string' && secretValue.trim().length > 0) {
+    return { secret: secretValue.trim(), isDevFallback: false };
   }
   // Allow fallback ONLY in explicit local development mode
   if (env?.ENVIRONMENT === 'development' || env?.DEV === true) {
@@ -352,9 +353,11 @@ export default {
     if (userSseMatch && request.method === 'GET') {
       const userId = decodeURIComponent(userSseMatch[1]);
       let intervalId: any = null;
+      let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
       const readable = new ReadableStream<Uint8Array>({
         start(controller) {
+          streamController = controller;
           if (!userDMStreams.has(userId)) {
             userDMStreams.set(userId, new Set());
           }
@@ -374,15 +377,15 @@ export default {
               controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
             } catch {
               if (intervalId) clearInterval(intervalId);
-              controllers.delete(controller);
+              if (streamController) controllers.delete(streamController);
             }
           }, 15000);
         },
-        cancel(controller) {
+        cancel(reason) {
           if (intervalId) clearInterval(intervalId);
           const controllers = userDMStreams.get(userId);
-          if (controllers) {
-            controllers.delete(controller);
+          if (controllers && streamController) {
+            controllers.delete(streamController);
             if (controllers.size === 0) {
               userDMStreams.delete(userId);
             }
@@ -408,9 +411,11 @@ export default {
     if (sseMatch && request.method === 'GET') {
       const roomId = decodeURIComponent(sseMatch[1]);
       let intervalId: any = null;
+      let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
       const readable = new ReadableStream<Uint8Array>({
         start(controller) {
+          streamController = controller;
           if (!roomStreams.has(roomId)) {
             roomStreams.set(roomId, new Set());
           }
@@ -430,15 +435,15 @@ export default {
               controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
             } catch {
               if (intervalId) clearInterval(intervalId);
-              controllers.delete(controller);
+              if (streamController) controllers.delete(streamController);
             }
           }, 15000);
         },
-        cancel(controller) {
+        cancel(reason) {
           if (intervalId) clearInterval(intervalId);
           const controllers = roomStreams.get(roomId);
-          if (controllers) {
-            controllers.delete(controller);
+          if (controllers && streamController) {
+            controllers.delete(streamController);
             if (controllers.size === 0) {
               roomStreams.delete(roomId);
             }
@@ -854,9 +859,11 @@ export default {
     if (convEventsMatch && request.method === 'GET') {
       const convId = decodeURIComponent(convEventsMatch[1]);
       let intervalId: any = null;
+      let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
       const readable = new ReadableStream<Uint8Array>({
         start(controller) {
+          streamController = controller;
           if (!conversationStreams.has(convId)) {
             conversationStreams.set(convId, new Set());
           }
@@ -876,15 +883,15 @@ export default {
               controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
             } catch {
               if (intervalId) clearInterval(intervalId);
-              controllers.delete(controller);
+              if (streamController) controllers.delete(streamController);
             }
           }, 15000);
         },
-        cancel(controller) {
+        cancel(reason) {
           if (intervalId) clearInterval(intervalId);
           const controllers = conversationStreams.get(convId);
-          if (controllers) {
-            controllers.delete(controller);
+          if (controllers && streamController) {
+            controllers.delete(streamController);
             if (controllers.size === 0) {
               conversationStreams.delete(convId);
             }
