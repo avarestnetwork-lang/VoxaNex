@@ -19,6 +19,7 @@ import { PrivateMessagingPage } from './pages/PrivateMessagingPage';
 import { RandomMatchingPage } from './pages/RandomMatchingPage';
 import { VoiceWebcamPage } from './pages/VoiceWebcamPage';
 import { AuthPage } from './pages/AuthPage';
+import { MemberDashboardPage } from './pages/MemberDashboardPage';
 import { ProfileSettingsPage } from './pages/ProfileSettingsPage';
 import { SafetyCenterPage } from './pages/SafetyCenterPage';
 import { ForumPage } from './pages/ForumPage';
@@ -58,6 +59,10 @@ const AppRoutes: React.FC = () => {
         return <GuestEntryPage />;
       case '/guest-entry':
         return <GuestEntryPage />;
+      case '/register':
+        return <AuthPage defaultMode="register" />;
+      case '/dashboard':
+        return <MemberDashboardPage />;
       case '/rooms':
         return <RoomDirectoryPage />;
       case '/chat/bangla':
@@ -79,7 +84,7 @@ const AppRoutes: React.FC = () => {
       case '/auth':
         return <AuthPage />;
       case '/profile':
-        return <ProfileSettingsPage />;
+        return <MemberDashboardPage />;
       case '/safety':
         return <SafetyCenterPage />;
       case '/forum':

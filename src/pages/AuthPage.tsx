@@ -1,20 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
+import { SEOHead } from '../components/common/SEOHead';
 import { Lock, Mail, User, ArrowRight, ShieldCheck, Github, Globe, KeyRound, CheckCircle2, AlertTriangle } from 'lucide-react';
 
-export const AuthPage: React.FC = () => {
-  const { navigate, params } = useRouter();
+interface AuthPageProps {
+  defaultMode?: 'login' | 'register';
+}
+
+export const AuthPage: React.FC<AuthPageProps> = ({ defaultMode }) => {
+  const { currentRoute, navigate, params } = useRouter();
   const { language, t } = useLanguage();
   const { loginWithAccount, registerWithAccount, requestPasswordReset, isSupabaseActive, verify18 } = useAuth();
 
   const targetRoomSlug = params.targetRoom || params.roomId;
   const isTargetAdult = targetRoomSlug && (targetRoomSlug.includes('adult') || targetRoomSlug.includes('sex') || targetRoomSlug.includes('mature') || targetRoomSlug.includes('video') || targetRoomSlug.includes('roulette') || targetRoomSlug.includes('bdsm'));
 
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const initialMode = defaultMode || (currentRoute === '/register' ? 'register' : 'login');
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
@@ -22,6 +28,14 @@ export const AuthPage: React.FC = () => {
   const [adultConfirmed, setAdultConfirmed] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (defaultMode) {
+      setMode(defaultMode);
+    } else if (currentRoute === '/register') {
+      setMode('register');
+    }
+  }, [defaultMode, currentRoute]);
 
   // Forgot password state
   const [resetModalOpen, setResetModalOpen] = useState(false);
@@ -82,7 +96,7 @@ export const AuthPage: React.FC = () => {
       if (targetRoomSlug) {
         navigate('/chat', { roomId: targetRoomSlug });
       } else {
-        navigate('/profile');
+        navigate('/dashboard');
       }
     } catch (err: any) {
       setLoading(false);
@@ -110,26 +124,31 @@ export const AuthPage: React.FC = () => {
 
   return (
     <div className="max-w-md mx-auto px-4 py-12">
+      <SEOHead
+        title={mode === 'register' ? 'Create Account | ChatLustora' : 'Sign In | ChatLustora'}
+        description="Access your ChatLustora member account, direct messages, and chat rooms."
+        canonicalPath={mode === 'register' ? '/register' : '/auth'}
+      />
       <div className="p-6 sm:p-8 rounded-2xl border border-slate-800 bg-[#0d1322] shadow-2xl space-y-6">
         {/* Top brand icon */}
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-xl bg-violet-950/60 border border-violet-800/40 flex items-center justify-center text-violet-400 mx-auto">
+          <div className="w-12 h-12 rounded-xl bg-rose-950/60 border border-rose-800/40 flex items-center justify-center text-rose-400 mx-auto">
             <Lock className="w-6 h-6" />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
             {mode === 'login'
-              ? (language === 'bn' ? 'ভক্সানেক্সে সাইন ইন করুন' : 'Sign in to VoxaNex')
+              ? (language === 'bn' ? 'চ্যাটলাস্টোরায় সাইন ইন করুন' : 'Sign in to ChatLustora')
               : (language === 'bn' ? 'স্থায়ী অ্যাকাউন্ট তৈরি করুন' : 'Create Free Account')}
           </h1>
           <p className="text-xs text-slate-400">
             {mode === 'login'
-              ? (language === 'bn' ? 'আপনার সংরক্ষিত পরিচয় ও ব্যাজ ব্যবহার করুন' : 'Access your persistent identity, badges, and settings')
+              ? (language === 'bn' ? 'আপনার সংরক্ষিত পরিচয়, ব্যাজ ও ড্যাশবোর্ড ব্যবহার করুন' : 'Access your persistent identity, badges, and member dashboard')
               : (language === 'bn' ? 'একটি স্থায়ী হ্যান্ডেল নিবন্ধন করুন' : 'Register a permanent handle for regular community access')}
           </p>
 
           <div className="pt-1 flex items-center justify-center gap-1.5 text-[11px] font-mono text-cyan-400">
             <span className={`w-2 h-2 rounded-full ${isSupabaseActive ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            <span>{isSupabaseActive ? 'Supabase Auth Online' : 'Supabase Client Staged (Phase 2)'}</span>
+            <span>{isSupabaseActive ? 'Supabase Auth Online' : 'Supabase Client Staged'}</span>
           </div>
         </div>
 
@@ -138,11 +157,15 @@ export const AuthPage: React.FC = () => {
           <button
             type="button"
             onClick={() => {
-              setMode('login');
-              setErrorMsg(null);
+              if (currentRoute === '/register') {
+                navigate('/');
+              } else {
+                setMode('login');
+                setErrorMsg(null);
+              }
             }}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-              mode === 'login' ? 'bg-violet-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+              mode === 'login' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
             {language === 'bn' ? 'সাইন ইন' : 'Sign In'}
@@ -150,11 +173,15 @@ export const AuthPage: React.FC = () => {
           <button
             type="button"
             onClick={() => {
-              setMode('register');
-              setErrorMsg(null);
+              if (currentRoute !== '/register') {
+                navigate('/register');
+              } else {
+                setMode('register');
+                setErrorMsg(null);
+              }
             }}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-              mode === 'register' ? 'bg-violet-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+              mode === 'register' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
             {language === 'bn' ? 'রেজিস্ট্রেশন' : 'Register'}

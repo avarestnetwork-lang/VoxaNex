@@ -31,14 +31,52 @@ import {
   Tv,
   Smartphone,
   Users,
-  MessageCircle
+  MessageCircle,
+  Mail,
+  User,
+  CheckCircle,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
   const { navigate } = useRouter();
   const { language, t } = useLanguage();
-  const { user } = useAuth();
+  const { user, hasActiveSession, loginWithAccount } = useAuth();
   const [openFaq, setOpenFaq] = useState<number | null>(0);
+
+  // Hero Sign In State
+  const [heroTab, setHeroTab] = useState<'signin' | 'rooms'>(() => {
+    return hasActiveSession && !user.isGuest ? 'rooms' : 'signin';
+  });
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  const handleHeroLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    if (!loginEmail.trim() || !loginPassword) {
+      setLoginError(language === 'bn' ? 'অনুগ্রহ করে ইমেইল ও পাসওয়ার্ড দিন।' : 'Please enter your email and password.');
+      return;
+    }
+
+    setLoginLoading(true);
+    try {
+      const res = await loginWithAccount(loginEmail.trim(), loginPassword);
+      if (res.success) {
+        navigate('/dashboard');
+      } else {
+        setLoginError(res.error || (language === 'bn' ? 'লগইন ব্যর্থ হয়েছে।' : 'Authentication failed. Please check your credentials.'));
+      }
+    } catch (err: any) {
+      setLoginError(err.message || 'An unexpected error occurred during login.');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
 
   const topRooms = [
     { name: language === 'bn' ? 'সেক্স চ্যাট' : 'Sex Chat', subtitle: language === 'bn' ? 'সবচেয়ে জনপ্রিয়' : 'Most popular', icon: MessageSquare, route: '/chat/sex' },
@@ -289,11 +327,18 @@ export const LandingPage: React.FC = () => {
                 <ArrowRight className="w-5 h-5 ml-2" />
               </button>
               <button
-                onClick={() => navigate('/dating')}
+                onClick={() => navigate('/guest-entry')}
                 className="inline-flex items-center justify-center bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-base font-bold px-6 py-3.5 rounded-xl transition-all cursor-pointer"
               >
-                <Heart className="w-4 h-4 mr-2 text-rose-500 fill-rose-500" />
-                <span>{language === 'bn' ? 'ডেটিং ও ফ্লার্টিং' : 'Dating & Flirting'}</span>
+                <User className="w-4 h-4 mr-2 text-rose-500" />
+                <span>{language === 'bn' ? 'গেস্ট হিসেবে প্রবেশ' : 'Continue as Guest'}</span>
+              </button>
+              <button
+                onClick={() => navigate('/dating')}
+                className="inline-flex items-center justify-center bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-sm font-bold px-5 py-3.5 rounded-xl transition-all cursor-pointer"
+              >
+                <Heart className="w-4 h-4 mr-1.5 text-rose-500 fill-rose-500" />
+                <span>{language === 'bn' ? 'ডেটিং' : 'Dating'}</span>
               </button>
             </div>
 
@@ -318,50 +363,230 @@ export const LandingPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Right Column: TOP ROOMS Card */}
+          {/* Right Column: Interactive Sign In / Top Rooms Card */}
           <div className="lg:col-span-5">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm p-6 space-y-4">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl p-6 sm:p-7 space-y-5 transition-all">
+              {/* Header Tabs */}
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{t.landing.topRooms}</h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHeroTab('signin')}
+                    className={`text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                      heroTab === 'signin'
+                        ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400'
+                        : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    {hasActiveSession && !user.isGuest
+                      ? (language === 'bn' ? 'সদস্য পরিচিতি' : 'Member Status')
+                      : (language === 'bn' ? 'সাইন ইন' : 'Sign In')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHeroTab('rooms')}
+                    className={`text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                      heroTab === 'rooms'
+                        ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400'
+                        : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    {t.landing.topRooms}
+                  </button>
+                </div>
                 <span className="text-xs font-medium text-slate-400 dark:text-slate-500">{t.landing.active}</span>
               </div>
 
-              <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {topRooms.map((room, idx) => {
-                  const Icon = room.icon as any;
-                  return (
-                    <div
-                      key={idx}
-                      onClick={() => navigate(room.route)}
-                      className="py-3.5 flex items-center justify-between group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 px-2 rounded-lg transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 font-bold text-sm">
-                          {room.flag ? <img src={room.flag} alt={room.name} className="w-6 h-6 rounded-sm" /> : (Icon && <Icon className="w-4 h-4 text-orange-500" />)}
+              {/* Tab 1: Member Sign In or Active Session Hub */}
+              {heroTab === 'signin' && (
+                <>
+                  {hasActiveSession && !user.isGuest ? (
+                    <div className="space-y-4 py-2">
+                      <div className="flex items-center gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700">
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-rose-500 to-orange-400 flex items-center justify-center text-3xl font-bold shadow-md">
+                          {user.avatar || '⚡'}
                         </div>
                         <div>
-                          <div className="font-bold text-slate-900 dark:text-white group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">
-                            {room.name}
+                          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                            {language === 'bn' ? 'স্বাগতম' : 'Signed In As'}
                           </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">{room.subtitle}</div>
+                          <div className="text-lg font-black text-slate-900 dark:text-white leading-tight">
+                            {user.nickname}
+                          </div>
+                          <div className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1 mt-0.5">
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            <span>Registered Member</span>
+                          </div>
                         </div>
                       </div>
-                      <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
-                    </div>
-                  );
-                })}
-              </div>
 
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                <span>{t.landing.countryRooms}</span>
-                <button
-                  onClick={() => navigate('/rooms')}
-                  className="font-bold text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 inline-flex items-center gap-1 cursor-pointer"
-                >
-                  <span>{t.landing.allRooms}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <button
+                          onClick={() => navigate('/dashboard')}
+                          className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white text-xs font-bold transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <User className="w-4 h-4" />
+                          <span>Member Dashboard</span>
+                        </button>
+                        <button
+                          onClick={() => navigate('/messages')}
+                          className="w-full py-3 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition-all border border-slate-200 dark:border-slate-700 cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <MessageSquare className="w-4 h-4 text-violet-500" />
+                          <span>Private DMs</span>
+                        </button>
+                      </div>
+
+                      <div className="text-center pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setHeroTab('rooms')}
+                          className="text-xs text-rose-600 dark:text-rose-400 hover:underline font-semibold cursor-pointer"
+                        >
+                          {language === 'bn' ? 'শীর্ষ রুমগুলো দেখুন →' : 'Explore Top Rooms →'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleHeroLogin} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                          {language === 'bn' ? 'ইমেইল অ্যাড্রেস' : 'Email Address'}
+                        </label>
+                        <div className="relative">
+                          <Mail className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type="email"
+                            required
+                            value={loginEmail}
+                            onChange={(e) => setLoginEmail(e.target.value)}
+                            placeholder="name@example.com"
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-rose-500 font-medium"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                            {language === 'bn' ? 'পাসওয়ার্ড' : 'Password'}
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => navigate('/auth')}
+                            className="text-[11px] text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                          >
+                            {language === 'bn' ? 'পাসওয়ার্ড ভুলে গেছেন?' : 'Forgot password?'}
+                          </button>
+                        </div>
+                        <div className="relative">
+                          <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type={showPassword ? 'text' : 'password'}
+                            required
+                            value={loginPassword}
+                            onChange={(e) => setLoginPassword(e.target.value)}
+                            placeholder="••••••••••••"
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-10 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-rose-500 font-medium"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                            title={showPassword ? 'Hide password' : 'Show password'}
+                          >
+                            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {loginError && (
+                        <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 font-medium animate-in fade-in">
+                          {loginError}
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={loginLoading}
+                        className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white text-sm font-bold shadow-md shadow-rose-600/20 transition-all cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+                      >
+                        <Lock className="w-4 h-4" />
+                        <span>{loginLoading ? (language === 'bn' ? 'যাচাই করা হচ্ছে...' : 'Signing In...') : (language === 'bn' ? 'সাইন ইন করুন' : 'Sign In')}</span>
+                      </button>
+
+                      {/* Quick alternate routes */}
+                      <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2 text-center text-xs">
+                        <div>
+                          <span className="text-slate-500 dark:text-slate-400">
+                            {language === 'bn' ? 'নতুন অ্যাকাউন্ট খুলতে চান? ' : "Don't have an account? "}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => navigate('/register')}
+                            className="font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                          >
+                            {language === 'bn' ? 'অ্যাকাউন্ট তৈরি করুন' : 'Create Free Account'}
+                          </button>
+                        </div>
+
+                        <div className="text-[11px] text-slate-400 pt-1">
+                          <span>{language === 'bn' ? 'অথবা অ্যাকাউন্ট ছাড়াই যোগ দিন: ' : 'Or chat instantly: '}</span>
+                          <button
+                            type="button"
+                            onClick={() => navigate('/guest-entry')}
+                            className="font-bold text-orange-600 dark:text-orange-400 hover:underline cursor-pointer"
+                          >
+                            {language === 'bn' ? 'গেস্ট হিসেবে প্রবেশ করুন' : 'Continue as Guest'}
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  )}
+                </>
+              )}
+
+              {/* Tab 2: Top Rooms List */}
+              {heroTab === 'rooms' && (
+                <div className="space-y-4">
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {topRooms.map((room, idx) => {
+                      const Icon = room.icon as any;
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => navigate(room.route)}
+                          className="py-3.5 flex items-center justify-between group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 px-2 rounded-xl transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 font-bold text-sm">
+                              {room.flag ? <img src={room.flag} alt={room.name} className="w-6 h-6 rounded-sm" /> : (Icon && <Icon className="w-4 h-4 text-orange-500" />)}
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-900 dark:text-white group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">
+                                {room.name}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400">{room.subtitle}</div>
+                            </div>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                    <span>{t.landing.countryRooms}</span>
+                    <button
+                      onClick={() => navigate('/rooms')}
+                      className="font-bold text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>{t.landing.allRooms}</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -207,12 +207,14 @@ export const Navbar: React.FC = () => {
             </button>
 
             {/* User / Profile button */}
+            {/* User / Member Dashboard button */}
             {hasActiveSession && !user.isGuest && (
               <button
-                onClick={() => handleNav('/profile')}
+                onClick={() => handleNav('/dashboard')}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium transition-colors cursor-pointer"
+                title="Member Dashboard"
               >
-                <span className="text-sm select-none" aria-hidden="true">{user.avatar}</span>
+                <span className="text-sm select-none" aria-hidden="true">{user.avatar || '⚡'}</span>
                 <span className="font-bold max-w-[90px] truncate hidden sm:inline text-slate-800 dark:text-slate-200">
                   {user.nickname}
                 </span>
@@ -220,20 +222,29 @@ export const Navbar: React.FC = () => {
               </button>
             )}
             
-            {/* Login / Sign Up buttons */}
+            {/* Login / Register / Guest buttons */}
             {(!hasActiveSession || user.isGuest) && (
               <>
                 <button
-                  onClick={() => handleNav('/auth')}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  onClick={() => handleNav('/guest-entry')}
+                  className="hidden md:inline-flex px-2.5 py-1.5 text-xs font-semibold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  title="Continue as Guest"
                 >
-                  {language === 'bn' ? 'লগইন' : 'Login'}
+                  {language === 'bn' ? 'গেস্ট' : 'Guest'}
                 </button>
                 <button
-                  onClick={() => handleNav('/auth')}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors cursor-pointer"
+                  onClick={() => handleNav('/')}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  title="Sign In"
                 >
-                  {language === 'bn' ? 'সাইন আপ' : 'Sign Up'}
+                  {language === 'bn' ? 'সাইন ইন' : 'Sign In'}
+                </button>
+                <button
+                  onClick={() => handleNav('/register')}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition-colors cursor-pointer shadow-xs"
+                  title="Create Free Account"
+                >
+                  {language === 'bn' ? 'অ্যাকাউন্ট খুলুন' : 'Register'}
                 </button>
               </>
             )}
@@ -286,20 +297,35 @@ export const Navbar: React.FC = () => {
               {item.label}
             </button>
           ))}
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
             <button
-              onClick={() => handleNav('/age-gate')}
+              onClick={() => handleNav('/guest-entry')}
               className="text-xs font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg"
             >
-              18+ Verification Status
+              {language === 'bn' ? 'গেস্ট প্রবেশ' : 'Guest Entry'}
             </button>
-            {!user.isGuest && (
+            {hasActiveSession && !user.isGuest ? (
               <button
-                onClick={() => handleNav('/profile')}
-                className="text-xs font-bold text-orange-600 dark:text-orange-400 px-3 py-1.5 rounded-lg bg-orange-50 dark:bg-orange-950/40"
+                onClick={() => handleNav('/dashboard')}
+                className="text-xs font-bold text-rose-600 dark:text-rose-400 px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/40"
               >
-                Profile & Settings
+                {language === 'bn' ? 'সদস্য ড্যাশবোর্ড' : 'Member Dashboard'}
               </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleNav('/')}
+                  className="text-xs font-bold text-slate-700 dark:text-slate-300 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800"
+                >
+                  {language === 'bn' ? 'সাইন ইন' : 'Sign In'}
+                </button>
+                <button
+                  onClick={() => handleNav('/register')}
+                  className="text-xs font-bold text-white px-3 py-1.5 rounded-lg bg-rose-600"
+                >
+                  {language === 'bn' ? 'রেজিস্টার' : 'Register'}
+                </button>
+              </div>
             )}
           </div>
         </div>

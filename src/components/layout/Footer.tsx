@@ -156,8 +156,22 @@ export const Footer: React.FC = () => {
         </div>
 
         {/* Bottom Bar */}
-        <div className="pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4 text-slate-500 dark:text-slate-400">
-          <div>© 2026 ChatLustora.com. {language === 'bn' ? 'সর্বস্বত্ব সংরক্ষিত।' : 'All rights reserved.'}</div>
+        <div className="pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4 text-slate-500 dark:text-slate-400 text-xs sm:text-sm">
+          <div className="text-center md:text-left flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+            <span>© 2026 ChatLustora.com. {language === 'bn' ? 'সর্বস্বত্ব সংরক্ষিত।' : 'All rights reserved.'}</span>
+            <span className="hidden sm:inline text-slate-300 dark:text-slate-700">·</span>
+            <span>
+              {language === 'bn' ? 'ডিজাইন ও ডেভেলপমেন্টে ' : 'Design and developed by '}
+              <a
+                href="https://avarestsoft.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 underline underline-offset-4 decoration-rose-500/40 hover:decoration-rose-500 transition-colors"
+              >
+                Avarest Soft
+              </a>
+            </span>
+          </div>
           <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300">
             <span className="bg-red-600 text-white font-bold px-1.5 py-0.5 rounded text-[10px]">18+ only</span>
             <span>{language === 'bn' ? 'শুধুমাত্র প্রাপ্তবয়স্কদের জন্য। ১৮ বছরের কম হলে প্রস্থান করুন।' : 'Adults only. Leave now if you are under 18.'}</span>

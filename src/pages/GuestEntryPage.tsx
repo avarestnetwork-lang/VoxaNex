@@ -146,7 +146,7 @@ export const GuestEntryPage: React.FC = () => {
       if (targetRoom) {
         navigate('/chat', { roomId: targetRoom.slug });
       } else {
-        navigate('/profile');
+        navigate('/dashboard');
       }
     } catch (err: any) {
       setLoading(false);

@@ -4,6 +4,8 @@ export type AppRoute =
   | '/'
   | '/age-gate'
   | '/guest-entry'
+  | '/register'
+  | '/dashboard'
   | '/rooms'
   | '/chat'
   | '/messages'
@@ -70,6 +72,8 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
     '/',
     '/age-gate',
     '/guest-entry',
+    '/register',
+    '/dashboard',
     '/rooms',
     '/chat',
     '/messages',
