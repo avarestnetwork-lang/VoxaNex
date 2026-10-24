@@ -46,9 +46,7 @@ export const LandingPage: React.FC = () => {
   const [openFaq, setOpenFaq] = useState<number | null>(0);
 
   // Hero Sign In State
-  const [heroTab, setHeroTab] = useState<'signin' | 'rooms'>(() => {
-    return hasActiveSession && !user.isGuest ? 'rooms' : 'signin';
-  });
+  const [heroTab, setHeroTab] = useState<'rooms' | 'signin'>('rooms');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -80,6 +78,9 @@ export const LandingPage: React.FC = () => {
 
   const topRooms = [
     { name: language === 'bn' ? 'সেক্স চ্যাট' : 'Sex Chat', subtitle: language === 'bn' ? 'সবচেয়ে জনপ্রিয়' : 'Most popular', icon: MessageSquare, route: '/chat/sex' },
+    { name: language === 'bn' ? 'ইউএসএ চ্যাট' : 'USA Chat', subtitle: language === 'bn' ? 'আঞ্চলিক রুম' : 'Regional room', flag: 'https://flagcdn.com/w40/us.png', route: '/chat/usa' },
+    { name: language === 'bn' ? 'কানাডিয়ান চ্যাট' : 'Canadian Chat', subtitle: language === 'bn' ? 'আঞ্চলিক রুম' : 'Regional room', flag: 'https://flagcdn.com/w40/ca.png', route: '/chat/canada' },
+    { name: language === 'bn' ? 'অস্ট্রেলিয়ান চ্যাট' : 'Australian Chat', subtitle: language === 'bn' ? 'আঞ্চলিক রুম' : 'Regional room', flag: 'https://flagcdn.com/w40/au.png', route: '/chat/australia' },
     { name: language === 'bn' ? 'ভারতীয় চ্যাট' : 'Indian Chat', subtitle: language === 'bn' ? 'আঞ্চলিক রুম' : 'Regional room', flag: 'https://flagcdn.com/w40/in.png', route: '/chat/indian' },
     { name: language === 'bn' ? 'বাংলাদেশি চ্যাট' : 'Bangladeshi Chat', subtitle: language === 'bn' ? 'আঞ্চলিক রুম' : 'Regional room', flag: 'https://flagcdn.com/w40/bd.png', route: '/chat/bangladeshi' },
     { name: language === 'bn' ? 'জার্মান চ্যাট' : 'German Chat', subtitle: language === 'bn' ? 'আঞ্চলিক রুম' : 'Regional room', flag: 'https://flagcdn.com/w40/de.png', route: '/chat/german' },
@@ -214,6 +215,7 @@ export const LandingPage: React.FC = () => {
   ];
 
   const regionalRooms = [
+    { name: language === 'bn' ? 'ইউএসএ চ্যাট' : 'USA Chat', code: 'us' },
     { name: language === 'bn' ? 'ভারতীয় চ্যাট' : 'Indian Chat', code: 'in' },
     { name: language === 'bn' ? 'ইউকে চ্যাট' : 'UK Chat', code: 'gb' },
     { name: language === 'bn' ? 'কানাডিয়ান চ্যাট' : 'Canadian Chat', code: 'ca' },
@@ -371,6 +373,17 @@ export const LandingPage: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
+                    onClick={() => setHeroTab('rooms')}
+                    className={`text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                      heroTab === 'rooms'
+                        ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400'
+                        : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    {t.landing.topRooms}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setHeroTab('signin')}
                     className={`text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                       heroTab === 'signin'
@@ -381,17 +394,6 @@ export const LandingPage: React.FC = () => {
                     {hasActiveSession && !user.isGuest
                       ? (language === 'bn' ? 'সদস্য পরিচিতি' : 'Member Status')
                       : (language === 'bn' ? 'সাইন ইন' : 'Sign In')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHeroTab('rooms')}
-                    className={`text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                      heroTab === 'rooms'
-                        ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400'
-                        : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
-                    }`}
-                  >
-                    {t.landing.topRooms}
                   </button>
                 </div>
                 <span className="text-xs font-medium text-slate-400 dark:text-slate-500">{t.landing.active}</span>

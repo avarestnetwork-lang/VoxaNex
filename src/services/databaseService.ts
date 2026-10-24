@@ -7,6 +7,7 @@ const sharedChannels = new Map<string, {
   channel: any; 
   refs: number; 
   listeners: Set<(...args: any[]) => void>;
+  status?: string;
 }>();
 
 export const databaseService = {
@@ -51,14 +52,14 @@ export const databaseService = {
   /**
    * Resolve a roomId (which could be a slug or a UUID) to the authoritative UUID
    */
-  async resolveRoomId(roomId: string): Promise<string> {
+  async resolveRoomId(roomId: string, overrideClient?: any): Promise<string> {
     if (!roomId) return roomId;
     // If it's already a UUID, return as is
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId)) {
       return roomId;
     }
 
-    const supabase = getSupabaseClient();
+    const supabase = overrideClient || getSupabaseClient();
     if (!supabase) return roomId;
 
     try {
@@ -189,15 +190,77 @@ export const databaseService = {
     if (!supabase) return 'no_client';
     try {
       // Resolve ID to authoritative UUID for channel consistency
-      const realId = await this.resolveRoomId(roomId);
+      const realId = await this.resolveRoomId(roomId, overrideClient);
+      const channelName = `room_hub:${realId}`;
       
-      const channel = supabase.channel(`room_hub:${realId}`);
-      const status = await channel.send({
-        type: 'broadcast',
-        event: 'new_message',
-        payload: { ...message, roomId: realId },
+      const entry = sharedChannels.get(channelName);
+      
+      // 1. If an existing channel is already SUBSCRIBED, send immediately
+      if (entry?.channel && entry.status === 'SUBSCRIBED') {
+        const status = await entry.channel.send({
+          type: 'broadcast',
+          event: 'new_message',
+          payload: { ...message, roomId: realId },
+        });
+        return status;
+      }
+
+      // 2. If channel exists but is still establishing subscription, wait for SUBSCRIBED
+      if (entry?.channel) {
+        const ready = await new Promise<boolean>((resolve) => {
+          if (entry.status === 'SUBSCRIBED') return resolve(true);
+          const t = setTimeout(() => resolve(false), 2000);
+          const interval = setInterval(() => {
+            if (entry.status === 'SUBSCRIBED') {
+              clearInterval(interval);
+              clearTimeout(t);
+              resolve(true);
+            }
+          }, 80);
+        });
+        if (ready && entry.channel) {
+          return await entry.channel.send({
+            type: 'broadcast',
+            event: 'new_message',
+            payload: { ...message, roomId: realId },
+          });
+        }
+      }
+
+      // 3. Otherwise, establish a dedicated broadcast channel and wait for SUBSCRIBED status
+      const tempChannel = supabase.channel(channelName, { config: { broadcast: { self: false } } });
+      return await new Promise<string>((resolve) => {
+        let finished = false;
+        const timeout = setTimeout(() => {
+          if (!finished) {
+            finished = true;
+            try { supabase.removeChannel(tempChannel); } catch {}
+            resolve('timed_out');
+          }
+        }, 3500);
+
+        tempChannel.subscribe(async (status: string) => {
+          if (finished) return;
+          if (status === 'SUBSCRIBED') {
+            finished = true;
+            clearTimeout(timeout);
+            try {
+              const resStatus = await tempChannel.send({
+                type: 'broadcast',
+                event: 'new_message',
+                payload: { ...message, roomId: realId },
+              });
+              resolve(resStatus);
+            } catch (err) {
+              resolve('error');
+            }
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            finished = true;
+            clearTimeout(timeout);
+            resolve(status);
+          }
+        });
       });
-      return status;
     } catch (e) {
       console.warn('[VX-RT] Failed to broadcast message:', e);
       return 'error';
@@ -320,12 +383,11 @@ export const databaseService = {
           { event: 'new_message' },
           (payload: any) => {
             const msg = payload?.payload;
-            if (msg && msg.roomId === roomId) {
+            if (msg) {
               console.log(`[VX-RT] [${channelName}] Received broadcast:`, msg.id, msg.content?.slice(0, 20));
               entry!.listeners.forEach(l => l(msg));
             }
           }
-
         )
         .on(
           'postgres_changes',
@@ -333,11 +395,11 @@ export const databaseService = {
             event: 'INSERT',
             schema: 'public',
             table: 'messages',
-            filter: `room_id=eq.${roomId}`,
+            filter: `room_id=eq.${realId}`,
           },
           (payload: any) => {
             const row = payload?.new;
-            if (row && row.room_id === roomId) {
+            if (row) {
               console.log(`[VX-RT] [${channelName}] Received INSERT:`, row.id);
               const msg = {
                 id: row.id,
@@ -351,10 +413,12 @@ export const databaseService = {
               };
               entry!.listeners.forEach(l => l(msg));
             }
-
           }
         )
         .subscribe((status, err) => {
+          if (entry) {
+            entry.status = status;
+          }
           if (status === 'SUBSCRIBED') {
             console.log(`[VX-RT] [${channelName}] Subscription success`);
           } else {

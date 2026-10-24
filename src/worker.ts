@@ -51,6 +51,155 @@ interface GuestSession {
   expiresAt: number;
 }
 
+const DEFAULT_GUEST_SECRET = 'voxanex_default_secure_entropy_salt_2026';
+
+function getGuestSecret(env: any): { secret: string | null; isDevFallback: boolean } {
+  if (env?.GUEST_SESSION_SECRET && typeof env.GUEST_SESSION_SECRET === 'string' && env.GUEST_SESSION_SECRET.trim().length > 0) {
+    return { secret: env.GUEST_SESSION_SECRET.trim(), isDevFallback: false };
+  }
+  // Allow fallback ONLY in explicit local development mode
+  if (env?.ENVIRONMENT === 'development' || env?.DEV === true) {
+    return { secret: DEFAULT_GUEST_SECRET, isDevFallback: true };
+  }
+  // Production MUST fail closed!
+  return { secret: null, isDevFallback: false };
+}
+
+function toBase64Url(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(base64url: string): string {
+  let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4) base64 += '=';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+async function signGuestToken(payload: any, secret: string): Promise<string> {
+  const base64Payload = toBase64Url(JSON.stringify(payload));
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret || DEFAULT_GUEST_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sigBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(base64Payload));
+  const sigBytes = Array.from(new Uint8Array(sigBuffer));
+  const sigHex = sigBytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `vx_gst_${base64Payload}.${sigHex}`;
+}
+
+async function verifyGuestToken(
+  token: string | undefined,
+  secretInfo: { secret: string | null; isDevFallback: boolean }
+): Promise<{ valid: boolean; session?: GuestSession; reason?: string }> {
+  if (!secretInfo.secret) {
+    return { valid: false, reason: 'Server configuration error: GUEST_SESSION_SECRET is missing in production.' };
+  }
+
+  if (!token || !token.startsWith('vx_gst_')) {
+    return { valid: false, reason: 'Malformed token prefix' };
+  }
+
+  // Reject local development tokens in production environments
+  if (token.startsWith('vx_gst_local_') || token.includes('_local_')) {
+    if (secretInfo.isDevFallback) {
+      return {
+        valid: true,
+        session: {
+          id: `guest_local_${Date.now()}`,
+          token,
+          nickname: 'Guest_User',
+          avatar: '⚡',
+          is18Verified: false,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        },
+      };
+    } else {
+      return { valid: false, reason: 'Local simulation tokens are prohibited in production.' };
+    }
+  }
+
+  // Accept active in-memory sessions if present in this isolate
+  if (guestSessions.has(token)) {
+    const s = guestSessions.get(token)!;
+    if (Date.now() <= s.expiresAt) {
+      return { valid: true, session: s };
+    }
+  }
+
+  const raw = token.slice('vx_gst_'.length);
+  const dotIdx = raw.indexOf('.');
+  if (dotIdx === -1) {
+    return { valid: false, reason: 'Invalid token structure' };
+  }
+
+  const base64Payload = raw.slice(0, dotIdx);
+  const signatureHex = raw.slice(dotIdx + 1);
+
+  if (!/^[0-9a-f]{64}$/i.test(signatureHex)) {
+    return { valid: false, reason: 'Malformed signature' };
+  }
+
+  const sigBytes = new Uint8Array(signatureHex.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
+  const encoder = new TextEncoder();
+
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secretInfo.secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify']
+    );
+
+    const valid = await crypto.subtle.verify('HMAC', key, sigBytes, encoder.encode(base64Payload));
+    if (!valid) {
+      return { valid: false, reason: 'Invalid cryptographic signature' };
+    }
+
+    const payloadJson = fromBase64Url(base64Payload);
+    const p = JSON.parse(payloadJson);
+
+    if (p.exp && Date.now() > p.exp) {
+      return { valid: false, reason: 'Guest session expired' };
+    }
+
+    if (p.iat && p.iat > Date.now() + 60000) {
+      return { valid: false, reason: 'Invalid token issuance timestamp in future' };
+    }
+
+    const session: GuestSession = {
+      id: p.sid || p.id,
+      token,
+      nickname: p.nick || p.nickname || 'Guest_User',
+      avatar: p.av || p.avatar || '⚡',
+      gender: p.gen || p.gender,
+      languagePref: p.lng || p.languagePref || 'en',
+      is18Verified: Boolean(p.v18 || p.is18Verified),
+      createdAt: p.iat || p.createdAt || Date.now(),
+      expiresAt: p.exp || p.expiresAt || (Date.now() + 24 * 60 * 60 * 1000),
+    };
+
+    return { valid: true, session };
+  } catch (err: any) {
+    return { valid: false, reason: 'Token verification exception: ' + (err.message || 'Malformed') };
+  }
+}
+
 // Global in-memory maps for Edge instance
 const roomMessages = new Map<string, HubMessage[]>();
 const roomPresence = new Map<string, Map<string, PresenceMember>>();
@@ -154,6 +303,7 @@ export default {
   async fetch(request: Request, env: any, ctx: any): Promise<Response> {
     const url = new URL(request.url);
     const supabaseClient = getSupabaseClientFromEnv(env);
+    const guestSecretInfo = getGuestSecret(env);
 
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
@@ -313,7 +463,7 @@ export default {
         if (env?.SUPABASE_URL && env?.SUPABASE_ANON_KEY) {
           try {
             // Resolve slug to real UUID for database query
-            const realRoomId = await databaseService.resolveRoomId(roomId);
+            const realRoomId = await databaseService.resolveRoomId(roomId, supabaseClient);
             
             const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?room_id=eq.${realRoomId}&order=created_at.desc&limit=${limit}`;
             const headers: Record<string, string> = {
@@ -327,27 +477,28 @@ export default {
             }
 
             const res = await fetch(supabaseUrl, { headers });
-            const data = await res.json();
-            const messages = (Array.isArray(data) ? data : []).reverse().map((m: any) => ({
-              id: m.id,
-              roomId: m.room_id,
-              senderId: m.sender_user_id || m.sender_guest_id || 'anonymous',
-              senderNickname: m.sender_nickname,
-              senderAvatar: m.sender_avatar,
-              content: m.content,
-              timestamp: m.created_at,
-              isSystem: m.is_system || false,
-              status: 'delivered',
-            }));
-            
-            return jsonResponse({ success: true, messages });
+            if (res.ok) {
+              const data = await res.json();
+              const messages = (Array.isArray(data) ? data : []).reverse().map((m: any) => ({
+                id: m.id,
+                roomId: m.room_id,
+                senderId: m.sender_user_id || m.sender_guest_id || 'anonymous',
+                senderNickname: m.sender_nickname,
+                senderAvatar: m.sender_avatar,
+                content: m.content,
+                timestamp: m.created_at,
+                isSystem: m.is_system || false,
+                status: 'delivered',
+              }));
+              
+              return jsonResponse({ success: true, messages });
+            }
           } catch (e) {
-            console.error('Supabase fetch error:', e);
-            return jsonResponse({ success: false, error: 'Database error' }, 500);
+            console.warn('Supabase fetch error, falling back to local isolate messages:', e);
           }
         }
         
-        // Fallback if Supabase not configured
+        // Fallback if Supabase not configured or query returned non-200
         const list = roomMessages.get(roomId) || [];
         const paginated = list.slice(-limit);
         return jsonResponse({ success: true, messages: paginated });
@@ -383,17 +534,16 @@ export default {
 
           if (senderType === 'guest') {
             const guestToken = body?.guestToken;
-            if (!guestToken || !guestSessions.has(guestToken)) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Invalid or missing guest session token.' }, 401);
+            const authCheck = await verifyGuestToken(guestToken, guestSecretInfo);
+            if (!authCheck.valid || !authCheck.session) {
+              return jsonResponse({
+                success: false,
+                error: `Unauthorized: ${authCheck.reason || 'Invalid or missing guest session token.'}`,
+              }, 401);
             }
-            const session = guestSessions.get(guestToken)!;
-            if (Date.now() > session.expiresAt) {
-              guestSessions.delete(guestToken);
-              return jsonResponse({ success: false, error: 'Unauthorized: Guest session has expired.' }, 401);
-            }
-            verifiedSenderId = session.id;
-            verifiedNickname = session.nickname;
-            verifiedAvatar = session.avatar;
+            verifiedSenderId = authCheck.session.id;
+            verifiedNickname = authCheck.session.nickname;
+            verifiedAvatar = authCheck.session.avatar;
           }
 
           const cleanContent = sanitizeContent(content || '');
@@ -435,9 +585,9 @@ export default {
           if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
             try {
               // Resolve slug to real UUID for database persistence
-              const realRoomId = await databaseService.resolveRoomId(roomId);
+              const realRoomId = await databaseService.resolveRoomId(roomId, supabaseClient);
               
-              await fetch(`${env.SUPABASE_URL}/rest/v1/messages`, {
+              const dbRes = await fetch(`${env.SUPABASE_URL}/rest/v1/messages`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -456,9 +606,27 @@ export default {
                   client_nonce: clientNonce,
                 }),
               });
-            } catch (dbErr) {
-              console.warn('Supabase service-role persistence warning:', dbErr);
+
+              if (!dbRes.ok) {
+                const errText = await dbRes.text().catch(() => '');
+                console.error(`[Worker] Supabase message persistence failed HTTP ${dbRes.status}:`, errText);
+                return jsonResponse({
+                  success: false,
+                  error: `Database persistence failed (HTTP ${dbRes.status}). Message was not saved.`
+                }, 500);
+              }
+            } catch (dbErr: any) {
+              console.error('[Worker] Supabase persistence exception:', dbErr);
+              return jsonResponse({
+                success: false,
+                error: 'Database error: Unable to persist message.'
+              }, 500);
             }
+          } else if (!guestSecretInfo.isDevFallback) {
+            return jsonResponse({
+              success: false,
+              error: 'Server configuration error: Database bindings missing in production.'
+            }, 503);
           }
 
           // Broadcast to all active SSE subscribers in this room (Isolate-local)
@@ -615,8 +783,15 @@ export default {
       }
       
       // Validate guest token if provided (server-side auth)
-      if (guestToken && (!guestSessions.has(guestToken) || guestSessions.get(guestToken)?.id !== userId)) {
-        return jsonResponse({ success: false, error: 'Unauthorized: Invalid guest session.' }, 401);
+      if (guestToken) {
+        const authCheck = await verifyGuestToken(guestToken, guestSecretInfo);
+        if (authCheck.valid && authCheck.session) {
+          if (authCheck.session.id !== userId) {
+            return jsonResponse({ success: false, error: 'Unauthorized: Guest token mismatch.' }, 403);
+          }
+        } else if (userId.startsWith('guest_')) {
+          return jsonResponse({ success: false, error: `Unauthorized: ${authCheck.reason || 'Invalid guest session.'}` }, 401);
+        }
       }
       
       if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
@@ -816,14 +991,6 @@ export default {
             }
           }
 
-          // Authorize guest sessions if guest token provided
-          if (guestToken && guestSessions.has(guestToken)) {
-            const gSession = guestSessions.get(guestToken)!;
-            if (gSession.id !== senderId) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Guest token mismatch.' }, 403);
-            }
-          }
-
           const cleanContent = sanitizeContent(content || '');
           const correlationId = `dm_tx_${crypto.randomUUID().slice(0, 8)}`;
           
@@ -832,19 +999,22 @@ export default {
           let verifiedNickname = senderNickname || 'User';
           let verifiedAvatar = senderAvatar || '👤';
 
-          // Authorize guest sessions if guest token provided
-          if (guestToken && guestSessions.has(guestToken)) {
-            const gSession = guestSessions.get(guestToken)!;
-            if (gSession.id !== senderId) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Guest token mismatch.' }, 403);
+          // Authorize guest sessions if guest token provided or sender is a guest
+          if (guestToken) {
+            const authCheck = await verifyGuestToken(guestToken, guestSecretInfo);
+            if (authCheck.valid && authCheck.session) {
+              if (authCheck.session.id !== senderId) {
+                return jsonResponse({ success: false, error: 'Unauthorized: Guest token mismatch.' }, 403);
+              }
+              verifiedSenderType = 'guest';
+              verifiedSenderId = authCheck.session.id;
+              verifiedNickname = authCheck.session.nickname;
+              verifiedAvatar = authCheck.session.avatar;
+            } else if (senderId.startsWith('guest_')) {
+              return jsonResponse({ success: false, error: `Unauthorized: ${authCheck.reason || 'Invalid guest session.'}` }, 401);
             }
-            verifiedSenderType = 'guest';
-            verifiedSenderId = gSession.id;
-            verifiedNickname = gSession.nickname;
-            verifiedAvatar = gSession.avatar;
           } else if (senderId.startsWith('guest_')) {
-              // If it looks like a guest ID but no token was provided/valid
-              return jsonResponse({ success: false, error: 'Unauthorized: Valid guest session required for guest IDs.' }, 401);
+            return jsonResponse({ success: false, error: 'Unauthorized: Valid guest session required for guest IDs.' }, 401);
           }
 
           const message: HubMessage = {
@@ -866,7 +1036,6 @@ export default {
           };
 
           // Persist to Supabase if configured
-          let persistencePromise: Promise<any> = Promise.resolve();
           if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
             try {
               const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages`;
@@ -889,7 +1058,7 @@ export default {
                  }).catch(() => {});
               }
 
-              persistencePromise = fetch(supabaseUrl, {
+              const dbRes = await fetch(supabaseUrl, {
                 method: 'POST',
                 headers: {
                   'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
@@ -908,13 +1077,19 @@ export default {
                   media_type: mediaType,
                   client_nonce: clientNonce,
                 }),
-              }).catch(e => {
-                console.error(`[VX-DM] [${correlationId}] Persistence error:`, e);
-                return null;
               });
-            } catch (dbErr) {
-              console.warn(`[VX-DM] [${correlationId}] Supabase persistence config error:`, dbErr);
+
+              if (!dbRes.ok) {
+                const errText = await dbRes.text().catch(() => '');
+                console.error(`[VX-DM] [${correlationId}] Supabase DM persistence failed HTTP ${dbRes.status}:`, errText);
+                return jsonResponse({ success: false, error: `Database DM persistence failed (HTTP ${dbRes.status}).` }, 500);
+              }
+            } catch (dbErr: any) {
+              console.error(`[VX-DM] [${correlationId}] Supabase persistence error:`, dbErr);
+              return jsonResponse({ success: false, error: 'Database error: Unable to persist direct message.' }, 500);
             }
+          } else if (!guestSecretInfo.isDevFallback) {
+            return jsonResponse({ success: false, error: 'Server configuration error: Database bindings missing in production.' }, 503);
           }
 
 
@@ -956,9 +1131,9 @@ export default {
 
           // Ensure background work finishes even if we return the response
           if (ctx?.waitUntil) {
-              ctx.waitUntil(Promise.all([persistencePromise, broadcastPromise]));
+              ctx.waitUntil(broadcastPromise);
           } else {
-              await Promise.all([persistencePromise, broadcastPromise]);
+              await broadcastPromise;
           }
 
           return jsonResponse({ success: true, message, correlationId, serverDiag: rtDiag });
@@ -1050,17 +1225,39 @@ export default {
         const body: any = await request.json();
         const { nickname, avatar, gender, languagePref, is18Verified } = body || {};
 
-        const token = `vx_gst_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+        const sessionId = `guest_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const issuedAt = Date.now();
+        const expiresAt = issuedAt + 24 * 60 * 60 * 1000;
+
+        const payload = {
+          sid: sessionId,
+          nick: (nickname || 'Guest_User').slice(0, 24),
+          av: avatar || '⚡',
+          gen: gender || 'prefer_not_to_say',
+          lng: languagePref || 'en',
+          v18: Boolean(is18Verified),
+          iat: issuedAt,
+          exp: expiresAt,
+        };
+
+        if (!guestSecretInfo.secret) {
+          return jsonResponse({
+            success: false,
+            error: 'Guest session creation failed: Missing GUEST_SESSION_SECRET configuration in production environment.',
+          }, 500);
+        }
+
+        const token = await signGuestToken(payload, guestSecretInfo.secret);
         const session: GuestSession = {
-          id: `guest_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          id: sessionId,
           token,
-          nickname: nickname || 'Guest_User',
-          avatar: avatar || '⚡',
-          gender,
-          languagePref: languagePref || 'en',
-          is18Verified: Boolean(is18Verified),
-          createdAt: Date.now(),
-          expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+          nickname: payload.nick,
+          avatar: payload.av,
+          gender: payload.gen,
+          languagePref: payload.lng,
+          is18Verified: payload.v18,
+          createdAt: issuedAt,
+          expiresAt: expiresAt,
         };
 
         guestSessions.set(token, session);
@@ -1073,11 +1270,14 @@ export default {
 
     if (url.pathname === '/api/guest/validate') {
       const token = url.searchParams.get('token') || (request.method === 'POST' ? ((await request.json().catch(() => ({}))) as any)?.token : null);
-      if (token && guestSessions.has(token)) {
-        const session = guestSessions.get(token)!;
-        return jsonResponse({ success: true, valid: true, session });
+      if (token) {
+        const authCheck = await verifyGuestToken(token, guestSecretInfo);
+        if (authCheck.valid && authCheck.session) {
+          return jsonResponse({ success: true, valid: true, session: authCheck.session });
+        }
+        return jsonResponse({ success: false, valid: false, error: authCheck.reason || 'Invalid guest token' }, 401);
       }
-      return jsonResponse({ success: true, valid: true });
+      return jsonResponse({ success: false, valid: false, error: 'Token is required' }, 400);
     }
 
     if (url.pathname === '/api/guest/revoke' && request.method === 'POST') {

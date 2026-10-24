@@ -127,49 +127,21 @@ export const messagingService = {
           const data = await res.json();
           if (data.success && data.message) {
             confirmedMessage = data.message;
+          } else {
+            return { success: false, error: data.error || 'Message was not accepted' };
           }
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        const errorMsg = errData?.error || `Server rejected message (HTTP ${res.status})`;
+        return { success: false, error: errorMsg };
       }
 
-      // If server route didn't return a confirmed message, construct local confirmed message
       if (!confirmedMessage) {
-        confirmedMessage = {
-          id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          roomId,
-          senderId: options.senderId,
-          senderNickname: options.senderNickname,
-          senderAvatar: options.senderAvatar,
-          content: options.content,
-          mediaUrl: options.mediaUrl,
-          mediaType: options.mediaType,
-          linkPreview: options.linkPreview,
-          clientNonce,
-          timestamp: new Date().toISOString(),
-          status: 'delivered',
-        };
+        return { success: false, error: 'Server did not return a confirmed message.' };
       }
 
-      // 2. Secondary delivery: Supabase Realtime broadcast & persistence
-      if (isSupabaseConfigured()) {
-        try {
-          databaseService.sendRoomMessage({
-            roomId,
-            id: confirmedMessage.id,
-            senderUserId: options.senderType === 'registered' ? options.senderId : undefined,
-            senderGuestId: options.senderType === 'guest' ? options.senderId : undefined,
-            senderNickname: options.senderNickname,
-            senderAvatar: options.senderAvatar,
-            content: options.content,
-            mediaUrl: options.mediaUrl,
-            mediaType: options.mediaType,
-            clientNonce,
-          });
-        } catch (e) {
-          console.warn('[Messaging] Supabase broadcast fallback warning:', e);
-        }
-      }
-
-      // 3. Cross-tab delivery in the same browser
+      // 2. Cross-tab delivery in the same browser
       try {
         if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
           const bc = new BroadcastChannel(`vx_tab_chat_${roomId}`);

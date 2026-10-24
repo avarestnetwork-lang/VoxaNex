@@ -38,6 +38,7 @@ import { IndianChatLandingPage } from './pages/IndianChatLandingPage';
 import { BanglaChatLandingPage } from './pages/BanglaChatLandingPage';
 import { RoomLandingPage } from './pages/RoomLandingPage';
 import { DatingLandingPage } from './pages/DatingLandingPage';
+import { ShopPage } from './pages/ShopPage';
 
 const AppRoutes: React.FC = () => {
   const { currentRoute, params } = useRouter();
@@ -80,6 +81,7 @@ const AppRoutes: React.FC = () => {
       case '/random':
         return <RandomMatchingPage />;
       case '/av-chat':
+      case '/chat/video':
         return <VoiceWebcamPage />;
       case '/auth':
         return <AuthPage />;
@@ -117,6 +119,8 @@ const AppRoutes: React.FC = () => {
         return <IndianChatLandingPage />;
       case '/dating':
         return <DatingLandingPage />;
+      case '/shop':
+        return <ShopPage />;
       default:
         return <LandingPage />;
     }

@@ -27,7 +27,9 @@ export type AppRoute =
   | '/sitemap'
   | '/chat/indian'
   | '/chat/bangla'
-  | '/dating';
+  | '/chat/video'
+  | '/dating'
+  | '/shop';
 
 interface RouterContextType {
   currentRoute: AppRoute;
@@ -51,6 +53,9 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
     }
     if (path === '/chat/bangla') {
       return { route: '/chat/bangla', params: {} };
+    }
+    if (path === '/chat/video') {
+      return { route: '/chat/video', params: {} };
     }
     const roomId = path.replace('/chat/', '');
     return { route: '/chat', params: { roomId } };
@@ -95,7 +100,9 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
     '/sitemap',
     '/chat/indian',
     '/chat/bangla',
+    '/chat/video',
     '/dating',
+    '/shop',
   ];
 
   if (validRoutes.includes(path as AppRoute)) {
