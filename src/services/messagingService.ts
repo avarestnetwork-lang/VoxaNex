@@ -394,7 +394,12 @@ export const messagingService = {
     userId: string
   ): Promise<{ success: boolean; messages: ChatMessage[]; error?: string }> {
     try {
-      const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/messages?userId=${encodeURIComponent(userId)}`);
+      const guestToken = guestSessionService.getStoredToken();
+      let url = `${API_BASE}/api/chat/conversations/${convId}/messages?userId=${encodeURIComponent(userId)}`;
+      if (guestToken) {
+        url += `&guestToken=${encodeURIComponent(guestToken)}`;
+      }
+      const res = await fetch(url);
       const data = await res.json();
       return { success: true, messages: data.messages || [] };
     } catch {

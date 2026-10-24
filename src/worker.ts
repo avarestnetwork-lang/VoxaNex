@@ -1033,10 +1033,20 @@ export default {
           }
 
           // Authorize: Verify that verifiedSenderId is a participant in this conversation
+          let resolvedRecipientId = recipientId;
+          if (!resolvedRecipientId && convId.startsWith('conv_')) {
+            const parts = convId.replace(/^conv_/, '').split('_');
+            resolvedRecipientId = parts.find(p => p !== verifiedSenderId);
+          }
+
+          if (!resolvedRecipientId) {
+            return jsonResponse({ success: false, error: 'Unauthorized: Recipient identity could not be verified.' }, 400);
+          }
+
           if (convId.startsWith('conv_')) {
             const idWithoutPrefix = convId.replace(/^conv_/, '');
             const isMember =
-              (recipientId && convId === `conv_${[verifiedSenderId, recipientId].sort().join('_')}`) ||
+              (resolvedRecipientId && convId === `conv_${[verifiedSenderId, resolvedRecipientId].sort().join('_')}`) ||
               idWithoutPrefix === verifiedSenderId ||
               idWithoutPrefix.startsWith(verifiedSenderId + '_') ||
               idWithoutPrefix.endsWith('_' + verifiedSenderId) ||
@@ -1078,7 +1088,7 @@ export default {
               // Resolve deterministic conversation UUID if needed
               let dbConvId = convId;
               if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
-                 dbConvId = await databaseService.getDeterministicConvId(verifiedSenderId, recipientId);
+                 dbConvId = await databaseService.getDeterministicConvId(verifiedSenderId, resolvedRecipientId);
                  // Ensure the conversation record exists in DB to satisfy foreign key
                  await fetch(`${baseSupabaseUrl}/rest/v1/conversations`, {
                    method: 'POST',
