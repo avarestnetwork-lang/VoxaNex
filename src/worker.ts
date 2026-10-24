@@ -206,11 +206,11 @@ const roomPresence = new Map<string, Map<string, PresenceMember>>();
 const roomTyping = new Map<string, Map<string, { nickname: string; expiresAt: number }>>();
 const guestSessions = new Map<string, GuestSession>();
 
-// Active SSE client streams per room & conversation
-const roomStreams = new Map<string, Set<WritableStreamDefaultWriter<Uint8Array>>>();
+// Active SSE client streams per room & conversation (using ReadableStreamDefaultController for synchronous non-promise enqueuing)
+const roomStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
 const conversationMessages = new Map<string, HubMessage[]>();
-const conversationStreams = new Map<string, Set<WritableStreamDefaultWriter<Uint8Array>>>();
-const userDMStreams = new Map<string, Set<WritableStreamDefaultWriter<Uint8Array>>>();
+const conversationStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
+const userDMStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
 const conversationTyping = new Map<string, Map<string, { nickname: string; expiresAt: number }>>();
 const conversationReadState = new Map<string, Map<string, { readUntilId: string; readAt: string }>>();
 
@@ -232,58 +232,52 @@ function jsonResponse(data: unknown, status = 200, extraHeaders: Record<string, 
 }
 
 function broadcastToRoom(roomId: string, eventName: string, data: unknown) {
-  const writers = roomStreams.get(roomId);
-  if (!writers || writers.size === 0) return;
+  const controllers = roomStreams.get(roomId);
+  if (!controllers || controllers.size === 0) return;
 
   const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
   const encoder = new TextEncoder();
   const encoded = encoder.encode(payload);
 
-  for (const writer of writers) {
+  for (const controller of Array.from(controllers)) {
     try {
-      writer.write(encoded).catch(() => {
-        writers.delete(writer);
-      });
+      controller.enqueue(encoded);
     } catch {
-      writers.delete(writer);
+      controllers.delete(controller);
     }
   }
 }
 
 function broadcastToConversation(convId: string, eventName: string, data: unknown) {
-  const writers = conversationStreams.get(convId);
-  if (!writers || writers.size === 0) return;
+  const controllers = conversationStreams.get(convId);
+  if (!controllers || controllers.size === 0) return;
 
   const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
   const encoder = new TextEncoder();
   const encoded = encoder.encode(payload);
 
-  for (const writer of writers) {
+  for (const controller of Array.from(controllers)) {
     try {
-      writer.write(encoded).catch(() => {
-        writers.delete(writer);
-      });
+      controller.enqueue(encoded);
     } catch {
-      writers.delete(writer);
+      controllers.delete(controller);
     }
   }
 }
 
 function broadcastToUser(userId: string, eventName: string, data: unknown) {
-  const writers = userDMStreams.get(userId);
-  if (!writers || writers.size === 0) return;
+  const controllers = userDMStreams.get(userId);
+  if (!controllers || controllers.size === 0) return;
 
   const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
   const encoder = new TextEncoder();
   const encoded = encoder.encode(payload);
 
-  for (const writer of writers) {
+  for (const controller of Array.from(controllers)) {
     try {
-      writer.write(encoded).catch(() => {
-        writers.delete(writer);
-      });
+      controller.enqueue(encoded);
     } catch {
-      writers.delete(writer);
+      controllers.delete(controller);
     }
   }
 }
@@ -304,6 +298,11 @@ export default {
     const url = new URL(request.url);
     const supabaseClient = getSupabaseClientFromEnv(env);
     const guestSecretInfo = getGuestSecret(env);
+
+    // Resolve Supabase environment variable binding aliases safely (SUPABASE_* or VITE_SUPABASE_*)
+    const supabaseUrl = env?.SUPABASE_URL || env?.VITE_SUPABASE_URL || '';
+    const supabaseAnonKey = env?.SUPABASE_ANON_KEY || env?.VITE_SUPABASE_ANON_KEY || '';
+    const supabaseServiceKey = env?.SUPABASE_SERVICE_ROLE_KEY || '';
 
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
@@ -347,41 +346,50 @@ export default {
     }
 
     // -------------------------------------------------------------------------
-    // 1. SSE LIVE EVENT STREAM: /api/chat/rooms/:roomId/events
+    // 1. SSE LIVE EVENT STREAM: USER DM EVENTS
     // -------------------------------------------------------------------------
     const userSseMatch = url.pathname.match(/^\/api\/chat\/user\/([^/]+)\/events\/?$/);
     if (userSseMatch && request.method === 'GET') {
       const userId = decodeURIComponent(userSseMatch[1]);
-      const { readable, writable } = new TransformStream();
-      const writer = writable.getWriter();
-      const encoder = new TextEncoder();
+      let intervalId: any = null;
 
-      if (!userDMStreams.has(userId)) {
-        userDMStreams.set(userId, new Set());
-      }
-      const writers = userDMStreams.get(userId)!;
-      writers.add(writer);
+      const readable = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (!userDMStreams.has(userId)) {
+            userDMStreams.set(userId, new Set());
+          }
+          const controllers = userDMStreams.get(userId)!;
+          controllers.add(controller);
 
-      writer.write(encoder.encode(`event: connected\ndata: {"status":"connected","userId":"${userId}"}\n\n`));
+          const encoder = new TextEncoder();
+          try {
+            controller.enqueue(encoder.encode(`event: connected\ndata: {"status":"connected","userId":"${userId}"}\n\n`));
+          } catch {
+            controllers.delete(controller);
+          }
 
-      const intervalId = setInterval(() => {
-        try {
-          writer.write(encoder.encode(`: ping ${Date.now()}\n\n`)).catch(() => {
-            clearInterval(intervalId);
-            writers.delete(writer);
-          });
-        } catch {
-          clearInterval(intervalId);
-          writers.delete(writer);
-        }
-      }, 15000);
-
-      request.signal?.addEventListener('abort', () => {
-        clearInterval(intervalId);
-        writers.delete(writer);
-        try {
-          writer.close();
-        } catch {}
+          intervalId = setInterval(() => {
+            try {
+              controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
+            } catch {
+              if (intervalId) clearInterval(intervalId);
+              controllers.delete(controller);
+            }
+          }, 15000);
+        },
+        cancel() {
+          if (intervalId) clearInterval(intervalId);
+          const controllers = userDMStreams.get(userId);
+          if (controllers) {
+            for (const c of Array.from(controllers)) {
+              try {
+                c.desiredSize;
+              } catch {
+                controllers.delete(c);
+              }
+            }
+          }
+        },
       });
 
       return new Response(readable, {
@@ -395,46 +403,51 @@ export default {
       });
     }
 
+    // -------------------------------------------------------------------------
+    // 1B. SSE LIVE EVENT STREAM: ROOM EVENTS
+    // -------------------------------------------------------------------------
     const sseMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)\/events\/?$/);
-    console.log(`[Worker] Incoming request: ${request.method} ${url.pathname}, matched SSE: ${!!sseMatch}`);
     if (sseMatch && request.method === 'GET') {
       const roomId = decodeURIComponent(sseMatch[1]);
+      let intervalId: any = null;
 
-      const { readable, writable } = new TransformStream();
-      const writer = writable.getWriter();
-      const encoder = new TextEncoder();
+      const readable = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (!roomStreams.has(roomId)) {
+            roomStreams.set(roomId, new Set());
+          }
+          const controllers = roomStreams.get(roomId)!;
+          controllers.add(controller);
 
-      if (!roomStreams.has(roomId)) {
-        roomStreams.set(roomId, new Set());
-      }
-      const writers = roomStreams.get(roomId)!;
-      writers.add(writer);
+          const encoder = new TextEncoder();
+          try {
+            controller.enqueue(encoder.encode(`event: connected\ndata: {"status":"connected","roomId":"${roomId}"}\n\n`));
+          } catch {
+            controllers.delete(controller);
+          }
 
-      // Send initial connection acknowledgement event immediately
-      writer.write(encoder.encode(`event: connected\ndata: {"status":"connected","roomId":"${roomId}"}\n\n`));
-
-      // Periodic ping heartbeat to prevent Cloudflare stream termination
-      const intervalId = setInterval(() => {
-        try {
-          writer.write(encoder.encode(`: ping ${Date.now()}\n\n`)).catch(() => {
-            clearInterval(intervalId);
-            writers.delete(writer);
-          });
-        } catch {
-          clearInterval(intervalId);
-          writers.delete(writer);
-        }
-      }, 15000);
-
-      // Clean up when stream closes
-      request.signal?.addEventListener('abort', () => {
-        clearInterval(intervalId);
-        writers.delete(writer);
-        try {
-          writer.close();
-        } catch {
-          // ignore
-        }
+          intervalId = setInterval(() => {
+            try {
+              controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
+            } catch {
+              if (intervalId) clearInterval(intervalId);
+              controllers.delete(controller);
+            }
+          }, 15000);
+        },
+        cancel() {
+          if (intervalId) clearInterval(intervalId);
+          const controllers = roomStreams.get(roomId);
+          if (controllers) {
+            for (const c of Array.from(controllers)) {
+              try {
+                c.desiredSize;
+              } catch {
+                controllers.delete(c);
+              }
+            }
+          }
+        },
       });
 
       return new Response(readable, {
@@ -460,23 +473,23 @@ export default {
         const limitParam = parseInt(url.searchParams.get('limit') || '50', 10);
         const limit = Math.min(Math.max(limitParam, 1), 100);
 
-        if (env?.SUPABASE_URL && env?.SUPABASE_ANON_KEY) {
+        if (supabaseUrl && supabaseAnonKey) {
           try {
             // Resolve slug to real UUID for database query
             const realRoomId = await databaseService.resolveRoomId(roomId, supabaseClient);
             
-            const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?room_id=eq.${realRoomId}&order=created_at.desc&limit=${limit}`;
+            const restUrl = `${supabaseUrl}/rest/v1/messages?room_id=eq.${realRoomId}&order=created_at.desc&limit=${limit}`;
             const headers: Record<string, string> = {
-              'apikey': env.SUPABASE_ANON_KEY,
+              'apikey': supabaseAnonKey,
             };
             // Pass user's JWT for RLS enforcement
             if (request.headers.has('Authorization')) {
               headers['Authorization'] = request.headers.get('Authorization')!;
             } else {
-              headers['Authorization'] = `Bearer ${env.SUPABASE_ANON_KEY}`;
+              headers['Authorization'] = `Bearer ${supabaseAnonKey}`;
             }
 
-            const res = await fetch(supabaseUrl, { headers });
+            const res = await fetch(restUrl, { headers });
             if (res.ok) {
               const data = await res.json();
               const messages = (Array.isArray(data) ? data : []).reverse().map((m: any) => ({
@@ -582,17 +595,17 @@ export default {
           }
 
           // Secure server-side Supabase persistence using service-role key if configured
-          if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
+          if (supabaseUrl && supabaseServiceKey) {
             try {
               // Resolve slug to real UUID for database persistence
               const realRoomId = await databaseService.resolveRoomId(roomId, supabaseClient);
               
-              const dbRes = await fetch(`${env.SUPABASE_URL}/rest/v1/messages`, {
+              const dbRes = await fetch(`${supabaseUrl}/rest/v1/messages`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-                  'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+                  'apikey': supabaseServiceKey,
+                  'Authorization': `Bearer ${supabaseServiceKey}`,
                   'Prefer': 'return=minimal',
                 },
                 body: JSON.stringify({
@@ -794,13 +807,13 @@ export default {
         }
       }
       
-      if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
+      if (supabaseUrl && supabaseServiceKey) {
         try {
-          const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/conversation_participants?user_id=eq.${userId}&select=conversation_id`;
-          const res = await fetch(supabaseUrl, {
+          const restUrl = `${supabaseUrl}/rest/v1/conversation_participants?user_id=eq.${userId}&select=conversation_id`;
+          const res = await fetch(restUrl, {
             headers: {
-              'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-              'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
+              'apikey': supabaseServiceKey,
+              'Authorization': `Bearer ${supabaseServiceKey}`
             }
           });
           const data = await res.json();
@@ -844,38 +857,45 @@ export default {
     const convEventsMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/events\/?$/);
     if (convEventsMatch && request.method === 'GET') {
       const convId = decodeURIComponent(convEventsMatch[1]);
-      const { readable, writable } = new TransformStream();
-      const writer = writable.getWriter();
-      const encoder = new TextEncoder();
+      let intervalId: any = null;
 
-      if (!conversationStreams.has(convId)) {
-        conversationStreams.set(convId, new Set());
-      }
-      const writers = conversationStreams.get(convId)!;
-      writers.add(writer);
+      const readable = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (!conversationStreams.has(convId)) {
+            conversationStreams.set(convId, new Set());
+          }
+          const controllers = conversationStreams.get(convId)!;
+          controllers.add(controller);
 
-      writer.write(encoder.encode(`event: connected\ndata: {"status":"connected","convId":"${convId}"}\n\n`));
+          const encoder = new TextEncoder();
+          try {
+            controller.enqueue(encoder.encode(`event: connected\ndata: {"status":"connected","convId":"${convId}"}\n\n`));
+          } catch {
+            controllers.delete(controller);
+          }
 
-      const intervalId = setInterval(() => {
-        try {
-          writer.write(encoder.encode(`: ping ${Date.now()}\n\n`)).catch(() => {
-            clearInterval(intervalId);
-            writers.delete(writer);
-          });
-        } catch {
-          clearInterval(intervalId);
-          writers.delete(writer);
-        }
-      }, 15000);
-
-      request.signal?.addEventListener('abort', () => {
-        clearInterval(intervalId);
-        writers.delete(writer);
-        try {
-          writer.close();
-        } catch {
-          // ignore
-        }
+          intervalId = setInterval(() => {
+            try {
+              controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
+            } catch {
+              if (intervalId) clearInterval(intervalId);
+              controllers.delete(controller);
+            }
+          }, 15000);
+        },
+        cancel() {
+          if (intervalId) clearInterval(intervalId);
+          const controllers = conversationStreams.get(convId);
+          if (controllers) {
+            for (const c of Array.from(controllers)) {
+              try {
+                c.desiredSize;
+              } catch {
+                controllers.delete(c);
+              }
+            }
+          }
+        },
       });
 
       return new Response(readable, {
@@ -907,13 +927,11 @@ export default {
           }
         }
 
-        if (env?.SUPABASE_URL && env?.SUPABASE_ANON_KEY) {
+        if (supabaseUrl && supabaseAnonKey) {
           try {
             // Resolve conversation identity
             let dbConvId = convId;
             if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
-                // We don't have the partnerId here easily from the URL, 
-                // but we can try to derive it if reqUserId is present
                 if (reqUserId) {
                    const parts = convId.replace('conv_', '').split('_');
                    const partnerId = parts.find(p => p !== reqUserId);
@@ -923,18 +941,17 @@ export default {
                 }
             }
 
-            const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages?conversation_id=eq.${dbConvId}&order=created_at.asc`;
+            const restUrl = `${supabaseUrl}/rest/v1/messages?conversation_id=eq.${dbConvId}&order=created_at.asc`;
             const headers: Record<string, string> = {
-              'apikey': env.SUPABASE_ANON_KEY,
+              'apikey': supabaseAnonKey,
             };
-            // Pass user's JWT for RLS enforcement
             if (request.headers.has('Authorization')) {
               headers['Authorization'] = request.headers.get('Authorization')!;
             } else {
-              headers['Authorization'] = `Bearer ${env.SUPABASE_ANON_KEY}`;
+              headers['Authorization'] = `Bearer ${supabaseAnonKey}`;
             }
 
-            const res = await fetch(supabaseUrl, { headers });
+            const res = await fetch(restUrl, { headers });
             const data = await res.json();
             const messages = (Array.isArray(data) ? data : []).map((m: any) => ({
               id: m.id,
@@ -1036,9 +1053,9 @@ export default {
           };
 
           // Persist to Supabase if configured
-          if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
+          if (supabaseUrl && supabaseServiceKey) {
             try {
-              const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/messages`;
+              const restUrl = `${supabaseUrl}/rest/v1/messages`;
               const isSenderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(verifiedSenderId);
               
               // Resolve deterministic conversation UUID if needed
@@ -1046,11 +1063,11 @@ export default {
               if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
                  dbConvId = await databaseService.getDeterministicConvId(verifiedSenderId, recipientId);
                  // Ensure the conversation record exists in DB to satisfy foreign key
-                 await fetch(`${env.SUPABASE_URL}/rest/v1/conversations`, {
+                 await fetch(`${supabaseUrl}/rest/v1/conversations`, {
                    method: 'POST',
                    headers: {
-                     'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-                     'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+                     'apikey': supabaseServiceKey,
+                     'Authorization': `Bearer ${supabaseServiceKey}`,
                      'Content-Type': 'application/json',
                      'Prefer': 'resolution=merge-duplicates'
                    },
@@ -1058,11 +1075,11 @@ export default {
                  }).catch(() => {});
               }
 
-              const dbRes = await fetch(supabaseUrl, {
+              const dbRes = await fetch(restUrl, {
                 method: 'POST',
                 headers: {
-                  'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-                  'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+                  'apikey': supabaseServiceKey,
+                  'Authorization': `Bearer ${supabaseServiceKey}`,
                   'Content-Type': 'application/json',
                   'Prefer': 'return=minimal',
                 },
