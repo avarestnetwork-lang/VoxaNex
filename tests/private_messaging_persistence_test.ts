@@ -97,6 +97,77 @@ async function createGuest(nickname: string) {
 }
 
 async function run() {
+  const originalGuestSecret = env.GUEST_SESSION_SECRET;
+  const diagnosticLogs: any[] = [];
+  const originalConsoleError = console.error;
+  try {
+    console.error = (...args: any[]) => {
+      if (args[0] === '[VX-GUEST] Guest session secret binding diagnostic') diagnosticLogs.push(args[1]);
+      else originalConsoleError(...args);
+    };
+
+    delete (env as any).GUEST_SESSION_SECRET;
+    const missingSecret = await call('/api/guest/session', 'POST', { nickname: 'Guest Missing' });
+    assert(missingSecret.status === 500, 'guest session creation fails closed when no signing secret binding exists');
+    assert(
+      diagnosticLogs[0]?.guestSessionSecretBindingPresent === false &&
+      diagnosticLogs[0]?.guestSessionSecretNonEmptyString === false &&
+      diagnosticLogs[0]?.viteGuestSessionSecretBindingPresent === false &&
+      diagnosticLogs[0]?.viteGuestSessionSecretNonEmptyString === false,
+      'missing-secret diagnostics report only binding-presence booleans',
+    );
+
+    env.GUEST_SESSION_SECRET = '';
+    const emptySecret = await call('/api/guest/session', 'POST', { nickname: 'Guest Empty' });
+    assert(emptySecret.status === 500, 'guest session creation fails closed for an empty signing secret binding');
+    assert(
+      diagnosticLogs[1]?.guestSessionSecretBindingPresent === true &&
+      diagnosticLogs[1]?.guestSessionSecretNonEmptyString === false,
+      'empty-secret diagnostics distinguish a present empty binding',
+    );
+  } finally {
+    env.GUEST_SESSION_SECRET = originalGuestSecret;
+    console.error = originalConsoleError;
+  }
+
+  const originalSupabaseUrl = env.SUPABASE_URL;
+  const originalServiceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  const storageDiagnosticLogs: any[] = [];
+  try {
+    console.error = (...args: any[]) => {
+      if (args[0] === '[VX-GUEST] Guest session storage binding diagnostic') storageDiagnosticLogs.push(args[1]);
+      else originalConsoleError(...args);
+    };
+
+    env.SUPABASE_URL = '';
+    const missingUrl = await call('/api/guest/session', 'POST', { nickname: 'Guest Missing URL' });
+    const missingUrlBody = await missingUrl.json() as any;
+    assert(missingUrl.status === 503 && missingUrlBody.error === 'Guest session storage is not configured.', 'guest session storage fails closed when the runtime Supabase URL is missing');
+    assert(
+      storageDiagnosticLogs[0]?.hasGuestSessionSecret === true &&
+      storageDiagnosticLogs[0]?.hasSupabaseUrl === false &&
+      storageDiagnosticLogs[0]?.hasServiceRoleKey === true &&
+      storageDiagnosticLogs[0]?.isDevFallback === false &&
+      storageDiagnosticLogs[0]?.requestPath === '/api/guest/session' &&
+      !JSON.stringify(storageDiagnosticLogs[0]).includes('test-only-session-secret'),
+      'missing-URL diagnostic contains safe presence booleans and request path only',
+    );
+
+    env.SUPABASE_URL = originalSupabaseUrl;
+    delete (env as any).SUPABASE_SERVICE_ROLE_KEY;
+    const missingServiceKey = await call('/api/guest/session', 'POST', { nickname: 'Guest Missing Key' });
+    assert(missingServiceKey.status === 503, 'guest session storage fails closed when the runtime service-role key is missing');
+    assert(
+      storageDiagnosticLogs[1]?.hasSupabaseUrl === true &&
+      storageDiagnosticLogs[1]?.hasServiceRoleKey === false,
+      'missing-service-key diagnostic reports only runtime binding presence',
+    );
+  } finally {
+    env.SUPABASE_URL = originalSupabaseUrl;
+    env.SUPABASE_SERVICE_ROLE_KEY = originalServiceRoleKey;
+    console.error = originalConsoleError;
+  }
+
   const guestA = await createGuest('Guest A');
   const guestB = await createGuest('Guest B');
   const guestC = await createGuest('Guest C');

@@ -66,6 +66,17 @@ function getGuestSecret(env: any): { secret: string | null; isDevFallback: boole
   return { secret: null, isDevFallback: false };
 }
 
+function getGuestSecretBindingDiagnostics(env: any) {
+  const primary = env?.GUEST_SESSION_SECRET;
+  const fallback = env?.VITE_GUEST_SESSION_SECRET;
+  return {
+    guestSessionSecretBindingPresent: primary !== undefined && primary !== null,
+    guestSessionSecretNonEmptyString: typeof primary === 'string' && primary.trim().length > 0,
+    viteGuestSessionSecretBindingPresent: fallback !== undefined && fallback !== null,
+    viteGuestSessionSecretNonEmptyString: typeof fallback === 'string' && fallback.trim().length > 0,
+  };
+}
+
 function toBase64Url(str: string): string {
   const bytes = new TextEncoder().encode(str);
   let binary = '';
@@ -1375,6 +1386,7 @@ export default {
         };
 
         if (!guestSecretInfo.secret) {
+          console.error('[VX-GUEST] Guest session secret binding diagnostic', getGuestSecretBindingDiagnostics(env));
           return jsonResponse({
             success: false,
             error: 'Guest session creation failed: Missing GUEST_SESSION_SECRET configuration in production environment.',
@@ -1419,6 +1431,18 @@ export default {
             return jsonResponse({ success: false, error: 'Guest session could not be initialized. Please retry.' }, 503);
           }
         } else if (!guestSecretInfo.isDevFallback) {
+          const environment = env?.ENVIRONMENT;
+          const safeEnvironment = typeof environment === 'string' && /^(development|staging|production|preview)$/i.test(environment.trim())
+            ? environment.trim().toLowerCase()
+            : 'unset-or-unrecognized';
+          console.error('[VX-GUEST] Guest session storage binding diagnostic', {
+            hasGuestSessionSecret: Boolean(guestSecretInfo.secret),
+            hasSupabaseUrl: typeof baseUrl === 'string' && baseUrl.trim().length > 0,
+            hasServiceRoleKey: typeof serviceKey === 'string' && serviceKey.trim().length > 0,
+            isDevFallback: guestSecretInfo.isDevFallback,
+            requestPath: url.pathname,
+            deploymentEnvironment: safeEnvironment,
+          });
           return jsonResponse({ success: false, error: 'Guest session storage is not configured.' }, 503);
         }
 
