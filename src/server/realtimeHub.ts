@@ -47,6 +47,12 @@ export interface PresenceMember {
 
 // In-memory data stores
 const roomMessages = new Map<string, HubMessage[]>();
+/**
+ * In-memory fallback conversation message store.
+ * NON-DURABLE & ISOLATE-LOCAL: Intended for local development/testing or offline fallback.
+ * Authoritative durable storage is handled by Supabase PostgreSQL.
+ * Bounded to 500 messages per conversation (FIFO eviction) to prevent memory leaks.
+ */
 const conversationMessages = new Map<string, HubMessage[]>();
 const conversationMembers = new Map<string, Set<string>>(); // conversationId -> Set of userIds
 const userBlocks = new Map<string, Set<string>>(); // blockerId -> Set of blockedIds
@@ -484,9 +490,15 @@ export async function getConversationMessages(convId: string, requesterId: strin
     return [];
   }
   
-  // Use durable source
-  const msgs = await databaseService.getConversationMessages(convId);
-  return msgs as HubMessage[];
+  // Use durable source first
+  const msgs = await databaseService.getConversationMessages(convId, requesterId);
+  if (msgs && msgs.length > 0) {
+    return msgs as HubMessage[];
+  }
+
+  // Fallback to in-memory conversationMessages store
+  const memMsgs = conversationMessages.get(convId) || [];
+  return memMsgs.slice(-limit) as HubMessage[];
 }
 
 export async function postConversationMessage(params: {
@@ -581,6 +593,19 @@ export async function postConversationMessage(params: {
     timestamp: new Date().toISOString(),
     status: 'delivered',
   };
+
+  // Store in in-memory fallback map
+  if (!conversationMessages.has(conversationId)) {
+    conversationMessages.set(conversationId, []);
+  }
+  const cList = conversationMessages.get(conversationId)!;
+  // Deduplicate by clientNonce for retry idempotency
+  if (params.clientNonce && cList.some((m) => m.clientNonce === params.clientNonce)) {
+    const existing = cList.find((m) => m.clientNonce === params.clientNonce)!;
+    return { success: true, message: existing };
+  }
+  cList.push(message);
+  if (cList.length > 500) cList.shift();
 
   // Broadcast via Supabase
   try {

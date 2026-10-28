@@ -139,7 +139,13 @@ async function runMessagingTests() {
   const gifs = searchGifs('tea');
   assert(gifs.length > 0 && gifs[0].title.toLowerCase().includes('tea'), '13. Curated safe GIF lookup succeeds');
 
-  console.log('\n--- ALL REAL-TIME MESSAGING TESTS COMPLETED SUCCESSFULLY ---\n');
+  if (process.exitCode === 1) {
+    console.error('\n--- REAL-TIME MESSAGING TESTS FAILED ---\n');
+    process.exit(1);
+  } else {
+    console.log('\n--- ALL REAL-TIME MESSAGING TESTS COMPLETED SUCCESSFULLY ---\n');
+    process.exit(0);
+  }
 }
 
 runMessagingTests().catch((err) => {
