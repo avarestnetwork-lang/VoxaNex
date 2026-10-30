@@ -44,7 +44,52 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const { user } = useAuth();
   const [conversations, setConversations] = useState<DirectConversation[]>([]);
   const [openWindows, setOpenWindows] = useState<FloatingChatWindow[]>([]);
-  const [autoOpenPrivateChats, setAutoOpenPrivateChats] = useState<boolean>(true);
+  const isRestoredRef = useRef(false);
+  
+  // Persist autoOpenPrivateChats preference
+  const [autoOpenPrivateChats, setAutoOpenPrivateChats] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('vx_auto_open_chats');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch { return true; }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('vx_auto_open_chats', JSON.stringify(autoOpenPrivateChats));
+  }, [autoOpenPrivateChats]);
+
+  // Restore/Persist openWindows (metadata only, no messages)
+  useEffect(() => {
+    if (!user.id) return;
+    isRestoredRef.current = false;
+    try {
+      const saved = localStorage.getItem(`vx_open_windows_${user.id}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setOpenWindows(parsed.map((w: any) => ({ ...w, messages: [], unreadCount: 0 })));
+      }
+    } catch {}
+    isRestoredRef.current = true;
+  }, [user.id]);
+
+  useEffect(() => {
+    if (!user.id || !isRestoredRef.current) return;
+    const metadata = openWindows.map(w => ({
+      conversationId: w.conversationId,
+      partnerId: w.partnerId,
+      partnerNickname: w.partnerNickname,
+      partnerAvatar: w.partnerAvatar,
+      partnerGender: w.partnerGender,
+      displayMode: w.displayMode,
+      isMinimized: w.isMinimized,
+      isMaximized: w.isMaximized,
+      isOpen: w.isOpen,
+      unreadCount: w.unreadCount,
+      draft: w.draft
+    }));
+    localStorage.setItem(`vx_open_windows_${user.id}`, JSON.stringify(metadata));
+  }, [openWindows, user.id]);
+
   const [latestToast, setLatestToast] = useState<{ id: string; title: string; message: string; avatar: string; conversationId: string } | null>(null);
 
   const activeSubscriptionsRef = useRef<Map<string, () => void>>(new Map());
@@ -315,6 +360,14 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const handleIncomingMessage = useCallback((msg: ChatMessage, conversationId: string, partnerInfo?: { id: string; nickname: string; avatar: string; gender?: string }) => {
     if (!msg || !msg.id) return;
 
+    // [DIAGNOSTIC]
+    console.log('[DIAGNOSTIC] handleIncomingMessage_Arrival', {
+      msgId: msg.id,
+      conversationId,
+      senderId: msg.senderId,
+      autoOpenPrivateChats
+    });
+
     // Rule 4: A sender echo event must update the conversation's messages without opening another UI or changing mode
     if (msg.senderId === user.id) {
       setOpenWindows((prev) =>
@@ -351,6 +404,15 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     setOpenWindows((prev) => {
       const existing = prev.find((w) => w.conversationId === conversationId);
+      
+      // [DIAGNOSTIC]
+      console.log('[DIAGNOSTIC] handleIncomingMessage_WindowLookup', {
+        existingFound: !!existing,
+        existingIsOpen: existing?.isOpen,
+        existingDisplayMode: existing?.displayMode,
+        autoOpenPrivateChats
+      });
+
       const isFocused = existing && existing.isOpen && !existing.isMinimized;
 
       if (existing) {

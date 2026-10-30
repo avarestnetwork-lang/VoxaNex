@@ -169,7 +169,7 @@ async function runWorkerHistoryTests() {
     });
     const resNoAuth = await worker.fetch(reqNoAuth, env, {} as any);
     assert(resNoAuth.status === 401, '1.1 Missing credentials rejected with 401 Unauthorized');
-    const dataNoAuth = await resNoAuth.json();
+    const dataNoAuth = (await resNoAuth.json()) as { success?: boolean };
     assert(dataNoAuth.success === false, '1.2 Response JSON success is false');
 
     // -------------------------------------------------------------------------
@@ -225,7 +225,7 @@ async function runWorkerHistoryTests() {
     });
     const resEmptyHistory = await worker.fetch(reqEmptyHistory, env, {} as any);
     assert(resEmptyHistory.status === 200, '6.1 Authorized empty history access returns 200 OK');
-    const dataEmptyHistory = await resEmptyHistory.json();
+    const dataEmptyHistory = (await resEmptyHistory.json()) as { success?: boolean; messages?: any[] };
     assert(dataEmptyHistory.success === true, '6.2 Success is true');
     assert(Array.isArray(dataEmptyHistory.messages) && dataEmptyHistory.messages.length === 0, '6.3 Messages is empty array');
 
@@ -258,10 +258,10 @@ async function runWorkerHistoryTests() {
     });
     const resBobHistory = await worker.fetch(reqBobHistory, env, {} as any);
     assert(resBobHistory.status === 200, '7.2 Bob (recipient) retrieves history with 200 OK');
-    const dataBobHistory = await resBobHistory.json();
+    const dataBobHistory = (await resBobHistory.json()) as { success?: boolean; messages?: any[] };
     assert(dataBobHistory.success === true, '7.3 History response success is true');
-    assert(dataBobHistory.messages.length >= 1, '7.4 Retrieved at least 1 message in conversation');
-    assert(dataBobHistory.messages[0].content === 'Hello Bob! This is a test message for history reload.', '7.5 Message content matches');
+    assert(Boolean(dataBobHistory.messages && dataBobHistory.messages.length >= 1), '7.4 Retrieved at least 1 message in conversation');
+    assert(Boolean(dataBobHistory.messages && dataBobHistory.messages[0].content === 'Hello Bob! This is a test message for history reload.'), '7.5 Message content matches');
 
     // Verify service role key was used for the Supabase fetch
     const historyDbCall = interceptedCalls.find(c => c.url.includes('/rest/v1/messages') && c.method === 'GET');
@@ -296,10 +296,10 @@ async function runWorkerHistoryTests() {
     });
     const resMemberHistory = await worker.fetch(reqMemberHistory, env, {} as any);
     assert(resMemberHistory.status === 200, '8.1 Registered member 2 retrieves history with 200 OK');
-    const dataMemberHistory = await resMemberHistory.json();
+    const dataMemberHistory = (await resMemberHistory.json()) as { success?: boolean; messages?: any[] };
     assert(dataMemberHistory.success === true, '8.2 Registered history success is true');
-    assert(dataMemberHistory.messages.length >= 1, '8.3 Member retrieved message');
-    assert(dataMemberHistory.messages.some((m: any) => m.content === 'Private registered conversation message'), '8.4 Member content verified');
+    assert(Boolean(dataMemberHistory.messages && dataMemberHistory.messages.length >= 1), '8.3 Member retrieved message');
+    assert(Boolean(dataMemberHistory.messages && dataMemberHistory.messages.some((m: any) => m.content === 'Private registered conversation message')), '8.4 Member content verified');
 
     console.log('\n=============================================================');
     console.log('  ALL WORKER CONVERSATION HISTORY TESTS COMPLETED WITH 100% SUCCESS');

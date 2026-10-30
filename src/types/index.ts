@@ -378,6 +378,15 @@ export interface BlockedUserEntry {
   reason?: string;
 }
 
+export interface ModeratorAssignment {
+  id: string;
+  roomId: string;
+  userId: string;
+  username: string;
+  gender: string;
+  assignedAt: string;
+}
+
 export interface Phase2BackendConfig {
   supabaseConfigured: boolean;
   supabaseUrlPlaceholder: string;

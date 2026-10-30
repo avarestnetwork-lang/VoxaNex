@@ -11,6 +11,7 @@ import {
   ModerationAppeal,
   ModerationAuditLog,
   AdminPlatformSettings,
+  ModeratorAssignment,
 } from '../types';
 import {
   Terminal,
@@ -76,8 +77,8 @@ export const AdminDashboardPage: React.FC = () => {
         safetyService.fetchAdminRestrictions('admin'),
         safetyService.fetchAdminAppeals('admin'),
         safetyService.fetchAuditLogs('admin'),
-        fetch('/api/admin/settings').then((r) => r.json()),
-        fetch('/api/admin/moderators').then((r) => r.json()),
+        fetch('/api/admin/settings').then((r) => r.json() as Promise<{ settings?: AdminPlatformSettings }>),
+        fetch('/api/admin/moderators').then((r) => r.json() as Promise<{ moderators?: ModeratorAssignment[] }>),
       ]);
 
       setReports(reps);
@@ -172,7 +173,7 @@ export const AdminDashboardPage: React.FC = () => {
       headers: { 'Content-Type': 'application/json', 'x-user-role': 'admin' },
       body: JSON.stringify({ featureFlags: updatedFlags }),
     });
-    const data = await res.json();
+    const data = (await res.json()) as { settings?: AdminPlatformSettings };
     if (data.settings) {
       setSettings(data.settings);
       setActionFeedback(`Feature flag ${key} updated.`);
@@ -196,7 +197,7 @@ export const AdminDashboardPage: React.FC = () => {
         }),
       });
 
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean; error?: string };
       if (res.ok && data.success) {
         setActionFeedback(`Assigned ${modUsername} as ${modGender} moderator for ${modRoomId}.`);
         setModUserId('');
@@ -216,7 +217,7 @@ export const AdminDashboardPage: React.FC = () => {
       const res = await fetch(`/api/admin/moderators/${assignmentId}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean; error?: string };
       if (res.ok && data.success) {
         setActionFeedback(`Revoked moderator assignment ${assignmentId}.`);
         loadData();

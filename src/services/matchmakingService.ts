@@ -38,7 +38,7 @@ export const matchmakingService = {
         body: JSON.stringify(params),
       });
 
-      const data = await res.json();
+      const data = (await res.json()) as JoinQueueResponse;
       if (!res.ok || !data.success) {
         return {
           success: false,
@@ -65,7 +65,7 @@ export const matchmakingService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticketId, userId }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;
@@ -79,7 +79,7 @@ export const matchmakingService = {
     try {
       const url = `/api/matchmaking/status?ticketId=${encodeURIComponent(ticketId)}&userId=${encodeURIComponent(userId)}`;
       const res = await fetch(url);
-      const data = await res.json();
+      const data = (await res.json()) as PollStatusResponse;
       if (!res.ok) {
         return { success: false, status: 'expired', error: data.error };
       }
@@ -163,7 +163,7 @@ export const matchmakingService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ matchId, userId }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;
@@ -178,7 +178,7 @@ export const matchmakingService = {
   ): Promise<{ match?: MatchSession; partner?: MatchParticipant } | null> {
     try {
       const res = await fetch(`/api/matchmaking/active?userId=${encodeURIComponent(userId)}`);
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean; active?: { match?: MatchSession; partner?: MatchParticipant } };
       if (data.success && data.active) {
         return data.active;
       }
@@ -198,7 +198,7 @@ export const matchmakingService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ blockerId, targetId, blocked: true }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;

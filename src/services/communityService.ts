@@ -69,8 +69,7 @@ export const communityService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
-      const data = await res.json();
-      return data;
+      return (await res.json()) as { success: boolean; topic?: ForumTopic; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -90,8 +89,7 @@ export const communityService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
-      const data = await res.json();
-      return data;
+      return (await res.json()) as { success: boolean; reply?: ForumReply; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -201,7 +199,7 @@ export const communityService = {
 
       const res = await fetch(url.toString());
       if (!res.ok) return [];
-      const data = await res.json();
+      const data = (await res.json()) as { articles?: BlogArticle[] };
       return data.articles || [];
     } catch {
       return [];
@@ -212,7 +210,7 @@ export const communityService = {
     try {
       const res = await fetch(`/api/blog/articles/${slug}`);
       if (!res.ok) return null;
-      const data = await res.json();
+      const data = (await res.json()) as { article?: BlogArticle };
       return data.article || null;
     } catch {
       return null;
@@ -302,7 +300,7 @@ export const communityService = {
     try {
       const res = await fetch('/api/guides');
       if (!res.ok) return { guides: [] };
-      const data = await res.json();
+      const data = (await res.json()) as { guides?: CommunityGuide[]; legalDisclaimer?: string };
       return {
         guides: data.guides || [],
         legalDisclaimer: data.legalDisclaimer,
@@ -316,7 +314,7 @@ export const communityService = {
     try {
       const res = await fetch(`/api/guides/${slug}`);
       if (!res.ok) return null;
-      const data = await res.json();
+      const data = (await res.json()) as { guide?: CommunityGuide };
       return data.guide || null;
     } catch {
       return null;
@@ -334,7 +332,7 @@ export const communityService = {
         headers: { 'Content-Type': 'application/json', 'x-user-role': role },
         body: JSON.stringify(updates),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; guide?: CommunityGuide; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -347,7 +345,7 @@ export const communityService = {
     try {
       const res = await fetch('/api/rooms/catalog');
       if (!res.ok) return [];
-      const data = await res.json();
+      const data = (await res.json()) as { rooms?: Room[] };
       return data.rooms || [];
     } catch {
       return [];
@@ -461,7 +459,7 @@ export const communityService = {
         headers: { 'x-user-role': role },
       });
       if (!res.ok) return [];
-      const data = await res.json();
+      const data = (await res.json()) as { media?: any[] };
       return data.media || [];
     } catch {
       return [];
@@ -484,7 +482,7 @@ export const communityService = {
     try {
       const res = await fetch('/api/media/providers/docs');
       if (!res.ok) return null;
-      const data = await res.json();
+      const data = (await res.json()) as { providers?: any };
       return data.providers;
     } catch {
       return null;
@@ -498,7 +496,7 @@ export const communityService = {
     try {
       const res = await fetch('/api/admin/metrics');
       if (!res.ok) return null;
-      const data = await res.json();
+      const data = (await res.json()) as { metrics?: any };
       return data.metrics;
     } catch {
       return null;
@@ -509,7 +507,7 @@ export const communityService = {
     try {
       const res = await fetch('/api/admin/reports');
       if (!res.ok) return [];
-      const data = await res.json();
+      const data = (await res.json()) as { reports?: SafetyReport[] };
       return data.reports || [];
     } catch {
       return [];
@@ -533,7 +531,7 @@ export const communityService = {
     try {
       const res = await fetch('/api/admin/restrictions');
       if (!res.ok) return [];
-      const data = await res.json();
+      const data = (await res.json()) as { restrictions?: any[] };
       return data.restrictions || [];
     } catch {
       return [];
@@ -553,9 +551,9 @@ export const communityService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; error?: string };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      return { success: false, error: err?.message || 'Failed to impose restriction' };
     }
   },
 
@@ -563,7 +561,7 @@ export const communityService = {
     try {
       const res = await fetch('/api/admin/appeals');
       if (!res.ok) return [];
-      const data = await res.json();
+      const data = (await res.json()) as { appeals?: any[] };
       return data.appeals || [];
     } catch {
       return [];
@@ -600,8 +598,8 @@ export const communityService = {
     try {
       const res = await fetch('/api/admin/settings');
       if (!res.ok) return null;
-      const data = await res.json();
-      return data.settings;
+      const data = (await res.json()) as { settings?: AdminPlatformSettings };
+      return data.settings || null;
     } catch {
       return null;
     }

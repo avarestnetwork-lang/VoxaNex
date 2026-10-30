@@ -32,7 +32,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; reportId?: string; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message || 'Network error submitting report' };
     }
@@ -45,7 +45,7 @@ class SafetyService {
     try {
       const url = `/api/safety/report/${reportId}${reporterId ? `?reporterId=${encodeURIComponent(reporterId)}` : ''}`;
       const res = await fetch(url);
-      return await res.json();
+      return (await res.json()) as { success: boolean; report?: any; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -57,7 +57,7 @@ class SafetyService {
   async getAgeAssuranceConfig(): Promise<{ success: boolean; config: AgeAssuranceConfig }> {
     try {
       const res = await fetch('/api/safety/age-assurance/config');
-      return await res.json();
+      return (await res.json()) as { success: boolean; config: AgeAssuranceConfig };
     } catch {
       return {
         success: false,
@@ -84,8 +84,8 @@ class SafetyService {
   async checkAgeStatus(userId: string): Promise<{ success: boolean; record?: AgeAssuranceRecord; eligibility?: { eligible: boolean; reason?: string } }> {
     try {
       const res = await fetch(`/api/safety/age-assurance/status?userId=${encodeURIComponent(userId)}`);
-      return await res.json();
-    } catch (err: any) {
+      return (await res.json()) as { success: boolean; record?: AgeAssuranceRecord; eligibility?: { eligible: boolean; reason?: string } };
+    } catch {
       return { success: false };
     }
   }
@@ -100,7 +100,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, birthYear, consentAffirmed }),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; record?: AgeAssuranceRecord; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -116,7 +116,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, provider }),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; sessionId?: string; redirectUrl?: string; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -138,7 +138,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; record?: AgeAssuranceRecord; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -154,7 +154,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json', 'x-user-role': role },
         body: JSON.stringify({ userId, reason }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;
@@ -178,7 +178,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;
@@ -191,7 +191,7 @@ class SafetyService {
   async getBlockedUsers(userId: string): Promise<BlockedUserEntry[]> {
     try {
       const res = await fetch(`/api/moderation/blocks?userId=${encodeURIComponent(userId)}`);
-      const data = await res.json();
+      const data = (await res.json()) as { blockedUsers?: BlockedUserEntry[] };
       return data.blockedUsers || [];
     } catch {
       return [];
@@ -204,7 +204,7 @@ class SafetyService {
   async checkRestriction(userId: string): Promise<{ isRestricted: boolean; restriction?: UserRestrictionRecord }> {
     try {
       const res = await fetch(`/api/moderation/status?userId=${encodeURIComponent(userId)}`);
-      return await res.json();
+      return (await res.json()) as { isRestricted: boolean; restriction?: UserRestrictionRecord };
     } catch {
       return { isRestricted: false };
     }
@@ -220,7 +220,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, userNickname, statement }),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; appeal?: ModerationAppeal; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -232,7 +232,7 @@ class SafetyService {
   async getConnections(userId: string): Promise<UserConnection[]> {
     try {
       const res = await fetch(`/api/connections?userId=${encodeURIComponent(userId)}`);
-      const data = await res.json();
+      const data = (await res.json()) as { connections?: UserConnection[] };
       return data.connections || [];
     } catch {
       return [];
@@ -253,7 +253,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; connection?: UserConnection; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -266,7 +266,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ recipientId, accept }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;
@@ -279,7 +279,7 @@ class SafetyService {
   async exportUserData(userId: string): Promise<any> {
     try {
       const res = await fetch(`/api/auth/data-export?userId=${encodeURIComponent(userId)}`);
-      const data = await res.json();
+      const data = (await res.json()) as { export?: any };
       return data.export;
     } catch {
       return null;
@@ -296,7 +296,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId }),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; message: string };
     } catch (err: any) {
       return { success: false, message: err.message };
     }
@@ -310,7 +310,7 @@ class SafetyService {
       const res = await fetch('/api/admin/reports', {
         headers: { 'x-user-role': role },
       });
-      const data = await res.json();
+      const data = (await res.json()) as { reports?: SafetyReport[] };
       return data.reports || [];
     } catch {
       return [];
@@ -330,7 +330,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json', 'x-user-role': role },
         body: JSON.stringify({ status, actionTaken, moderatorNotes }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;
@@ -342,7 +342,7 @@ class SafetyService {
       const res = await fetch('/api/admin/restrictions', {
         headers: { 'x-user-role': role },
       });
-      const data = await res.json();
+      const data = (await res.json()) as { restrictions?: UserRestrictionRecord[] };
       return data.restrictions || [];
     } catch {
       return [];
@@ -363,7 +363,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json', 'x-user-role': params.role || 'admin' },
         body: JSON.stringify(params),
       });
-      return await res.json();
+      return (await res.json()) as { success: boolean; restriction?: UserRestrictionRecord; error?: string };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -376,7 +376,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json', 'x-user-role': role },
         body: JSON.stringify({ reason }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;
@@ -388,7 +388,7 @@ class SafetyService {
       const res = await fetch('/api/admin/appeals', {
         headers: { 'x-user-role': role },
       });
-      const data = await res.json();
+      const data = (await res.json()) as { appeals?: ModerationAppeal[] };
       return data.appeals || [];
     } catch {
       return [];
@@ -402,7 +402,7 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json', 'x-user-role': role },
         body: JSON.stringify({ status, notes }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;
@@ -414,7 +414,7 @@ class SafetyService {
       const res = await fetch('/api/admin/audit-logs', {
         headers: { 'x-user-role': role },
       });
-      const data = await res.json();
+      const data = (await res.json()) as { auditLogs?: ModerationAuditLog[] };
       return data.auditLogs || [];
     } catch {
       return [];

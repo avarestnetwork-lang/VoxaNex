@@ -1,7 +1,7 @@
 import { ChatMessage } from '../types';
 import { guestSessionService } from './guestSessionService';
 import { databaseService } from './databaseService';
-import { isSupabaseConfigured } from '../lib/supabaseClient';
+import { isSupabaseConfigured, getSupabaseClient } from '../lib/supabaseClient';
 
 export interface RealtimePresenceMember {
   id: string;
@@ -40,6 +40,24 @@ export interface SendMessageOptions {
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
 
+async function getAuthToken(): Promise<string | null> {
+  const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
+  if (guestToken) return guestToken;
+
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.access_token) {
+        return data.session.access_token;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
 export const messagingService = {
   /**
    * Fetch paginated message history for a public room with Supabase fallback
@@ -59,7 +77,7 @@ export const messagingService = {
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
-          const data = await res.json();
+          const data = (await res.json()) as { messages?: ChatMessage[] };
           if (Array.isArray(data.messages) && data.messages.length > 0) {
             return { success: true, messages: data.messages };
           }
@@ -128,7 +146,7 @@ export const messagingService = {
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
-          const data = await res.json();
+          const data = (await res.json()) as { success?: boolean; message?: ChatMessage; error?: string };
           if (data.success && data.message) {
             confirmedMessage = data.message;
           } else {
@@ -136,7 +154,7 @@ export const messagingService = {
           }
         }
       } else {
-        const errData = await res.json().catch(() => ({}));
+        const errData = (await res.json().catch(() => ({}))) as { error?: string };
         const errorMsg = errData?.error || `Server rejected message (HTTP ${res.status})`;
         return { success: false, error: errorMsg };
       }
@@ -345,7 +363,7 @@ export const messagingService = {
       if (!res.ok) {
         return [];
       }
-      const data = await res.json();
+      const data = (await res.json()) as { members?: any[] };
       return Array.isArray(data?.members) ? data.members : [];
     } catch {
       return [];
@@ -377,12 +395,16 @@ export const messagingService = {
     partnerId: string
   ): Promise<{ success: boolean; conversationId?: string; error?: string }> {
     try {
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${API_BASE}/api/chat/conversations`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ userId, partnerId }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success: boolean; conversationId?: string; error?: string };
       return data;
     } catch {
       return { success: false, error: 'Failed to initialize conversation' };
@@ -394,13 +416,17 @@ export const messagingService = {
     userId: string
   ): Promise<{ success: boolean; messages: ChatMessage[]; error?: string }> {
     try {
+      const token = await getAuthToken();
       const guestToken = guestSessionService.getStoredToken();
       let url = `${API_BASE}/api/chat/conversations/${convId}/messages?userId=${encodeURIComponent(userId)}`;
       if (guestToken) {
         url += `&guestToken=${encodeURIComponent(guestToken)}`;
       }
-      const res = await fetch(url);
-      const data = await res.json();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(url, { headers });
+      const data = (await res.json()) as { messages?: ChatMessage[] };
       return { success: true, messages: data.messages || [] };
     } catch {
       return { success: false, messages: [], error: 'Failed to fetch direct messages' };
@@ -427,20 +453,28 @@ export const messagingService = {
         guestSessionService.getStoredToken() ||
         (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined) ||
         undefined;
+      const authToken = !guestToken ? await getAuthToken() : undefined;
 
       const clientNonce = options.clientNonce || `nonce_dm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       let confirmedMessage: ChatMessage | null = null;
 
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (guestToken) {
+        headers['Authorization'] = `Bearer ${guestToken}`;
+      } else if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ ...options, guestToken, clientNonce }),
       });
 
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
-          const data = await res.json();
+          const data = (await res.json()) as { success?: boolean; message?: ChatMessage; error?: string };
           if (data.success && data.message) {
             confirmedMessage = data.message;
           } else {
@@ -449,7 +483,7 @@ export const messagingService = {
         } else {
           const text = await res.text();
           try {
-            const data = JSON.parse(text);
+            const data = JSON.parse(text) as { success?: boolean; message?: ChatMessage; error?: string };
             if (data.success && data.message) {
               confirmedMessage = data.message;
             } else {
@@ -460,7 +494,7 @@ export const messagingService = {
           }
         }
       } else {
-        const errData = await res.json().catch(() => ({}));
+        const errData = (await res.json().catch(() => ({}))) as { error?: string };
         const errorMsg = errData?.error || `Server rejected direct message (HTTP ${res.status})`;
         return { success: false, error: errorMsg };
       }
@@ -488,12 +522,17 @@ export const messagingService = {
 
   async fetchUserConversations(userId: string, guestToken?: string): Promise<string[]> {
     try {
+      const authToken = !guestToken ? await getAuthToken() : undefined;
       let url = `${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`;
       if (guestToken) {
         url += `&guestToken=${encodeURIComponent(guestToken)}`;
       }
-      const res = await fetch(url);
-      const data = await res.json();
+      const headers: Record<string, string> = {};
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+      const res = await fetch(url, { headers });
+      const data = (await res.json()) as { success?: boolean; conversations?: string[] };
       return data.success && Array.isArray(data.conversations) ? data.conversations : [];
     } catch {
       return [];
@@ -657,7 +696,7 @@ export const messagingService = {
   async searchGifs(query = ''): Promise<GifItem[]> {
     try {
       const res = await fetch(`/api/gifs/search?q=${encodeURIComponent(query)}`);
-      const data = await res.json();
+      const data = (await res.json()) as { gifs?: GifItem[] };
       return data.gifs || [];
     } catch {
       return [];
@@ -671,7 +710,7 @@ export const messagingService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { preview?: LinkPreviewData | null };
       return data.preview || null;
     } catch {
       return null;
@@ -685,7 +724,7 @@ export const messagingService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ blockerId, targetId, blocked }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       return Boolean(data.success);
     } catch {
       return false;

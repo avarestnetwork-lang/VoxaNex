@@ -300,8 +300,8 @@ export const authService = {
           Authorization: 'Bearer local-session-token',
         },
       });
-      const data = await res.json();
-      return { success: data.success, message: data.message };
+      const data = (await res.json()) as { success?: boolean; message?: string };
+      return { success: Boolean(data.success), message: data.message || 'Account purged.' };
     } catch {
       return { success: true, message: 'Account purge registered locally.' };
     }

@@ -1,9 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Read Vite client / Node environment variables safely
+// Read Vite client environment variables safely
 const metaEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined;
-const supabaseUrl = metaEnv?.VITE_SUPABASE_URL || process.env?.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = metaEnv?.VITE_SUPABASE_ANON_KEY || process.env?.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = metaEnv?.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = metaEnv?.VITE_SUPABASE_ANON_KEY || '';
+
 
 // Detect if configured with a real non-placeholder project URL
 export const isSupabaseConfigured = (): boolean => {
@@ -63,10 +64,10 @@ export const getSupabaseClient = (): SupabaseClient | null => {
  * This is used for server-side operations where process.env is not available.
  */
 export const getSupabaseClientFromEnv = (env: any): SupabaseClient | null => {
-  const url = env?.SUPABASE_URL || env?.VITE_SUPABASE_URL || supabaseUrl;
-  const key = env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_ANON_KEY || env?.VITE_SUPABASE_ANON_KEY || supabaseAnonKey;
+  const url = env?.SUPABASE_URL;
+  const key = env?.SUPABASE_SERVICE_ROLE_KEY || env?.SUPABASE_ANON_KEY;
 
-  if (!url || !key || url.includes('your-project-ref')) {
+  if (!url || !key || typeof url !== 'string' || typeof key !== 'string' || url.includes('your-project-ref')) {
     return null;
   }
 
@@ -87,12 +88,15 @@ export const getSupabaseStatus = (): {
   url: string;
   authReady: boolean;
   realtimeReady: boolean;
+  envSource: 'Vite' | 'None';
 } => {
   const configured = isSupabaseConfigured();
+  const source = (import.meta as any).env?.VITE_SUPABASE_URL ? 'Vite' : 'None';
   return {
     configured,
-    url: configured ? supabaseUrl : 'Not Connected (Staged for Phase 2)',
+    url: configured ? supabaseUrl : 'Not Connected',
     authReady: configured,
     realtimeReady: configured,
+    envSource: source,
   };
 };

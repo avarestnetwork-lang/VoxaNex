@@ -132,7 +132,7 @@ export class WebRTCService {
   public async fetchIceServers(): Promise<IceServerConfig[]> {
     try {
       const res = await fetch('/api/webrtc/ice-servers');
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean; iceServers?: IceServerConfig[] };
       if (data.success && data.iceServers) {
         this.iceServers = data.iceServers;
         return data.iceServers;
@@ -299,8 +299,8 @@ export class WebRTCService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ callId, senderId, type, payload }),
       });
-      const data = await res.json();
-      return data.success;
+      const data = (await res.json()) as { success?: boolean };
+      return Boolean(data.success);
     } catch {
       return false;
     }
@@ -325,7 +325,7 @@ export class WebRTCService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean; call?: CallSessionData; error?: string };
       if (data.success && data.call) {
         this.currentCall = data.call;
         return { success: true, call: data.call };
@@ -346,7 +346,7 @@ export class WebRTCService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ callId, calleeId }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean; call?: CallSessionData; error?: string };
       if (data.success && data.call) {
         this.currentCall = data.call;
         return { success: true, call: data.call };
@@ -367,12 +367,12 @@ export class WebRTCService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ callId, calleeId, reason }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       if (this.currentCall && this.currentCall.callId === callId) {
         this.currentCall = null;
       }
       this.cleanupPeerConnection();
-      return data.success;
+      return Boolean(data.success);
     } catch {
       return false;
     }
@@ -388,12 +388,12 @@ export class WebRTCService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ callId, userId, reason }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as { success?: boolean };
       if (this.currentCall && this.currentCall.callId === callId) {
         this.currentCall.status = 'ended';
       }
       this.cleanupPeerConnection();
-      return data.success;
+      return Boolean(data.success);
     } catch {
       this.cleanupPeerConnection();
       return false;

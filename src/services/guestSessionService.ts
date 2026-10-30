@@ -32,11 +32,11 @@ export const guestSessionService = {
       });
 
       if (!response.ok) {
-        const err = await response.json();
+        const err = (await response.json()) as { error?: string };
         return { success: false, error: err.error || 'Failed to issue guest session' };
       }
 
-      const data = await response.json();
+      const data = (await response.json()) as { success?: boolean; session?: ValidatedGuestSession; error?: string };
       if (data.success && data.session) {
         localStorage.setItem(STORAGE_KEY, data.session.token);
         return { success: true, session: data.session };
@@ -77,30 +77,40 @@ export const guestSessionService = {
       });
 
       if (!response.ok) return { valid: false };
-      const data = await response.json();
+      const data = (await response.json()) as { valid?: boolean; session?: Partial<ValidatedGuestSession> };
       return { valid: Boolean(data.valid), session: data.session };
     } catch {
-      // If server unreachable, check if local token not expired
-      return { valid: true };
+      // Fail closed on network or server error during validation
+      return { valid: false };
     }
   },
 
   /**
    * Revoke active guest session
    */
-  async revokeSession(): Promise<void> {
+  async revokeSession(): Promise<{ success: boolean; error?: string }> {
     const token = localStorage.getItem(STORAGE_KEY);
-    if (token) {
-      try {
-        await fetch('/api/guest/revoke', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token }),
-        });
-      } catch {
-        // ignore
+    if (!token) {
+      return { success: true };
+    }
+
+    try {
+      const response = await fetch('/api/guest/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+
+      if (!response.ok) {
+        const err = (await response.json().catch(() => ({}))) as { error?: string };
+        const errorMessage = err.error || `Revocation failed (HTTP ${response.status})`;
+        return { success: false, error: errorMessage };
       }
+
       localStorage.removeItem(STORAGE_KEY);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error during session revocation' };
     }
   },
 
