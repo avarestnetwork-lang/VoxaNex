@@ -1919,15 +1919,10 @@ export default {
         };
 
         if (!guestSecretInfo.secret) {
-          const missing = [];
-          if (!env?.GUEST_SESSION_SECRET) missing.push('GUEST_SESSION_SECRET');
+          console.error('[Worker] Guest session creation failed: GUEST_SESSION_SECRET is unconfigured.');
           return jsonResponse({
             success: false,
             error: 'Guest session creation failed: Missing required environment configuration.',
-            diag: {
-              environment: env?.ENVIRONMENT || 'production',
-              missing_bindings: missing
-            }
           }, 500);
         }
 
@@ -1966,11 +1961,48 @@ export default {
           });
 
           if (!dbRes.ok) {
-            const errText = await dbRes.text().catch(() => '');
-            console.error(`[Worker] Supabase guest session insert failed HTTP ${dbRes.status}:`, errText);
+            console.error(`[Worker] Supabase guest session insert failed HTTP ${dbRes.status}`);
             return jsonResponse({
               success: false,
               error: `Database session registration failed (HTTP ${dbRes.status}).`
+            }, 500);
+          }
+
+          let insertedRows: any;
+          try {
+            insertedRows = await dbRes.json();
+          } catch (jsonErr) {
+            console.error(`[Worker] Supabase guest session insert JSON parse error HTTP ${dbRes.status}`);
+            return jsonResponse({
+              success: false,
+              error: 'Database session registration failed: Invalid response format.'
+            }, 500);
+          }
+
+          if (!Array.isArray(insertedRows) || insertedRows.length !== 1) {
+            console.error(`[Worker] Supabase guest session insert returned unexpected row count (${Array.isArray(insertedRows) ? insertedRows.length : 'non-array'}) HTTP ${dbRes.status}`);
+            return jsonResponse({
+              success: false,
+              error: 'Database session registration failed: Row persistence unconfirmed.'
+            }, 500);
+          }
+
+          const insertedRow = insertedRows[0];
+          const dbExpiresAt = insertedRow?.expires_at ? new Date(insertedRow.expires_at).getTime() : NaN;
+
+          if (
+            !insertedRow ||
+            insertedRow.id !== sessionId ||
+            insertedRow.session_token_hash !== tokenHash ||
+            insertedRow.is_revoked !== false ||
+            !Number.isFinite(dbExpiresAt) ||
+            Date.now() >= dbExpiresAt ||
+            Math.abs(dbExpiresAt - expiresAt) > 5000
+          ) {
+            console.error(`[Worker] Supabase guest session insert returned invalid row representation HTTP ${dbRes.status}`);
+            return jsonResponse({
+              success: false,
+              error: 'Database session registration failed: Persisted row state invalid.'
             }, 500);
           }
         } catch (dbErr: any) {
