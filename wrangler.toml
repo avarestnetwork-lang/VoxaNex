@@ -11,7 +11,10 @@ run_worker_first = true
 [env.staging]
 name = "voxanex-staging"
 vars = { 
+  SUPABASE_URL = "https://iccxxsuincnqwbfyypho.supabase.co",
   ENVIRONMENT = "staging"
 }
+
+
 
 

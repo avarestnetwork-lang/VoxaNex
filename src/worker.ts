@@ -186,7 +186,7 @@ async function verifyGuestToken(
       return { valid: false, reason: 'Invalid token issuance timestamp.' };
     }
 
-    // Durable revocation verification against public.guest_sessions
+    // Mandatory durable revocation & existence verification against public.guest_sessions
     if (!dbEnv?.supabaseUrl || !dbEnv?.supabaseServiceKey) {
       return { valid: false, reason: 'Database configuration missing for guest session verification.' };
     }
@@ -214,7 +214,7 @@ async function verifyGuestToken(
 
       canonicalRow = rows[0];
 
-      // Required Remediation 1: Explicitly enforce row.id === p.sid
+      // Explicitly enforce row.id === p.sid
       if (canonicalRow.id !== p.sid) {
         return { valid: false, reason: 'Session identity mismatch.' };
       }
@@ -224,7 +224,7 @@ async function verifyGuestToken(
         return { valid: false, reason: 'Guest session has been revoked.' };
       }
 
-      // Required Remediation 3: Authoritative database expiry validation
+      // Authoritative database expiry validation
       const dbExpiresAt = canonicalRow.expires_at
         ? new Date(canonicalRow.expires_at).getTime()
         : NaN;
@@ -238,7 +238,7 @@ async function verifyGuestToken(
       return { valid: false, reason: 'Database error verifying session revocation.' };
     }
 
-    // Required Remediation 1: Construct session using canonical database identity
+    // Construct session using canonical database identity
     const session: GuestSession = {
       id: canonicalRow.id,
       token,
