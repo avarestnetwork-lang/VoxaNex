@@ -51,29 +51,20 @@ interface GuestSession {
   expiresAt: number;
 }
 
-const DEFAULT_GUEST_SECRET = 'voxanex_default_secure_entropy_salt_2026';
-
 function getGuestSecret(env: any): { secret: string | null; isDevFallback: boolean } {
-  const secretValue = env?.GUEST_SESSION_SECRET || env?.VITE_GUEST_SESSION_SECRET;
-  if (secretValue && typeof secretValue === 'string' && secretValue.trim().length > 0) {
+  const secretValue = env?.GUEST_SESSION_SECRET;
+  if (typeof secretValue === 'string' && secretValue.trim().length >= 32) {
     return { secret: secretValue.trim(), isDevFallback: false };
   }
-  // Allow fallback ONLY in explicit local development mode
-  if (env?.ENVIRONMENT === 'development' || env?.DEV === true) {
-    return { secret: DEFAULT_GUEST_SECRET, isDevFallback: true };
-  }
-  // Production MUST fail closed!
   return { secret: null, isDevFallback: false };
 }
 
 function getGuestSecretBindingDiagnostics(env: any) {
   const primary = env?.GUEST_SESSION_SECRET;
-  const fallback = env?.VITE_GUEST_SESSION_SECRET;
   return {
     guestSessionSecretBindingPresent: primary !== undefined && primary !== null,
     guestSessionSecretNonEmptyString: typeof primary === 'string' && primary.trim().length > 0,
-    viteGuestSessionSecretBindingPresent: fallback !== undefined && fallback !== null,
-    viteGuestSessionSecretNonEmptyString: typeof fallback === 'string' && fallback.trim().length > 0,
+    guestSessionSecretMinimumLength: typeof primary === 'string' && primary.trim().length >= 32,
   };
 }
 
@@ -102,7 +93,7 @@ async function signGuestToken(payload: any, secret: string): Promise<string> {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(secret || DEFAULT_GUEST_SECRET),
+    encoder.encode(secret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
@@ -272,115 +263,83 @@ async function verifyGuestToken(
   secretInfo: { secret: string | null; isDevFallback: boolean },
   env?: any
 ): Promise<{ valid: boolean; session?: GuestSession; reason?: string }> {
-  if (!secretInfo.secret) {
-    return { valid: false, reason: 'Server configuration error: GUEST_SESSION_SECRET is missing in production.' };
-  }
-
-  if (!token || !token.startsWith('vx_gst_')) {
-    return { valid: false, reason: 'Malformed token prefix' };
-  }
-
-  // Reject local development tokens in production environments
-  if (token.startsWith('vx_gst_local_') || token.includes('_local_')) {
-    if (secretInfo.isDevFallback) {
-      return {
-        valid: true,
-        session: {
-          id: `guest_local_${Date.now()}`,
-          token,
-          nickname: 'Guest_User',
-          avatar: '⚡',
-          is18Verified: false,
-          createdAt: Date.now(),
-          expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-        },
-      };
-    } else {
-      return { valid: false, reason: 'Local simulation tokens are prohibited in production.' };
-    }
-  }
-
-  // The in-memory map is only a local-development fallback. Production sessions
-  // are checked against durable storage so revocation works across isolates.
-  if (secretInfo.isDevFallback && guestSessions.has(token)) {
-    const s = guestSessions.get(token)!;
-    if (Date.now() <= s.expiresAt) {
-      return { valid: true, session: s };
-    }
+  if (!secretInfo.secret) return { valid: false, reason: 'Server configuration error: GUEST_SESSION_SECRET is missing or too short.' };
+  if (!token || !token.startsWith('vx_gst_') || token.startsWith('vx_gst_local_') || token.includes('_local_')) {
+    return { valid: false, reason: 'Malformed or unsupported guest token.' };
   }
 
   const raw = token.slice('vx_gst_'.length);
   const dotIdx = raw.indexOf('.');
-  if (dotIdx === -1) {
-    return { valid: false, reason: 'Invalid token structure' };
-  }
-
+  if (dotIdx <= 0) return { valid: false, reason: 'Invalid token structure.' };
   const base64Payload = raw.slice(0, dotIdx);
   const signatureHex = raw.slice(dotIdx + 1);
-
-  if (!/^[0-9a-f]{64}$/i.test(signatureHex)) {
-    return { valid: false, reason: 'Malformed signature' };
-  }
-
-  const sigBytes = new Uint8Array(signatureHex.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
-  const encoder = new TextEncoder();
+  if (!/^[0-9a-f]{64}$/i.test(signatureHex)) return { valid: false, reason: 'Malformed signature.' };
 
   try {
     const key = await crypto.subtle.importKey(
       'raw',
-      encoder.encode(secretInfo.secret),
+      new TextEncoder().encode(secretInfo.secret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['verify']
     );
+    const sigBytes = new Uint8Array(signatureHex.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
+    const signatureValid = await crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(base64Payload));
+    if (!signatureValid) return { valid: false, reason: 'Invalid cryptographic signature.' };
 
-    const valid = await crypto.subtle.verify('HMAC', key, sigBytes, encoder.encode(base64Payload));
-    if (!valid) {
-      return { valid: false, reason: 'Invalid cryptographic signature' };
+    const payload = JSON.parse(fromBase64Url(base64Payload));
+    if (
+      typeof payload?.sid !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.sid) ||
+      !Number.isFinite(payload.iat) ||
+      !Number.isFinite(payload.exp) ||
+      payload.exp <= Date.now() ||
+      payload.iat > Date.now() + 60000 ||
+      payload.exp <= payload.iat ||
+      payload.exp - payload.iat > 24 * 60 * 60 * 1000 + 5000
+    ) {
+      return { valid: false, reason: 'Invalid or expired guest token claims.' };
     }
 
-    const payloadJson = fromBase64Url(base64Payload);
-    const p = JSON.parse(payloadJson);
-
-    if (p.exp && Date.now() > p.exp) {
-      return { valid: false, reason: 'Guest session expired' };
+    const tokenHash = await sha256Hex(token);
+    const rowsResponse = await adminRest(env,
+      `guest_sessions?id=eq.${encodeURIComponent(payload.sid)}&session_token_hash=eq.${tokenHash}&select=id,session_token_hash,nickname,avatar,language_pref,is_18_verified,expires_at,is_revoked`
+    );
+    if (!rowsResponse.ok) return { valid: false, reason: 'Guest session storage is unavailable.' };
+    const rows = await rowsResponse.json();
+    if (!Array.isArray(rows) || rows.length !== 1) {
+      return { valid: false, reason: 'Guest session is missing or ambiguous.' };
     }
 
-    if (p.iat && p.iat > Date.now() + 60000) {
-      return { valid: false, reason: 'Invalid token issuance timestamp in future' };
+    const stored = rows[0];
+    const storedExpiry = typeof stored?.expires_at === 'string' ? Date.parse(stored.expires_at) : NaN;
+    if (
+      stored.id !== payload.sid ||
+      stored.session_token_hash !== tokenHash ||
+      stored.is_revoked !== false ||
+      !Number.isFinite(storedExpiry) ||
+      storedExpiry <= Date.now() ||
+      Math.abs(storedExpiry - payload.exp) > 5000
+    ) {
+      return { valid: false, reason: 'Guest session is missing, expired, revoked, or inconsistent.' };
     }
 
-    const session: GuestSession = {
-      id: p.sid || p.id,
-      token,
-      nickname: p.nick || p.nickname || 'Guest_User',
-      avatar: p.av || p.avatar || '⚡',
-      gender: p.gen || p.gender,
-      languagePref: p.lng || p.languagePref || 'en',
-      is18Verified: Boolean(p.v18 || p.is18Verified),
-      createdAt: p.iat || p.createdAt || Date.now(),
-      expiresAt: p.exp || p.expiresAt || (Date.now() + 24 * 60 * 60 * 1000),
+    return {
+      valid: true,
+      session: {
+        id: stored.id,
+        token,
+        nickname: stored.nickname,
+        avatar: stored.avatar,
+        languagePref: stored.language_pref || 'en',
+        is18Verified: stored.is_18_verified === true,
+        createdAt: payload.iat,
+        expiresAt: storedExpiry,
+      },
     };
-
-    if (!secretInfo.isDevFallback) {
-      const tokenHash = await sha256Hex(token);
-      const rowsResponse = await adminRest(env, `guest_sessions?id=eq.${encodeURIComponent(session.id)}&session_token_hash=eq.${tokenHash}&select=id,nickname,avatar,language_pref,is_18_verified,expires_at,is_revoked`);
-      if (!rowsResponse.ok) return { valid: false, reason: 'Guest session storage is unavailable.' };
-      const rows = await rowsResponse.json();
-      const stored = Array.isArray(rows) ? rows[0] : null;
-      if (!stored || stored.is_revoked || Date.now() > new Date(stored.expires_at).getTime()) {
-        return { valid: false, reason: 'Guest session is missing, expired, or revoked.' };
-      }
-      session.nickname = stored.nickname;
-      session.avatar = stored.avatar;
-      session.languagePref = stored.language_pref;
-      session.is18Verified = Boolean(stored.is_18_verified);
-      session.expiresAt = new Date(stored.expires_at).getTime();
-    }
-
-    return { valid: true, session };
   } catch (err: any) {
-    return { valid: false, reason: 'Token verification exception: ' + (err.message || 'Malformed') };
+    console.error('[VX-GUEST] Token verification failed:', err?.message || 'Unknown error');
+    return { valid: false, reason: 'Guest token verification failed.' };
   }
 }
 
@@ -1407,43 +1366,47 @@ export default {
         };
 
         const { baseUrl, serviceKey } = getSupabaseRestConfig(env);
-        if (baseUrl && serviceKey) {
-          const tokenHash = await sha256Hex(token);
-          const ip = request.headers.get('CF-Connecting-IP') || '';
-          const userAgent = request.headers.get('User-Agent') || '';
-          const persisted = await adminRest(env, 'guest_sessions', {
-            method: 'POST',
-            headers: { Prefer: 'return=minimal' },
-            body: JSON.stringify({
-              id: sessionId,
-              session_token_hash: tokenHash,
-              nickname: session.nickname,
-              avatar: session.avatar,
-              ip_fingerprint_hash: ip ? await sha256Hex(ip) : null,
-              user_agent_hash: userAgent ? await sha256Hex(userAgent) : null,
-              language_pref: session.languagePref,
-              is_18_verified: session.is18Verified,
-              expires_at: new Date(expiresAt).toISOString(),
-            }),
-          });
-          if (!persisted.ok) {
-            console.error('[VX-GUEST] Session persistence failed:', { status: persisted.status });
-            return jsonResponse({ success: false, error: 'Guest session could not be initialized. Please retry.' }, 503);
-          }
-        } else if (!guestSecretInfo.isDevFallback) {
-          const environment = env?.ENVIRONMENT;
-          const safeEnvironment = typeof environment === 'string' && /^(development|staging|production|preview)$/i.test(environment.trim())
-            ? environment.trim().toLowerCase()
-            : 'unset-or-unrecognized';
-          console.error('[VX-GUEST] Guest session storage binding diagnostic', {
-            hasGuestSessionSecret: Boolean(guestSecretInfo.secret),
-            hasSupabaseUrl: typeof baseUrl === 'string' && baseUrl.trim().length > 0,
-            hasServiceRoleKey: typeof serviceKey === 'string' && serviceKey.trim().length > 0,
-            isDevFallback: guestSecretInfo.isDevFallback,
-            requestPath: url.pathname,
-            deploymentEnvironment: safeEnvironment,
-          });
+        if (!baseUrl || !serviceKey) {
           return jsonResponse({ success: false, error: 'Guest session storage is not configured.' }, 503);
+        }
+
+        const tokenHash = await sha256Hex(token);
+        const ip = request.headers.get('CF-Connecting-IP') || '';
+        const userAgent = request.headers.get('User-Agent') || '';
+        const persisted = await adminRest(env, 'guest_sessions', {
+          method: 'POST',
+          headers: { Prefer: 'return=representation' },
+          body: JSON.stringify({
+            id: sessionId,
+            session_token_hash: tokenHash,
+            nickname: session.nickname,
+            avatar: session.avatar,
+            ip_fingerprint_hash: ip ? await sha256Hex(ip) : null,
+            user_agent_hash: userAgent ? await sha256Hex(userAgent) : null,
+            language_pref: session.languagePref,
+            is_18_verified: session.is18Verified,
+            expires_at: new Date(expiresAt).toISOString(),
+            is_revoked: false,
+          }),
+        });
+        if (!persisted.ok) {
+          console.error('[VX-GUEST] Session persistence failed:', { status: persisted.status });
+          return jsonResponse({ success: false, error: 'Guest session could not be initialized. Please retry.' }, 503);
+        }
+
+        const insertedRows = await persisted.json().catch(() => null);
+        const inserted = Array.isArray(insertedRows) && insertedRows.length === 1 ? insertedRows[0] : null;
+        const insertedExpiry = inserted?.expires_at ? Date.parse(inserted.expires_at) : NaN;
+        if (
+          !inserted ||
+          inserted.id !== sessionId ||
+          inserted.session_token_hash !== tokenHash ||
+          inserted.is_revoked !== false ||
+          !Number.isFinite(insertedExpiry) ||
+          Math.abs(insertedExpiry - expiresAt) > 5000
+        ) {
+          console.error('[VX-GUEST] Session persistence response failed verification.');
+          return jsonResponse({ success: false, error: 'Guest session persistence could not be verified.' }, 503);
         }
 
         guestSessions.set(token, session);
@@ -1469,25 +1432,47 @@ export default {
     if (url.pathname === '/api/guest/revoke' && request.method === 'POST') {
       try {
         const body: any = await request.json();
-        if (body?.token) {
-          guestSessions.delete(body.token);
-          const { baseUrl, serviceKey } = getSupabaseRestConfig(env);
-          if (baseUrl && serviceKey) {
-            const tokenHash = await sha256Hex(body.token);
-            const response = await adminRest(env, `guest_sessions?session_token_hash=eq.${tokenHash}`, {
-              method: 'PATCH',
-              headers: { Prefer: 'return=minimal' },
-              body: JSON.stringify({ is_revoked: true, revoked_at: new Date().toISOString() }),
-            });
-            if (!response.ok) return jsonResponse({ success: false, error: 'Guest session could not be revoked.' }, 503);
-          } else if (!guestSecretInfo.isDevFallback) {
-            return jsonResponse({ success: false, error: 'Guest session storage is not configured.' }, 503);
-          }
+        const token = body?.token;
+        if (typeof token !== 'string' || !token.startsWith('vx_gst_') || token.startsWith('vx_gst_local_')) {
+          return jsonResponse({ success: false, error: 'Valid guest token is required for revocation.' }, 400);
         }
-      } catch {
-        // ignore
+        if (!guestSecretInfo.secret) {
+          return jsonResponse({ success: false, error: 'Guest session security is not configured.' }, 503);
+        }
+        const { baseUrl, serviceKey } = getSupabaseRestConfig(env);
+        if (!baseUrl || !serviceKey) {
+          return jsonResponse({ success: false, error: 'Guest session storage is not configured.' }, 503);
+        }
+
+        const tokenHash = await sha256Hex(token);
+        const response = await adminRest(env,
+          `guest_sessions?session_token_hash=eq.${tokenHash}&select=id,session_token_hash,is_revoked`,
+          {
+            method: 'PATCH',
+            headers: { Prefer: 'return=representation' },
+            body: JSON.stringify({ is_revoked: true, revoked_at: new Date().toISOString() }),
+          }
+        );
+        if (!response.ok) {
+          console.error('[VX-GUEST] Session revocation failed:', { status: response.status });
+          return jsonResponse({ success: false, error: 'Guest session could not be revoked.' }, 503);
+        }
+
+        const rows = await response.json().catch(() => null);
+        if (!Array.isArray(rows) || rows.length !== 1) {
+          return jsonResponse({ success: false, error: 'Guest session revocation could not be confirmed.' }, 503);
+        }
+        const revoked = rows[0];
+        if (revoked.session_token_hash !== tokenHash || revoked.is_revoked !== true) {
+          return jsonResponse({ success: false, error: 'Guest session revocation could not be confirmed.' }, 503);
+        }
+
+        guestSessions.delete(token);
+        return jsonResponse({ success: true });
+      } catch (err: any) {
+        console.error('[VX-GUEST] Revocation request failed:', err?.message || 'Unknown error');
+        return jsonResponse({ success: false, error: 'Malformed or failed revocation request.' }, 400);
       }
-      return jsonResponse({ success: true });
     }
 
     // -------------------------------------------------------------------------
