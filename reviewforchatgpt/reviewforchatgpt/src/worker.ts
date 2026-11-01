@@ -2304,7 +2304,7 @@ export default {
               method: 'DELETE',
               headers: adminHeaders,
             });
-            if (!profileRes.ok && profileRes.status !== 404) {
+            if (!profileRes.ok) {
               const errText = await profileRes.text().catch(() => '');
               console.error(`[Worker] Profile deletion failed HTTP ${profileRes.status}:`, errText);
               return jsonResponse({
