@@ -2144,50 +2144,48 @@ export default {
           }, 401);
         }
 
-        let verifiedUserId: string | null = null;
-
-        // 1. Verify against Supabase Auth endpoint
-        if (baseSupabaseUrl) {
-          try {
-            const userRes = await fetch(`${baseSupabaseUrl}/auth/v1/user`, {
-              headers: {
-                'apikey': supabaseAnonKey || supabaseServiceKey,
-                'Authorization': `Bearer ${bearerToken}`,
-              },
-            });
-            if (userRes.ok) {
-              const userData: any = await userRes.json();
-              if (userData?.id) {
-                verifiedUserId = userData.id;
-              }
-            }
-          } catch (err) {
-            console.warn('[Worker] Supabase member verification fetch exception:', err);
-          }
+        // Validate Bearer JWT token structure (3 dot-separated components)
+        if (bearerToken.split('.').length !== 3) {
+          return jsonResponse({
+            success: false,
+            error: 'Unauthorized: Malformed member authentication token format.',
+          }, 401);
         }
 
-        // 2. Fallback to Supabase client if available
+        // Fail closed if server-side database configuration is unconfigured
+        if (!baseSupabaseUrl || !supabaseServiceKey) {
+          return jsonResponse({
+            success: false,
+            error: 'Server configuration error: Database bindings missing.',
+          }, 503);
+        }
+
+        let verifiedUserId: string | null = null;
+
+        // 1. Authoritative identity verification via Supabase Auth GET /auth/v1/user
+        try {
+          const userRes = await fetch(`${baseSupabaseUrl}/auth/v1/user`, {
+            headers: {
+              'apikey': supabaseAnonKey || supabaseServiceKey,
+              'Authorization': `Bearer ${bearerToken}`,
+            },
+          });
+          if (userRes.ok) {
+            const userData: any = await userRes.json().catch(() => null);
+            if (userData?.id) {
+              verifiedUserId = userData.id;
+            }
+          }
+        } catch (err) {
+          console.warn('[Worker] Supabase member verification fetch exception:', err);
+        }
+
+        // 2. Fallback verification using Supabase client if available
         if (!verifiedUserId && supabaseClient) {
           try {
             const { data: userData, error: userErr } = await supabaseClient.auth.getUser(bearerToken);
             if (!userErr && userData?.user?.id) {
               verifiedUserId = userData.user.id;
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        // 3. Fallback for local development testing mode
-        const isDevOrTest = env?.ENVIRONMENT === 'development' || env?.DEV === true || guestSecretInfo.isDevFallback;
-        if (!verifiedUserId && isDevOrTest) {
-          try {
-            const parts = bearerToken.split('.');
-            if (parts.length === 3) {
-              const payload = JSON.parse(fromBase64Url(parts[1]));
-              if (payload.sub || payload.id) {
-                verifiedUserId = payload.sub || payload.id;
-              }
             }
           } catch {
             // ignore
@@ -2211,7 +2209,7 @@ export default {
           }, 403);
         }
 
-        // In-flight concurrency guard: prevent simultaneous duplicate deletion requests
+        // Isolate-local in-flight concurrency guard
         if (activeAccountDeletions.has(verifiedUserId)) {
           return jsonResponse({
             success: false,
@@ -2221,22 +2219,38 @@ export default {
 
         activeAccountDeletions.add(verifiedUserId);
         try {
-          if (baseSupabaseUrl && supabaseServiceKey) {
-            const adminHeaders: Record<string, string> = {
-              'apikey': supabaseServiceKey,
-              'Authorization': `Bearer ${supabaseServiceKey}`,
-              'Content-Type': 'application/json',
-            };
+          const adminHeaders: Record<string, string> = {
+            'apikey': supabaseServiceKey,
+            'Authorization': `Bearer ${supabaseServiceKey}`,
+            'Content-Type': 'application/json',
+          };
 
-            // 1. Anonymize user safety reports (preserve moderation records, scrub reporter personal identity)
-            await fetch(`${baseSupabaseUrl}/rest/v1/reports?reporter_user_id=eq.${encodeURIComponent(verifiedUserId)}`, {
+          // 1. Anonymize user safety reports (preserve moderation records, scrub reporter personal identity)
+          try {
+            const reportsRes = await fetch(`${baseSupabaseUrl}/rest/v1/reports?reporter_user_id=eq.${encodeURIComponent(verifiedUserId)}`, {
               method: 'PATCH',
               headers: adminHeaders,
               body: JSON.stringify({ reporter_user_id: null }),
-            }).catch((err) => console.warn('[Worker] Anonymize reports exception:', err));
+            });
+            if (!reportsRes.ok) {
+              const errText = await reportsRes.text().catch(() => '');
+              console.error(`[Worker] Reports anonymization failed HTTP ${reportsRes.status}:`, errText);
+              return jsonResponse({
+                success: false,
+                error: `Account deletion failed during reports anonymization (HTTP ${reportsRes.status}). Deletion sequence aborted.`,
+              }, 500);
+            }
+          } catch (err: any) {
+            console.error('[Worker] Reports anonymization network exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Account deletion failed: Network exception during reports anonymization. Deletion sequence aborted.',
+            }, 500);
+          }
 
-            // 2. Anonymize user messages (preserve room/conversation message history, scrub sender personal identity)
-            await fetch(`${baseSupabaseUrl}/rest/v1/messages?sender_user_id=eq.${encodeURIComponent(verifiedUserId)}`, {
+          // 2. Anonymize user messages (preserve room/conversation message history, scrub sender personal identity)
+          try {
+            const messagesRes = await fetch(`${baseSupabaseUrl}/rest/v1/messages?sender_user_id=eq.${encodeURIComponent(verifiedUserId)}`, {
               method: 'PATCH',
               headers: adminHeaders,
               body: JSON.stringify({
@@ -2245,24 +2259,69 @@ export default {
                 sender_avatar: '👤',
                 client_nonce: null,
               }),
-            }).catch((err) => console.warn('[Worker] Anonymize messages exception:', err));
+            });
+            if (!messagesRes.ok) {
+              const errText = await messagesRes.text().catch(() => '');
+              console.error(`[Worker] Messages anonymization failed HTTP ${messagesRes.status}:`, errText);
+              return jsonResponse({
+                success: false,
+                error: `Account deletion failed during messages anonymization (HTTP ${messagesRes.status}). Deletion sequence aborted.`,
+              }, 500);
+            }
+          } catch (err: any) {
+            console.error('[Worker] Messages anonymization network exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Account deletion failed: Network exception during messages anonymization. Deletion sequence aborted.',
+            }, 500);
+          }
 
-            // 3. Delete user participation records from conversation_participants
-            await fetch(`${baseSupabaseUrl}/rest/v1/conversation_participants?user_id=eq.${encodeURIComponent(verifiedUserId)}`, {
+          // 3. Delete user participation records from conversation_participants
+          try {
+            const partRes = await fetch(`${baseSupabaseUrl}/rest/v1/conversation_participants?user_id=eq.${encodeURIComponent(verifiedUserId)}`, {
               method: 'DELETE',
               headers: adminHeaders,
-            }).catch((err) => console.warn('[Worker] Delete conversation_participants exception:', err));
+            });
+            if (!partRes.ok) {
+              const errText = await partRes.text().catch(() => '');
+              console.error(`[Worker] Conversation participants deletion failed HTTP ${partRes.status}:`, errText);
+              return jsonResponse({
+                success: false,
+                error: `Account deletion failed during conversation participants cleanup (HTTP ${partRes.status}). Deletion sequence aborted.`,
+              }, 500);
+            }
+          } catch (err: any) {
+            console.error('[Worker] Conversation participants cleanup network exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Account deletion failed: Network exception during conversation participants cleanup. Deletion sequence aborted.',
+            }, 500);
+          }
 
-            // 4. Delete public user profile row from public.profiles
+          // 4. Delete public user profile row from public.profiles
+          try {
             const profileRes = await fetch(`${baseSupabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(verifiedUserId)}`, {
               method: 'DELETE',
               headers: adminHeaders,
             });
             if (!profileRes.ok && profileRes.status !== 404) {
-              console.warn(`[Worker] Profile deletion returned HTTP ${profileRes.status}`);
+              const errText = await profileRes.text().catch(() => '');
+              console.error(`[Worker] Profile deletion failed HTTP ${profileRes.status}:`, errText);
+              return jsonResponse({
+                success: false,
+                error: `Account deletion failed during profile cleanup (HTTP ${profileRes.status}). Deletion sequence aborted.`,
+              }, 500);
             }
+          } catch (err: any) {
+            console.error('[Worker] Profile cleanup network exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Account deletion failed: Network exception during profile cleanup. Deletion sequence aborted.',
+            }, 500);
+          }
 
-            // 5. Permanently delete user from Supabase Auth via administrative endpoint
+          // 5. Permanently delete user from Supabase Auth via administrative endpoint
+          try {
             const authAdminRes = await fetch(`${baseSupabaseUrl}/auth/v1/admin/users/${encodeURIComponent(verifiedUserId)}`, {
               method: 'DELETE',
               headers: adminHeaders,
@@ -2276,25 +2335,18 @@ export default {
                 error: `Account deletion failed during administrative authentication purge (HTTP ${authAdminRes.status}). Partial deletion aborted.`,
               }, 500);
             }
-
+          } catch (err: any) {
+            console.error('[Worker] Auth admin user deletion network exception:', err);
             return jsonResponse({
-              success: true,
-              message: 'Account and associated profile data successfully deleted.',
-            });
-          }
-
-          // Fallback for dev / test environment without active Supabase network bindings
-          if (isDevOrTest) {
-            return jsonResponse({
-              success: true,
-              message: 'Account successfully deleted (Dev/Test Simulation Mode).',
-            });
+              success: false,
+              error: 'Account deletion failed: Network exception during Auth user purge.',
+            }, 500);
           }
 
           return jsonResponse({
-            success: false,
-            error: 'Server configuration error: Database bindings missing in production.',
-          }, 503);
+            success: true,
+            message: 'Account and associated profile data successfully deleted.',
+          });
         } finally {
           activeAccountDeletions.delete(verifiedUserId);
         }
