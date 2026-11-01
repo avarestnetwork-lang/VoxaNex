@@ -270,7 +270,121 @@ async function runAccountDeletionTests() {
     globalThis.fetch = originalFetch;
   }
 
-  // 3.3 Full success execution path
+  // 3.3 Profile cleanup HTTP 404 failure prevents Auth Admin deletion
+  try {
+    let authAdminCalled = false;
+    globalThis.fetch = (async (input: any) => {
+      const urlStr = typeof input === 'string' ? input : input.url;
+      if (urlStr.includes('/auth/v1/user')) {
+        return new Response(JSON.stringify({ id: validUserId }), { status: 200 });
+      }
+      if (urlStr.includes('/rest/v1/reports') || urlStr.includes('/rest/v1/messages') || urlStr.includes('/rest/v1/conversation_participants')) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (urlStr.includes('/rest/v1/profiles')) {
+        return new Response('Profile table/endpoint not found', { status: 404 });
+      }
+      if (urlStr.includes('/auth/v1/admin/users/')) {
+        authAdminCalled = true;
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as any;
+
+    const reqProfile404 = new Request('https://chatlustora.com/api/auth/delete-account', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${validToken}`,
+      },
+      body: JSON.stringify({ userId: validUserId }),
+    });
+    const resProfile404 = await worker.fetch(reqProfile404, dbTestEnv, {});
+    const bodyProfile404 = (await resProfile404.json()) as any;
+    assert(resProfile404.status === 500, '3.3 Profile cleanup HTTP 404 returns HTTP 500');
+    assert(bodyProfile404.success === false, '3.3 Profile cleanup HTTP 404 returns success: false');
+    assert(!authAdminCalled, '3.3 Auth Admin deletion was NOT called when profile cleanup returned 404');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 3.4 Profile cleanup HTTP 500 failure prevents Auth Admin deletion
+  try {
+    let authAdminCalled = false;
+    globalThis.fetch = (async (input: any) => {
+      const urlStr = typeof input === 'string' ? input : input.url;
+      if (urlStr.includes('/auth/v1/user')) {
+        return new Response(JSON.stringify({ id: validUserId }), { status: 200 });
+      }
+      if (urlStr.includes('/rest/v1/reports') || urlStr.includes('/rest/v1/messages') || urlStr.includes('/rest/v1/conversation_participants')) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (urlStr.includes('/rest/v1/profiles')) {
+        return new Response('Database error on profile cleanup', { status: 500 });
+      }
+      if (urlStr.includes('/auth/v1/admin/users/')) {
+        authAdminCalled = true;
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as any;
+
+    const reqProfile500 = new Request('https://chatlustora.com/api/auth/delete-account', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${validToken}`,
+      },
+      body: JSON.stringify({ userId: validUserId }),
+    });
+    const resProfile500 = await worker.fetch(reqProfile500, dbTestEnv, {});
+    const bodyProfile500 = (await resProfile500.json()) as any;
+    assert(resProfile500.status === 500, '3.4 Profile cleanup HTTP 500 returns HTTP 500');
+    assert(bodyProfile500.success === false, '3.4 Profile cleanup HTTP 500 returns success: false');
+    assert(!authAdminCalled, '3.4 Auth Admin deletion was NOT called when profile cleanup returned 500');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 3.5 Profile cleanup network exception prevents Auth Admin deletion
+  try {
+    let authAdminCalled = false;
+    globalThis.fetch = (async (input: any) => {
+      const urlStr = typeof input === 'string' ? input : input.url;
+      if (urlStr.includes('/auth/v1/user')) {
+        return new Response(JSON.stringify({ id: validUserId }), { status: 200 });
+      }
+      if (urlStr.includes('/rest/v1/reports') || urlStr.includes('/rest/v1/messages') || urlStr.includes('/rest/v1/conversation_participants')) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (urlStr.includes('/rest/v1/profiles')) {
+        throw new TypeError('Network connection reset during profile cleanup');
+      }
+      if (urlStr.includes('/auth/v1/admin/users/')) {
+        authAdminCalled = true;
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as any;
+
+    const reqProfileExc = new Request('https://chatlustora.com/api/auth/delete-account', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${validToken}`,
+      },
+      body: JSON.stringify({ userId: validUserId }),
+    });
+    const resProfileExc = await worker.fetch(reqProfileExc, dbTestEnv, {});
+    const bodyProfileExc = (await resProfileExc.json()) as any;
+    assert(resProfileExc.status === 500, '3.5 Profile cleanup network exception returns HTTP 500');
+    assert(bodyProfileExc.success === false, '3.5 Profile cleanup network exception returns success: false');
+    assert(!authAdminCalled, '3.5 Auth Admin deletion was NOT called when profile cleanup threw network exception');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 3.6 Full success execution path when profile cleanup returns HTTP 200 (2xx)
   try {
     const fetchCalls: Array<{ url: string; method: string }> = [];
     globalThis.fetch = (async (input: any, init?: any) => {
@@ -304,11 +418,14 @@ async function runAccountDeletionTests() {
 
     const resSuccess = await worker.fetch(reqSuccess, dbTestEnv, {});
     const bodySuccess = (await resSuccess.json()) as any;
-    assert(resSuccess.status === 200, '3.3 Database account deletion returns HTTP 200');
-    assert(bodySuccess.success === true, '3.3 Response confirms success: true');
+    assert(resSuccess.status === 200, '3.6 Database account deletion returns HTTP 200 when profile cleanup returns 2xx');
+    assert(bodySuccess.success === true, '3.6 Response confirms success: true');
+
+    const profileCall = fetchCalls.find(c => c.url.includes('/rest/v1/profiles') && c.method === 'DELETE');
+    assert(Boolean(profileCall), '3.6 Profile deletion endpoint was called with DELETE method');
 
     const authAdminCall = fetchCalls.find(c => c.url.includes(`/auth/v1/admin/users/${validUserId}`) && c.method === 'DELETE');
-    assert(Boolean(authAdminCall), '3.3 Admin Auth user deletion endpoint was called with DELETE method');
+    assert(Boolean(authAdminCall), '3.6 Admin Auth user deletion endpoint was called after profile cleanup succeeded');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -372,7 +489,7 @@ async function runAccountDeletionTests() {
   // 6. SUMMARY
   // ---------------------------------------------------------------------------
   console.log('\n=============================================================');
-  console.log('  ALL ACCOUNT DELETION & GUEST REVOCATION TESTS PASSED (18/18)');
+  console.log('  ALL ACCOUNT DELETION & GUEST REVOCATION TESTS PASSED SUCCESSFULLY');
   console.log('=============================================================\n');
 }
 
