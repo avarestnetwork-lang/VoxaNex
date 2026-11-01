@@ -40,7 +40,15 @@ export interface SendMessageOptions {
 
 const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || (typeof window !== 'undefined' && window.location?.origin) || 'https://voxanex.test';
 
+let __testAuthTokenResolver: (() => Promise<string | null>) | null = null;
+export const setTestAuthTokenResolver = (resolver: (() => Promise<string | null>) | null) => {
+  __testAuthTokenResolver = resolver;
+};
+
 async function getAuthToken(): Promise<string | null> {
+  if (typeof __testAuthTokenResolver === 'function') {
+    return await __testAuthTokenResolver();
+  }
   const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
   if (guestToken) return guestToken;
 
