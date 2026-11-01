@@ -53,12 +53,13 @@ interface GuestSession {
 
 function getGuestSecret(env: any): { secret: string | null; isDevFallback: boolean } {
   const secretValue = env?.GUEST_SESSION_SECRET;
+  const isDevFallback = env?.ENVIRONMENT === 'development' || env?.DEV === true;
   if (secretValue && typeof secretValue === 'string' && secretValue.trim().length > 0) {
-    return { secret: secretValue.trim(), isDevFallback: false };
+    return { secret: secretValue.trim(), isDevFallback };
   }
   return { 
     secret: null, 
-    isDevFallback: env?.ENVIRONMENT === 'development' || env?.DEV === true 
+    isDevFallback 
   };
 }
 
@@ -257,6 +258,98 @@ async function verifyGuestToken(
   }
 }
 
+async function authenticateRequest(
+  request: Request,
+  url: URL,
+  guestSecretInfo: { secret: string | null; isDevFallback: boolean },
+  dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string; supabaseAnonKey?: string },
+  supabaseClient?: any
+): Promise<{ verifiedUserId: string; isGuestCaller: boolean } | { errorResponse: Response }> {
+  const guestTokenParam = url.searchParams.get('guestToken') || request.headers.get('x-guest-token');
+  const authHeader = request.headers.get('Authorization');
+  const bearerToken = authHeader && authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7).trim()
+    : null;
+
+  const guestToken = guestTokenParam || (bearerToken && bearerToken.startsWith('vx_gst_') ? bearerToken : null);
+  const memberJwt = !guestToken && bearerToken && !bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+
+  if (guestToken) {
+    const authCheck = await verifyGuestToken(guestToken, guestSecretInfo, dbEnv);
+    if (!authCheck.valid || !authCheck.session) {
+      return {
+        errorResponse: jsonResponse({
+          success: false,
+          error: `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}`,
+        }, 401)
+      };
+    }
+    return { verifiedUserId: authCheck.session.id, isGuestCaller: true };
+  } else if (memberJwt) {
+    let verifiedUserId: string | null = null;
+    if (dbEnv.supabaseUrl) {
+      try {
+        const userRes = await fetch(`${dbEnv.supabaseUrl}/auth/v1/user`, {
+          headers: {
+            'apikey': dbEnv.supabaseAnonKey || dbEnv.supabaseServiceKey || '',
+            'Authorization': `Bearer ${memberJwt}`,
+          },
+        });
+        if (userRes.ok) {
+          const userData: any = await userRes.json();
+          if (userData && userData.id) {
+            verifiedUserId = userData.id;
+          }
+        }
+      } catch (err) {
+        console.warn('[Worker] Supabase member verification fetch exception:', err);
+      }
+    }
+
+    if (!verifiedUserId && supabaseClient) {
+      try {
+        const { data: userData, error: userErr } = await supabaseClient.auth.getUser(memberJwt);
+        if (!userErr && userData?.user?.id) {
+          verifiedUserId = userData.user.id;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!verifiedUserId && guestSecretInfo.isDevFallback) {
+      try {
+        const parts = memberJwt.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(fromBase64Url(parts[1]));
+          if (payload.sub || payload.id) {
+            verifiedUserId = payload.sub || payload.id;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!verifiedUserId) {
+      return {
+        errorResponse: jsonResponse({
+          success: false,
+          error: 'Unauthorized: Invalid or expired member session token.',
+        }, 401)
+      };
+    }
+    return { verifiedUserId, isGuestCaller: false };
+  }
+
+  return {
+    errorResponse: jsonResponse({
+      success: false,
+      error: 'Unauthorized: Authentication required.',
+    }, 401)
+  };
+}
+
 // Global in-memory maps for Edge instance
 const roomMessages = new Map<string, HubMessage[]>();
 const roomPresence = new Map<string, Map<string, PresenceMember>>();
@@ -409,6 +502,26 @@ export default {
     const userSseMatch = url.pathname.match(/^\/api\/chat\/user\/([^/]+)\/events\/?$/);
     if (userSseMatch && request.method === 'GET') {
       const userId = decodeURIComponent(userSseMatch[1]);
+
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      if (authResult.verifiedUserId !== userId) {
+        return jsonResponse({
+          success: false,
+          error: 'Unauthorized: Cannot subscribe to another user\'s direct message stream.',
+        }, 403);
+      }
+
       let intervalId: any = null;
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
@@ -1195,6 +1308,143 @@ export default {
     const convEventsMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/events\/?$/);
     if (convEventsMatch && request.method === 'GET') {
       const convId = decodeURIComponent(convEventsMatch[1]);
+
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      const verifiedUserId = authResult.verifiedUserId;
+      const isGuestCaller = authResult.isGuestCaller;
+
+      // Authorize conversation membership strictly using verified identity
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      let dbConvId: string | null = null;
+
+      if (convId.startsWith('conv_')) {
+        const idWithoutPrefix = convId.slice('conv_'.length);
+        const parts = idWithoutPrefix.split('_');
+
+        if (parts.length !== 2) {
+          return jsonResponse({
+            success: false,
+            error: 'Invalid conversation slug format.',
+          }, 400);
+        }
+
+        const [id1, id2] = parts;
+
+        if (!uuidRegex.test(id1) || !uuidRegex.test(id2)) {
+          return jsonResponse({
+            success: false,
+            error: 'Invalid participant identifier in conversation slug.',
+          }, 400);
+        }
+
+        if (id1 === id2) {
+          return jsonResponse({
+            success: false,
+            error: 'Invalid conversation slug: Duplicate participant identifiers.',
+          }, 400);
+        }
+
+        if (id1 !== verifiedUserId && id2 !== verifiedUserId) {
+          return jsonResponse({
+            success: false,
+            error: 'Unauthorized: Authenticated caller is not a participant in this conversation slug.',
+          }, 403);
+        }
+
+        const partnerId = (id1 === verifiedUserId) ? id2 : id1;
+        dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, partnerId);
+      } else if (uuidRegex.test(convId)) {
+        dbConvId = convId;
+      } else {
+        return jsonResponse({
+          success: false,
+          error: 'Invalid conversation identifier format.',
+        }, 400);
+      }
+
+      if (!dbConvId || !uuidRegex.test(dbConvId)) {
+        return jsonResponse({
+          success: false,
+          error: 'Invalid or unresolved conversation identifier.',
+        }, 400);
+      }
+
+      let isMember = false;
+
+      if (baseSupabaseUrl && supabaseServiceKey) {
+        try {
+          const memberFilter = isGuestCaller
+            ? `guest_id=eq.${encodeURIComponent(verifiedUserId)}`
+            : `user_id=eq.${encodeURIComponent(verifiedUserId)}`;
+
+          const participantUrl = `${baseSupabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(dbConvId)}&${memberFilter}&select=id`;
+
+          const partRes = await fetch(participantUrl, {
+            headers: {
+              'apikey': supabaseServiceKey,
+              'Authorization': `Bearer ${supabaseServiceKey}`,
+            },
+          });
+
+          if (partRes.ok) {
+            let partData: any;
+            try {
+              partData = await partRes.json();
+            } catch (jsonErr) {
+              console.error('[Worker] JSON parse error on participant verification for SSE:', jsonErr);
+              return jsonResponse({
+                success: false,
+                error: 'Database error parsing membership verification response.',
+              }, 500);
+            }
+
+            if (Array.isArray(partData) && partData.length > 0) {
+              isMember = true;
+            }
+          } else {
+            const errText = await partRes.text().catch(() => '');
+            console.error(`[Worker] Participant verification for SSE failed HTTP ${partRes.status}:`, errText);
+            return jsonResponse({
+              success: false,
+              error: `Database error verifying conversation membership (HTTP ${partRes.status}).`,
+            }, 500);
+          }
+        } catch (partErr) {
+          console.error('[Worker] Participant verification exception for SSE:', partErr);
+          return jsonResponse({
+            success: false,
+            error: 'Database error verifying conversation membership.',
+          }, 500);
+        }
+      } else if (guestSecretInfo.isDevFallback) {
+        if (convId.includes(verifiedUserId) || dbConvId.includes(verifiedUserId)) {
+          isMember = true;
+        }
+      } else {
+        return jsonResponse({
+          success: false,
+          error: 'Server configuration error: Database bindings missing in production.',
+        }, 503);
+      }
+
+      if (!isMember) {
+        return jsonResponse({
+          success: false,
+          error: 'Unauthorized: Not a member of this conversation.',
+        }, 403);
+      }
+
       let intervalId: any = null;
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
@@ -1204,15 +1454,22 @@ export default {
           if (!conversationStreams.has(convId)) {
             conversationStreams.set(convId, new Set());
           }
-          const controllers = conversationStreams.get(convId)!;
-          controllers.add(controller);
+          conversationStreams.get(convId)!.add(controller);
+
+          if (dbConvId && dbConvId !== convId) {
+            if (!conversationStreams.has(dbConvId)) {
+              conversationStreams.set(dbConvId, new Set());
+            }
+            conversationStreams.get(dbConvId)!.add(controller);
+          }
 
           const encoder = new TextEncoder();
           try {
             controller.enqueue(encoder.encode(`event: connected\ndata: {"status":"connected","convId":"${convId}"}\n\n`));
           } catch {
             if (intervalId) clearInterval(intervalId);
-            controllers.delete(controller);
+            conversationStreams.get(convId)?.delete(controller);
+            if (dbConvId) conversationStreams.get(dbConvId)?.delete(controller);
           }
 
           intervalId = setInterval(() => {
@@ -1220,17 +1477,27 @@ export default {
               controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
             } catch {
               if (intervalId) clearInterval(intervalId);
-              if (streamController) controllers.delete(streamController);
+              if (streamController) {
+                conversationStreams.get(convId)?.delete(streamController);
+                if (dbConvId) conversationStreams.get(dbConvId)?.delete(streamController);
+              }
             }
           }, 15000);
         },
         cancel(reason) {
           if (intervalId) clearInterval(intervalId);
-          const controllers = conversationStreams.get(convId);
-          if (controllers && streamController) {
-            controllers.delete(streamController);
-            if (controllers.size === 0) {
-              conversationStreams.delete(convId);
+          if (streamController) {
+            const controllers = conversationStreams.get(convId);
+            if (controllers) {
+              controllers.delete(streamController);
+              if (controllers.size === 0) conversationStreams.delete(convId);
+            }
+            if (dbConvId) {
+              const dbControllers = conversationStreams.get(dbConvId);
+              if (dbControllers) {
+                dbControllers.delete(streamController);
+                if (dbControllers.size === 0) conversationStreams.delete(dbConvId);
+              }
             }
           }
         },

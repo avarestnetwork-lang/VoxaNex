@@ -58,6 +58,120 @@ async function getAuthToken(): Promise<string | null> {
   return null;
 }
 
+export interface CustomSSEOptions {
+  url: string;
+  headers?: Record<string, string>;
+  onOpen?: () => void;
+  onEvent: (event: string, data: string) => void;
+  onError?: (err: Error) => void;
+  onAuthError?: (status: number, message: string) => void;
+}
+
+export function connectCustomSSE(options: CustomSSEOptions): () => void {
+  const { url, headers = {}, onOpen, onEvent, onError, onAuthError } = options;
+  let isCancelled = false;
+  let controller: AbortController | null = null;
+  let reconnectTimeout: any = null;
+  let retryDelay = 1000;
+
+  const startConnection = async () => {
+    if (isCancelled) return;
+    controller = new AbortController();
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'text/event-stream',
+          ...headers,
+        },
+        signal: controller.signal,
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        const errorText = await response.text().catch(() => '');
+        onAuthError?.(response.status, errorText);
+        return; // Halt reconnects on 401/403 authorization failure
+      }
+
+      if (!response.ok) {
+        onError?.(new Error(`HTTP ${response.status}`));
+        if (!isCancelled) {
+          reconnectTimeout = setTimeout(() => {
+            retryDelay = Math.min(retryDelay * 1.5, 10000);
+            startConnection();
+          }, retryDelay);
+        }
+        return;
+      }
+
+      onOpen?.();
+      retryDelay = 1000;
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        onError?.(new Error('ReadableStream body missing'));
+        return;
+      }
+
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (!isCancelled) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split(/\r?\n\r?\n/);
+        buffer = parts.pop() || '';
+
+        for (const block of parts) {
+          if (!block.trim()) continue;
+
+          const lines = block.split(/\r?\n/);
+          let currentEvent = 'message';
+          const dataLines: string[] = [];
+
+          for (const line of lines) {
+            if (line.startsWith(':')) {
+              // Comment (ping) - skip
+              continue;
+            }
+            if (line.startsWith('event:')) {
+              currentEvent = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              const dataVal = line.slice(5);
+              dataLines.push(dataVal.startsWith(' ') ? dataVal.slice(1) : dataVal);
+            }
+          }
+
+          if (dataLines.length > 0) {
+            onEvent(currentEvent, dataLines.join('\n'));
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError' || isCancelled) return;
+      onError?.(err);
+    }
+
+    if (!isCancelled) {
+      reconnectTimeout = setTimeout(() => {
+        retryDelay = Math.min(retryDelay * 1.5, 10000);
+        startConnection();
+      }, retryDelay);
+    }
+  };
+
+  startConnection();
+
+  return () => {
+    isCancelled = true;
+    if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    if (controller) controller.abort();
+  };
+}
+
 export const messagingService = {
   /**
    * Fetch paginated message history for a public room with Supabase fallback
@@ -610,41 +724,53 @@ export const messagingService = {
       // ignore
     }
 
-    // 2. SSE Connection (Authenticated via guestToken)
-    try {
-      const token = guestSessionService.getStoredToken();
-      eventSource = new EventSource(`${API_BASE}/api/chat/conversations/${convId}/events?userId=${encodeURIComponent(userId)}${token ? `&guestToken=${encodeURIComponent(token)}` : ''}`);
-      
-      eventSource.addEventListener('new_dm', (e) => {
-        console.log('[VX-DM] Received new_dm event from SSE for conversation:', convId);
-        try {
-          const msg = JSON.parse(e.data);
-          emitUniqueDm(msg);
-        } catch {
-          // ignore
-        }
-      });
+    // 2. SSE Connection (Authenticated via HTTP Headers - Authorization / X-Guest-Token)
+    let unsubscribeSSE = () => {};
+    (async () => {
+      if (isClosed) return;
+      const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
+      const authToken = !guestToken ? await getAuthToken() : undefined;
 
-      eventSource.addEventListener('dm_typing', (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          callbacks.onTyping?.(data.typers || []);
-        } catch {
-          // ignore
-        }
-      });
+      const headers: Record<string, string> = {};
+      if (guestToken) {
+        headers['Authorization'] = `Bearer ${guestToken}`;
+        headers['X-Guest-Token'] = guestToken;
+      } else if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
 
-      eventSource.addEventListener('dm_read', (e) => {
-        try {
-          const receipt = JSON.parse(e.data);
-          callbacks.onRead?.(receipt);
-        } catch {
-          // ignore
-        }
+      unsubscribeSSE = connectCustomSSE({
+        url: `${API_BASE}/api/chat/conversations/${convId}/events`,
+        headers,
+        onEvent: (eventName, dataStr) => {
+          if (eventName === 'new_dm' || eventName === 'message') {
+            try {
+              const msg = JSON.parse(dataStr);
+              emitUniqueDm(msg);
+            } catch {
+              // ignore
+            }
+          } else if (eventName === 'dm_typing') {
+            try {
+              const data = JSON.parse(dataStr);
+              callbacks.onTyping?.(data.typers || []);
+            } catch {
+              // ignore
+            }
+          } else if (eventName === 'dm_read') {
+            try {
+              const receipt = JSON.parse(dataStr);
+              callbacks.onRead?.(receipt);
+            } catch {
+              // ignore
+            }
+          }
+        },
+        onAuthError: (status, message) => {
+          console.warn(`[VX-DM] SSE authorization error ${status}:`, message);
+        },
       });
-    } catch {
-      // ignore
-    }
+    })();
 
     // 4. Supabase Realtime Private channel subscription (Shared state)
     let unsubSupabase = () => {};
@@ -676,6 +802,7 @@ export const messagingService = {
     return () => {
       isClosed = true;
       if (syncInterval) clearInterval(syncInterval);
+      unsubscribeSSE();
       unsubSupabase();
       if (broadcastChannel) {
         try {
@@ -684,8 +811,55 @@ export const messagingService = {
           // ignore
         }
       }
-      eventSource?.close();
-      eventSource = null;
+    };
+  },
+
+  /**
+   * Subscribe to direct user events stream (Authenticated via headers)
+   */
+  subscribeToUserEvents(
+    userId: string,
+    callbacks: {
+      onMessage?: (msg: ChatMessage) => void;
+      onAuthError?: (status: number, message: string) => void;
+    }
+  ): () => void {
+    let unsubscribeSSE = () => {};
+    let isClosed = false;
+
+    (async () => {
+      if (isClosed) return;
+      const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
+      const authToken = !guestToken ? await getAuthToken() : undefined;
+
+      const headers: Record<string, string> = {};
+      if (guestToken) {
+        headers['Authorization'] = `Bearer ${guestToken}`;
+        headers['X-Guest-Token'] = guestToken;
+      } else if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
+      unsubscribeSSE = connectCustomSSE({
+        url: `${API_BASE}/api/chat/user/${userId}/events`,
+        headers,
+        onEvent: (eventName, dataStr) => {
+          if (eventName === 'new_dm' || eventName === 'message') {
+            try {
+              const msg = JSON.parse(dataStr);
+              callbacks.onMessage?.(msg);
+            } catch {
+              // ignore
+            }
+          }
+        },
+        onAuthError: callbacks.onAuthError,
+      });
+    })();
+
+    return () => {
+      isClosed = true;
+      unsubscribeSSE();
     };
   },
 
