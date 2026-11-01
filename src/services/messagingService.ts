@@ -79,13 +79,13 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
   const { url, headers = {}, onOpen, onEvent, onError, onAuthError } = options;
   let isCancelled = false;
   let controller: AbortController | null = null;
+  let activeReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let reconnectTimeout: any = null;
   let retryDelay = 1000;
 
   const startConnection = async () => {
     if (isCancelled) return;
     controller = new AbortController();
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
     try {
       const response = await fetch(url, {
@@ -116,8 +116,8 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
       onOpen?.();
       retryDelay = 1000;
 
-      reader = response.body?.getReader();
-      if (!reader) {
+      activeReader = response.body?.getReader();
+      if (!activeReader) {
         onError?.(new Error('ReadableStream body missing'));
         return;
       }
@@ -126,7 +126,7 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
       let buffer = '';
 
       while (!isCancelled) {
-        const { done, value } = await reader.read();
+        const { done, value } = await activeReader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -162,7 +162,7 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
       if (err.name === 'AbortError' || isCancelled) return;
       onError?.(err);
     } finally {
-      if (reader) await reader.cancel().catch(() => {});
+      if (activeReader) await activeReader.cancel().catch(() => {});
     }
 
     if (!isCancelled) {
@@ -179,6 +179,7 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
     isCancelled = true;
     if (reconnectTimeout) clearTimeout(reconnectTimeout);
     if (controller) controller.abort();
+    activeReader?.cancel().catch(() => {});
   };
 }
 

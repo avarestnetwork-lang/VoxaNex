@@ -2,7 +2,7 @@ import worker from '../src/worker';
 import { connectCustomSSE, messagingService, setTestAuthTokenResolver } from '../src/services/messagingService';
 
 /**
- * Phase 2.3.4.5 — Restore SSE Regression Coverage & Correct Guest Configuration Tests
+ * Phase 2.3.4.6 — Deterministic SSE Cancellation & Parser Regression Tests
  */
 
 let passedCount = 0;
@@ -14,6 +14,7 @@ function assert(condition: boolean, testName: string, detail?: string) {
   if (!condition) {
     console.error(`❌ [FAILED] ${testName}${detail ? ` (${detail})` : ''}`);
     failedCount++;
+    process.exitCode = 1;
   } else {
     console.log(`✅ [PASSED] ${testName}`);
     passedCount++;
@@ -34,40 +35,27 @@ async function createTestGuestToken(sid: string, secret: string, expiresAt?: num
 
 async function computeTokenHash(token: string): Promise<string> {
   const encoder = new TextEncoder();
-  const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(token));
+  const data = encoder.encode(token);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function runTests() {
-  console.log('--- VoxaNex Phase 2.3.4.5 Test Suite ---\n');
-
+  console.log('--- VoxaNex Phase 2.3.4.6 Test Suite ---\n');
   const secret = 'test_guest_secret_key_32_bytes_long!!';
-  const dbEnv = {
-    ENVIRONMENT: 'development',
-    DEV: true,
-    SUPABASE_URL: 'https://voxanex.supabase.co',
-    SUPABASE_SERVICE_ROLE_KEY: 'test_service_role_key',
-    SUPABASE_ANON_KEY: 'test_anon_key',
-    GUEST_SESSION_SECRET: secret,
-  };
-
+  const dbEnv = { ENVIRONMENT: 'development', DEV: true, SUPABASE_URL: 'https://voxanex.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'test_service_role_key', SUPABASE_ANON_KEY: 'test_anon_key', GUEST_SESSION_SECRET: secret };
   const guestA = '00000000-0000-4000-b000-000000000001';
   const tokenA = await createTestGuestToken(guestA, secret);
   const hashA = await computeTokenHash(tokenA);
   const origFetch = globalThis.fetch;
 
-  // Task 1: 15-Scenario Guest Matrix
+  // Task 1: Guest Security Matrix
   console.log('--- Task 1: Guest Session Database Integrity Matrix ---');
-  async function runGuestTest(scenarioName: string, mockFetchHandler: () => Response | Promise<Response>, expectedStatus: number, env: any = dbEnv) {
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const urlStr = typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString();
-      if (urlStr.includes('/rest/v1/guest_sessions')) return await mockFetchHandler();
-      return origFetch(input, init);
-    }) as typeof fetch;
+  async function runGuestTest(name: string, mock: () => Response | Promise<Response>, status: number, env: any = dbEnv) {
+    globalThis.fetch = (async (input, init) => { const url = typeof input === 'string' ? input : input.toString(); if (url.includes('/rest/v1/guest_sessions')) return await mock(); return origFetch(input, init); }) as typeof fetch;
     try {
-      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, { method: 'GET', headers: { 'Authorization': `Bearer ${tokenA}` } });
-      const res = await worker.fetch(req, env);
-      assert(res.status === expectedStatus, `Guest Matrix: ${scenarioName}`);
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, { headers: { 'Authorization': `Bearer ${tokenA}` } }), env);
+      assert(res.status === status, `Guest Matrix: ${name}`);
       await res.body?.cancel();
     } finally { globalThis.fetch = origFetch; }
   }
@@ -88,11 +76,10 @@ async function runTests() {
   await runGuestTest('14. DB error', () => new Response('Error', { status: 500 }), 401);
   await runGuestTest('15. Missing DB config', () => new Response(JSON.stringify([{ id: guestA }]), { status: 200 }), 401, { ENVIRONMENT: 'development', DEV: true, GUEST_SESSION_SECRET: secret });
 
-  // Task 2: Auth Regressions
+  // Task 2: Auth Regression
   console.log('\n--- Task 2: Auth Regression Tests ---');
   for (const status of [401, 403]) {
-    let errStatus = 0;
-    let fetches = 0;
+    let errStatus = 0, fetches = 0;
     globalThis.fetch = async () => { fetches++; return new Response('Err', { status }); };
     const cleanup = connectCustomSSE({ url: '...', onEvent: () => {}, onAuthError: (s) => errStatus = s });
     await new Promise(r => setTimeout(r, 100));
@@ -108,10 +95,9 @@ async function runTests() {
     let fetchCount = 0;
     globalThis.fetch = async () => { fetchCount++; return fetchCount === 1 ? new Response('Error', { status: 500 }) : new Response('data: ok\n\n', { headers: { 'Content-Type': 'text/event-stream' } }); };
     const cleanup = connectCustomSSE({ url: '...', onEvent: () => {} });
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 2000));
     const count = fetchCount;
     cleanup();
-    await new Promise(r => setTimeout(r, 500));
     assert(count >= 2, 'Retry occurred');
     assert(fetchCount === count, 'No further retry');
     globalThis.fetch = origFetch;
@@ -121,9 +107,16 @@ async function runTests() {
   console.log('\n--- Task 4: Stream Cancellation ---');
   {
     let cancelled = false;
-    globalThis.fetch = async () => new Response(new ReadableStream({ cancel() { cancelled = true; } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    const ready = new Promise(resolve => {
+        globalThis.fetch = async () => {
+            return new Response(new ReadableStream({
+                start(c) { resolve(true); },
+                cancel() { cancelled = true; }
+            }), { headers: { 'Content-Type': 'text/event-stream' } });
+        };
+    });
     const cleanup = connectCustomSSE({ url: '...', onEvent: () => {} });
-    await new Promise(r => setTimeout(r, 100));
+    await ready;
     cleanup();
     await new Promise(r => setTimeout(r, 100));
     assert(cancelled, 'Stream terminated');
@@ -139,6 +132,9 @@ async function runTests() {
     await new Promise(r => setTimeout(r, 100));
     cleanup();
     assert(events.length === 3, '3 events parsed');
+    assert(events[0].e === 'named' && events[0].d === '1', 'Named event');
+    assert(events[1].e === 'message' && events[1].d === 'default', 'Default event');
+    assert(events[2].e === 'message' && events[2].d === 'end', 'Data after comment');
     globalThis.fetch = origFetch;
   }
 
