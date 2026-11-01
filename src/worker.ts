@@ -220,9 +220,9 @@ async function verifyGuestToken(
         return { valid: false, reason: 'Session identity mismatch.' };
       }
 
-      if (canonicalRow.is_revoked) {
+      if (canonicalRow.is_revoked !== false) {
         guestSessions.delete(token);
-        return { valid: false, reason: 'Guest session has been revoked.' };
+        return { valid: false, reason: 'Guest session has been revoked or revocation status is invalid.' };
       }
 
       // Authoritative database expiry validation
