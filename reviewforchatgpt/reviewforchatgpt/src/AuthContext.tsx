@@ -249,15 +249,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return authService.requestPasswordReset(email);
   };
 
-  const deleteAccount = async () => {
+  const deleteAccount = async (): Promise<{ success: boolean; message: string }> => {
     const res = await authService.requestAccountDeletion();
     if (!res.success) {
       return res;
     }
-    const logoutRes = await logout();
-    if (!logoutRes.success) {
-      return { success: false, message: logoutRes.error || 'Failed to revoke session during account deletion.' };
+
+    // Server has confirmed permanent account deletion.
+    // Perform best-effort client sign-out cleanup without failing the overall operation if Supabase signOut throws on deleted credentials.
+    if (!user.isGuest) {
+      try {
+        await authService.logout();
+      } catch (err) {
+        console.warn('[AuthContext] Post-deletion signout warning:', err);
+      }
     }
+
+    try {
+      localStorage.removeItem('voxanex_user_profile');
+    } catch {
+      // ignore
+    }
+
+    setHasActiveSession(false);
+    setUser({
+      id: '',
+      nickname: 'Visitor',
+      isGuest: true,
+      is18Verified: false,
+      avatar: '',
+      languagePreference: 'en',
+      safeFilterEnabled: true,
+      notificationSounds: true,
+      createdAt: new Date().toISOString(),
+    });
+
     return res;
   };
 
