@@ -85,6 +85,7 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
   const startConnection = async () => {
     if (isCancelled) return;
     controller = new AbortController();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
     try {
       const response = await fetch(url, {
@@ -98,7 +99,7 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
       if (response.status === 401 || response.status === 403) {
         const errorText = await response.text().catch(() => '');
         onAuthError?.(response.status, errorText);
-        return; // Halt reconnects on 401/403 authorization failure
+        return; 
       }
 
       if (!response.ok) {
@@ -115,7 +116,7 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
       onOpen?.();
       retryDelay = 1000;
 
-      const reader = response.body?.getReader();
+      reader = response.body?.getReader();
       if (!reader) {
         onError?.(new Error('ReadableStream body missing'));
         return;
@@ -142,7 +143,6 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
 
           for (const line of lines) {
             if (line.startsWith(':')) {
-              // Comment (ping) - skip
               continue;
             }
             if (line.startsWith('event:')) {
@@ -161,6 +161,8 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
     } catch (err: any) {
       if (err.name === 'AbortError' || isCancelled) return;
       onError?.(err);
+    } finally {
+      if (reader) await reader.cancel().catch(() => {});
     }
 
     if (!isCancelled) {
