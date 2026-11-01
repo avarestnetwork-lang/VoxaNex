@@ -284,7 +284,7 @@ async function authenticateRequest(
   dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string; supabaseAnonKey?: string },
   supabaseClient?: any,
   env?: any
-): Promise<{ verifiedUserId: string; isGuestCaller: boolean } | { errorResponse: Response }> {
+): Promise<{ verifiedUserId: string; isGuestCaller: boolean; guestSession?: GuestSession } | { errorResponse: Response }> {
   const authHeader = request.headers.get('Authorization');
   const bearerToken = authHeader && authHeader.startsWith('Bearer ')
     ? authHeader.slice(7).trim()
@@ -303,7 +303,7 @@ async function authenticateRequest(
         }, 401)
       };
     }
-    return { verifiedUserId: authCheck.session.id, isGuestCaller: true };
+    return { verifiedUserId: authCheck.session.id, isGuestCaller: true, guestSession: authCheck.session };
   } else if (memberJwt) {
     let verifiedUserId: string | null = null;
     if (dbEnv.supabaseUrl) {
@@ -353,6 +353,33 @@ async function authenticateRequest(
       error: 'Unauthorized: Authentication required.',
     }, 401)
   };
+}
+
+async function fetchMemberProfile(
+  userId: string,
+  dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string }
+): Promise<{ nickname: string; avatar: string } | null> {
+  if (!dbEnv.supabaseUrl || !dbEnv.supabaseServiceKey) return null;
+  try {
+    const res = await fetch(`${dbEnv.supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=nickname,avatar_url`, {
+      headers: {
+        'apikey': dbEnv.supabaseServiceKey,
+        'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+      },
+    });
+    if (res.ok) {
+      const rows: any = await res.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        return {
+          nickname: rows[0].nickname || 'User',
+          avatar: rows[0].avatar_url || '👤',
+        };
+      }
+    }
+  } catch (err) {
+    console.error('[Worker] Error fetching member profile:', err);
+  }
+  return null;
 }
 
 // Global in-memory maps for Edge instance
@@ -696,43 +723,59 @@ export default {
       // POST: Send new message
       if (request.method === 'POST') {
         try {
-          const body: any = await request.json();
+          // 1. Authenticate Request
+          const authResult = await authenticateRequest(
+            request,
+            url,
+            guestSecretInfo,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+            supabaseClient,
+            env
+          );
+
+          if ('errorResponse' in authResult) {
+            return authResult.errorResponse;
+          }
+
+          const { verifiedUserId, isGuestCaller, guestSession } = authResult;
+
+          // 2. Validate Body
+          const body: any = await request.json().catch(() => ({}));
           const {
-            senderId,
-            senderNickname,
-            senderAvatar,
-            senderType = 'guest',
             content,
             mediaUrl,
             mediaType,
             linkPreview,
             clientNonce,
+            senderId: clientSenderId,
           } = body || {};
 
-          if (!senderId || !senderNickname) {
-            return jsonResponse({ success: false, error: 'Invalid sender profile.' }, 400);
+          // Identity Spoofing Check
+          if (clientSenderId && clientSenderId !== verifiedUserId) {
+             return jsonResponse({ success: false, error: 'Forbidden: Sender identity mismatch (spoofing attempt rejected).' }, 403);
           }
 
           if (!content && !mediaUrl) {
             return jsonResponse({ success: false, error: 'Message content or media is required.' }, 400);
           }
 
-          let verifiedSenderId = senderId;
-          let verifiedNickname = senderNickname;
-          let verifiedAvatar = senderAvatar || '👤';
+          // 3. Derive Identity from Verified Source
+          let verifiedNickname: string;
+          let verifiedAvatar: string;
 
-          if (senderType === 'guest') {
-            const guestToken = body?.guestToken;
-            const authCheck = await verifyGuestToken(guestToken, guestSecretInfo, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey });
-            if (!authCheck.valid || !authCheck.session) {
-              return jsonResponse({
-                success: false,
-                error: `Unauthorized: ${authCheck.reason || 'Invalid or missing guest session token.'}`,
-              }, 401);
+          if (isGuestCaller && guestSession) {
+            verifiedNickname = guestSession.nickname;
+            verifiedAvatar = guestSession.avatar;
+          } else {
+            const profile = await fetchMemberProfile(verifiedUserId, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey });
+            if (profile) {
+              verifiedNickname = profile.nickname;
+              verifiedAvatar = profile.avatar;
+            } else {
+              // Fallback if profile missing (e.g. newly registered or DB error)
+              verifiedNickname = body.senderNickname || 'User';
+              verifiedAvatar = body.senderAvatar || '👤';
             }
-            verifiedSenderId = authCheck.session.id;
-            verifiedNickname = authCheck.session.nickname;
-            verifiedAvatar = authCheck.session.avatar;
           }
 
           const cleanContent = sanitizeContent(content || '');
@@ -740,10 +783,10 @@ export default {
           const message: HubMessage = {
             id: crypto.randomUUID(),
             roomId,
-            senderId: verifiedSenderId,
+            senderId: verifiedUserId,
             senderNickname: verifiedNickname,
             senderAvatar: verifiedAvatar,
-            senderType,
+            senderType: isGuestCaller ? 'guest' : 'registered',
             content: cleanContent,
             rawContent: content,
             mediaUrl,
@@ -754,30 +797,12 @@ export default {
             status: 'delivered',
           };
 
-          if (!roomMessages.has(roomId)) {
-            roomMessages.set(roomId, []);
-          }
-          const list = roomMessages.get(roomId)!;
-
-          // Deduplicate if clientNonce already exists
-          if (clientNonce && list.some((m) => m.clientNonce === clientNonce)) {
-            const existing = list.find((m) => m.clientNonce === clientNonce)!;
-            return jsonResponse({ success: true, message: existing });
-          }
-
-          list.push(message);
-          if (list.length > 500) {
-            list.shift();
-          }
-
-          // Secure server-side Supabase persistence using service-role key if configured
+          // 4. Persistence-before-Broadcast
           if (baseSupabaseUrl && supabaseServiceKey) {
             try {
-              // Resolve slug to real UUID for database persistence
               const realRoomId = await databaseService.resolveRoomId(roomId, supabaseClient);
               
               if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(realRoomId)) {
-                console.error(`[Worker] Failed to resolve room slug '${roomId}' to valid UUID. Resolved: '${realRoomId}'`);
                 return jsonResponse({
                   success: false,
                   error: 'Database persistence failed: Invalid room identifier.'
@@ -795,8 +820,8 @@ export default {
                 body: JSON.stringify({
                   id: message.id,
                   room_id: realRoomId,
-                  sender_guest_id: senderType === 'guest' ? verifiedSenderId : null,
-                  sender_user_id: senderType === 'registered' ? verifiedSenderId : null,
+                  sender_guest_id: isGuestCaller ? verifiedUserId : null,
+                  sender_user_id: !isGuestCaller ? verifiedUserId : null,
                   sender_nickname: verifiedNickname,
                   sender_avatar: verifiedAvatar,
                   content: cleanContent,
@@ -826,7 +851,23 @@ export default {
             }, 503);
           }
 
-          // Broadcast to all active SSE subscribers in this room (Isolate-local)
+          // 5. Update Local Map & Broadcast
+          if (!roomMessages.has(roomId)) {
+            roomMessages.set(roomId, []);
+          }
+          const list = roomMessages.get(roomId)!;
+
+          // Deduplicate if clientNonce already exists
+          if (clientNonce && list.some((m) => m.clientNonce === clientNonce)) {
+            const existing = list.find((m) => m.clientNonce === clientNonce)!;
+            return jsonResponse({ success: true, message: existing });
+          }
+
+          list.push(message);
+          if (list.length > 500) {
+            list.shift();
+          }
+
           broadcastToRoom(roomId, 'new_message', message);
 
           const rtDiag: any = {
@@ -834,21 +875,14 @@ export default {
               hasSupabaseUrl: !!env?.SUPABASE_URL,
               hasServiceRoleKey: !!env?.SUPABASE_SERVICE_ROLE_KEY,
               supabaseClientReady: !!supabaseClient,
-              senderType
+              senderType: isGuestCaller ? 'guest' : 'registered'
           };
 
-          // Broadcast to Supabase Realtime (Cross-environment / Cross-isolate)
           const rtPromise = (async () => {
-              if (!supabaseClient) {
-                  rtDiag.rtStatus = 'no_client';
-                  return;
-              }
+              if (!supabaseClient) return;
               try {
-                  const status = await databaseService.broadcastMessage(roomId, message as any, supabaseClient);
-                  rtDiag.rtStatus = status;
-                  console.log(`[Worker] Supabase RT broadcast status for room ${roomId}: ${status}`);
+                  await databaseService.broadcastMessage(roomId, message as any, supabaseClient);
               } catch (e: any) {
-                  rtDiag.rtError = e.message || 'Unknown RT error';
                   console.warn(`[Worker] Supabase RT broadcast failed for room ${roomId}:`, e);
               }
           })();
@@ -862,7 +896,6 @@ export default {
             message,
             serverDiag: rtDiag
           });
-
 
         } catch (err: any) {
           return jsonResponse({ success: false, error: 'Failed to process message: ' + (err.message || 'Malformed body') }, 400);

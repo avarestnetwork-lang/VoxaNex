@@ -229,6 +229,15 @@ export const messagingService = {
     }
   },
 
+  async getIdentityHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = await getAuthToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  },
+
   /**
    * Send a message to a public room with server-side validation and multi-transport broadcast
    */
@@ -237,21 +246,7 @@ export const messagingService = {
     options: SendMessageOptions
   ): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
     try {
-      let guestToken =
-        options.senderType === 'guest' ? guestSessionService.getStoredToken() : undefined;
-      if (options.senderType === 'guest' && !guestToken) {
-        if (import.meta.env.DEV) {
-          guestToken = `vx_gst_local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-          try {
-            localStorage.setItem('vx_guest_token', guestToken);
-          } catch {
-            // ignore
-          }
-        } else {
-          return { success: false, error: 'Guest session expired or missing. Please re-enter chat.' };
-        }
-      }
-
+      const headers = await this.getIdentityHeaders();
       const clientNonce =
         options.clientNonce || `nonce_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -260,10 +255,9 @@ export const messagingService = {
       // 1. Primary dispatch: Server API route
       const res = await fetch(`${API_BASE}/api/chat/rooms/${roomId}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           ...options,
-          guestToken,
           clientNonce,
         }),
       });
