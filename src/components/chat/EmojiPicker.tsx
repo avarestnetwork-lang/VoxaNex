@@ -62,7 +62,7 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({ onSelectEmoji, onClose
       <div className="p-3 max-h-52 overflow-y-auto grid grid-cols-7 gap-1.5 bg-[#0d1322]">
         {EMOJI_CATEGORIES[activeTab].emojis.map((em, idx) => (
           <button
-            key={idx}
+            key={em}
             type="button"
             onClick={() => onSelectEmoji(em)}
             className="w-8 h-8 rounded hover:bg-slate-800 flex items-center justify-center text-lg transition-transform active:scale-125 cursor-pointer"

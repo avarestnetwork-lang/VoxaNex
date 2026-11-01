@@ -552,11 +552,11 @@ export const LandingPage: React.FC = () => {
               {heroTab === 'rooms' && (
                 <div className="space-y-4">
                   <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {topRooms.map((room, idx) => {
+                    {topRooms.map((room) => {
                       const Icon = room.icon as any;
                       return (
                         <div
-                          key={idx}
+                          key={room.route}
                           onClick={() => navigate(room.route)}
                           className="py-3.5 flex items-center justify-between group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 px-2 rounded-xl transition-colors"
                         >
@@ -603,11 +603,11 @@ export const LandingPage: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {mainRooms.map((room, idx) => {
+          {mainRooms.map((room) => {
             const Icon = room.icon as any;
             return (
               <div
-                key={idx}
+                key={room.title}
                 onClick={() => navigate(room.route)}
                 className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between"
               >
@@ -652,10 +652,10 @@ export const LandingPage: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {featuresList.map((feat, idx) => {
+          {featuresList.map((feat) => {
             const Icon = feat.icon as any;
             return (
-              <div key={idx} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm">
+              <div key={feat.title} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm">
                 <div className="w-10 h-10 rounded-xl bg-orange-50 dark:bg-orange-950/50 text-orange-600 dark:text-orange-400 flex items-center justify-center mb-4 font-bold">
                   {Icon && <Icon className="w-5 h-5" />}
                 </div>

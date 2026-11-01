@@ -62,17 +62,23 @@ export const ContactPage: React.FC = () => {
           <div className="space-y-6 lg:col-span-1">
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                {language === 'bn' ? 'সহায়তা ও নোটিশ' : 'Support Channels'}
+                {language === 'bn' ? 'সহায়তা ও যোগাযোগ চ্যানেল' : 'Support Channels'}
               </h3>
               <div className="space-y-4 text-sm text-slate-600 dark:text-slate-400">
                 <div className="flex items-start gap-3">
                   <Mail className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
                   <div>
                     <span className="font-semibold text-slate-900 dark:text-white block">
-                      {language === 'bn' ? 'অনলাইন টিকিট' : 'Web Support Form'}
+                      {language === 'bn' ? 'অফিসিয়াল ইমেইল' : 'Official Support Email'}
                     </span>
-                    <span className="text-xs">
-                      {language === 'bn' ? 'নিচের ফর্মের মাধ্যমে বার্তা পাঠান' : 'Submit through the contact form'}
+                    <a
+                      href="mailto:chatlustora@gmail.com"
+                      className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:underline block break-all"
+                    >
+                      chatlustora@gmail.com
+                    </a>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                      {language === 'bn' ? 'যেকোনো জিজ্ঞাসায় সরাসরি ইমেইল করুন' : 'Default inbox for support, safety, & business'}
                     </span>
                   </div>
                 </div>
@@ -80,24 +86,24 @@ export const ContactPage: React.FC = () => {
                   <MessageSquare className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
                   <div>
                     <span className="font-semibold text-slate-900 dark:text-white block">
-                      {language === 'bn' ? 'কমিউনিটি মডারেশন' : 'Community Moderation'}
+                      {language === 'bn' ? 'ওয়েব সাপোর্ট ফর্ম' : 'Web Support Form'}
                     </span>
                     <span className="text-xs">
-                      {language === 'bn' ? 'রুমের ভেতরে তাৎক্ষণিক রিপোর্ট অপশন' : 'In-chat user report & block tools'}
+                      {language === 'bn' ? 'নিচের ফর্মের মাধ্যমে বার্তা পাঠান' : 'Submit inquiries via the form alongside'}
                     </span>
                   </div>
                 </div>
               </div>
 
-              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+              <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-900 dark:text-rose-300 space-y-1.5">
                 <div className="flex items-center gap-1.5 font-bold">
-                  <Info className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>{language === 'bn' ? 'ডোমেইন ও কনফিগ' : 'Domain Configuration'}</span>
+                  <Mail className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{language === 'bn' ? 'ডিফল্ট সাপোর্ট ডেস্ক' : 'Official Support Desk'}</span>
                 </div>
                 <p className="text-[11px] leading-relaxed">
                   {language === 'bn'
-                    ? 'ChatLustora.com ডোমেইনের নিজস্ব ইমেইল ইনবক্স প্রোডাকশন হোস্টিংয়ের সময় কনফিগার করা হবে।'
-                    : 'Official dedicated domain email routing for ChatLustora.com will be linked upon production DNS verification.'}
+                    ? 'আমাদের প্রাথমিক যোগাযোগ ইমেইল: chatlustora@gmail.com। যেকোনো প্ল্যাটফর্ম প্রশ্ন, মডারেশন রিপোর্ট বা কারিগরি সহায়তার জন্য নির্দ্বিধায় যোগাযোগ করুন।'
+                    : 'Our default primary contact email is chatlustora@gmail.com. Feel free to contact our moderation & support team directly via email or the form.'}
                 </p>
               </div>
             </div>

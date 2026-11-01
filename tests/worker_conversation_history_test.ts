@@ -50,7 +50,16 @@ function createMockJwt(userId: string): string {
   return `${header}.${payload}.${signature}`;
 }
 
+async function computeTokenHash(token: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function runWorkerHistoryTests() {
+
   console.log('\n=============================================================');
   console.log('  CHATLUSTORA — WORKER CONVERSATION HISTORY & SECURITY TESTS');
   console.log('=============================================================\n');
@@ -71,6 +80,11 @@ async function runWorkerHistoryTests() {
   const tokenA = guestA.session!.token;
   const tokenB = guestB.session!.token;
   const tokenC = guestC.session!.token;
+
+  const hashA = await computeTokenHash(tokenA);
+  const hashB = await computeTokenHash(tokenB);
+  const hashC = await computeTokenHash(tokenC);
+
 
   const regMember1Id = '44444444-4444-4444-4444-444444444444';
   const regMember2Id = '55555555-5555-5555-5555-555555555555';
@@ -120,7 +134,30 @@ async function runWorkerHistoryTests() {
       }
     }
 
+    if (urlStr.includes('/rest/v1/guest_sessions')) {
+      let matchedId = idA;
+      if (urlStr.includes(hashB)) matchedId = idB;
+      else if (urlStr.includes(hashC)) matchedId = idC;
+      return new Response(JSON.stringify([{
+        id: matchedId,
+        is_revoked: false,
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+      }]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (urlStr.includes('/rest/v1/conversation_participants')) {
+      if (urlStr.includes(idC)) {
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify([{ id: 'part_1' }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
     if (urlStr.includes('/rest/v1/conversations')) {
+
+
       return new Response(JSON.stringify({ success: true }), {
         status: 201,
         headers: { 'Content-Type': 'application/json' },

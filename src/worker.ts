@@ -262,6 +262,7 @@ const roomMessages = new Map<string, HubMessage[]>();
 const roomPresence = new Map<string, Map<string, PresenceMember>>();
 const roomTyping = new Map<string, Map<string, { nickname: string; expiresAt: number }>>();
 const guestSessions = new Map<string, GuestSession>();
+const activeAccountDeletions = new Set<string>();
 
 // Active SSE client streams per room & conversation (using ReadableStreamDefaultController for synchronous non-promise enqueuing)
 const roomStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
@@ -2127,7 +2128,238 @@ export default {
     }
 
     // -------------------------------------------------------------------------
-    // 6. DEFAULT API FALLBACK FOR UNHANDLED /api/* ROUTES
+    // 6. AUTHENTICATED ACCOUNT DELETION ENDPOINT
+    // -------------------------------------------------------------------------
+    if (url.pathname === '/api/auth/delete-account' && request.method === 'POST') {
+      try {
+        const authHeader = request.headers.get('Authorization');
+        const bearerToken = authHeader && authHeader.startsWith('Bearer ')
+          ? authHeader.slice(7).trim()
+          : null;
+
+        if (!bearerToken || bearerToken.startsWith('vx_gst_') || bearerToken === 'local-session-token') {
+          return jsonResponse({
+            success: false,
+            error: 'Unauthorized: Valid member authentication token required.',
+          }, 401);
+        }
+
+        // Validate Bearer JWT token structure (3 dot-separated components)
+        if (bearerToken.split('.').length !== 3) {
+          return jsonResponse({
+            success: false,
+            error: 'Unauthorized: Malformed member authentication token format.',
+          }, 401);
+        }
+
+        // Fail closed if server-side database configuration is unconfigured
+        if (!baseSupabaseUrl || !supabaseServiceKey) {
+          return jsonResponse({
+            success: false,
+            error: 'Server configuration error: Database bindings missing.',
+          }, 503);
+        }
+
+        let verifiedUserId: string | null = null;
+
+        // 1. Authoritative identity verification via Supabase Auth GET /auth/v1/user
+        try {
+          const userRes = await fetch(`${baseSupabaseUrl}/auth/v1/user`, {
+            headers: {
+              'apikey': supabaseAnonKey || supabaseServiceKey,
+              'Authorization': `Bearer ${bearerToken}`,
+            },
+          });
+          if (userRes.ok) {
+            const userData: any = await userRes.json().catch(() => null);
+            if (userData?.id) {
+              verifiedUserId = userData.id;
+            }
+          }
+        } catch (err) {
+          console.warn('[Worker] Supabase member verification fetch exception:', err);
+        }
+
+        // 2. Fallback verification using Supabase client if available
+        if (!verifiedUserId && supabaseClient) {
+          try {
+            const { data: userData, error: userErr } = await supabaseClient.auth.getUser(bearerToken);
+            if (!userErr && userData?.user?.id) {
+              verifiedUserId = userData.user.id;
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (!verifiedUserId) {
+          return jsonResponse({
+            success: false,
+            error: 'Unauthorized: Invalid or expired member session token.',
+          }, 401);
+        }
+
+        // Validate client-supplied userId against server-verified token identity (prevent spoofing)
+        const body: any = await request.json().catch(() => ({}));
+        const { userId: clientUserId } = body || {};
+        if (clientUserId && clientUserId !== verifiedUserId) {
+          return jsonResponse({
+            success: false,
+            error: 'Forbidden: Client user ID does not match authenticated token identity (spoofing rejected).',
+          }, 403);
+        }
+
+        // Isolate-local in-flight concurrency guard
+        if (activeAccountDeletions.has(verifiedUserId)) {
+          return jsonResponse({
+            success: false,
+            error: 'Account deletion operation is already in progress.',
+          }, 409);
+        }
+
+        activeAccountDeletions.add(verifiedUserId);
+        try {
+          const adminHeaders: Record<string, string> = {
+            'apikey': supabaseServiceKey,
+            'Authorization': `Bearer ${supabaseServiceKey}`,
+            'Content-Type': 'application/json',
+          };
+
+          // 1. Anonymize user safety reports (preserve moderation records, scrub reporter personal identity)
+          try {
+            const reportsRes = await fetch(`${baseSupabaseUrl}/rest/v1/reports?reporter_user_id=eq.${encodeURIComponent(verifiedUserId)}`, {
+              method: 'PATCH',
+              headers: adminHeaders,
+              body: JSON.stringify({ reporter_user_id: null }),
+            });
+            if (!reportsRes.ok) {
+              const errText = await reportsRes.text().catch(() => '');
+              console.error(`[Worker] Reports anonymization failed HTTP ${reportsRes.status}:`, errText);
+              return jsonResponse({
+                success: false,
+                error: `Account deletion failed during reports anonymization (HTTP ${reportsRes.status}). Deletion sequence aborted.`,
+              }, 500);
+            }
+          } catch (err: any) {
+            console.error('[Worker] Reports anonymization network exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Account deletion failed: Network exception during reports anonymization. Deletion sequence aborted.',
+            }, 500);
+          }
+
+          // 2. Anonymize user messages (preserve room/conversation message history, scrub sender personal identity)
+          try {
+            const messagesRes = await fetch(`${baseSupabaseUrl}/rest/v1/messages?sender_user_id=eq.${encodeURIComponent(verifiedUserId)}`, {
+              method: 'PATCH',
+              headers: adminHeaders,
+              body: JSON.stringify({
+                sender_user_id: null,
+                sender_nickname: 'Deleted User',
+                sender_avatar: '👤',
+                client_nonce: null,
+              }),
+            });
+            if (!messagesRes.ok) {
+              const errText = await messagesRes.text().catch(() => '');
+              console.error(`[Worker] Messages anonymization failed HTTP ${messagesRes.status}:`, errText);
+              return jsonResponse({
+                success: false,
+                error: `Account deletion failed during messages anonymization (HTTP ${messagesRes.status}). Deletion sequence aborted.`,
+              }, 500);
+            }
+          } catch (err: any) {
+            console.error('[Worker] Messages anonymization network exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Account deletion failed: Network exception during messages anonymization. Deletion sequence aborted.',
+            }, 500);
+          }
+
+          // 3. Delete user participation records from conversation_participants
+          try {
+            const partRes = await fetch(`${baseSupabaseUrl}/rest/v1/conversation_participants?user_id=eq.${encodeURIComponent(verifiedUserId)}`, {
+              method: 'DELETE',
+              headers: adminHeaders,
+            });
+            if (!partRes.ok) {
+              const errText = await partRes.text().catch(() => '');
+              console.error(`[Worker] Conversation participants deletion failed HTTP ${partRes.status}:`, errText);
+              return jsonResponse({
+                success: false,
+                error: `Account deletion failed during conversation participants cleanup (HTTP ${partRes.status}). Deletion sequence aborted.`,
+              }, 500);
+            }
+          } catch (err: any) {
+            console.error('[Worker] Conversation participants cleanup network exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Account deletion failed: Network exception during conversation participants cleanup. Deletion sequence aborted.',
+            }, 500);
+          }
+
+          // 4. Delete public user profile row from public.profiles
+          try {
+            const profileRes = await fetch(`${baseSupabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(verifiedUserId)}`, {
+              method: 'DELETE',
+              headers: adminHeaders,
+            });
+            if (!profileRes.ok) {
+              const errText = await profileRes.text().catch(() => '');
+              console.error(`[Worker] Profile deletion failed HTTP ${profileRes.status}:`, errText);
+              return jsonResponse({
+                success: false,
+                error: `Account deletion failed during profile cleanup (HTTP ${profileRes.status}). Deletion sequence aborted.`,
+              }, 500);
+            }
+          } catch (err: any) {
+            console.error('[Worker] Profile cleanup network exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Account deletion failed: Network exception during profile cleanup. Deletion sequence aborted.',
+            }, 500);
+          }
+
+          // 5. Permanently delete user from Supabase Auth via administrative endpoint
+          try {
+            const authAdminRes = await fetch(`${baseSupabaseUrl}/auth/v1/admin/users/${encodeURIComponent(verifiedUserId)}`, {
+              method: 'DELETE',
+              headers: adminHeaders,
+            });
+
+            if (!authAdminRes.ok && authAdminRes.status !== 404) {
+              const errText = await authAdminRes.text().catch(() => '');
+              console.error(`[Worker] Administrative Auth user deletion failed HTTP ${authAdminRes.status}:`, errText);
+              return jsonResponse({
+                success: false,
+                error: `Account deletion failed during administrative authentication purge (HTTP ${authAdminRes.status}). Partial deletion aborted.`,
+              }, 500);
+            }
+          } catch (err: any) {
+            console.error('[Worker] Auth admin user deletion network exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Account deletion failed: Network exception during Auth user purge.',
+            }, 500);
+          }
+
+          return jsonResponse({
+            success: true,
+            message: 'Account and associated profile data successfully deleted.',
+          });
+        } finally {
+          activeAccountDeletions.delete(verifiedUserId);
+        }
+      } catch (err: any) {
+        return jsonResponse({
+          success: false,
+          error: 'Malformed account deletion request.',
+        }, 400);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. DEFAULT API FALLBACK FOR UNHANDLED /api/* ROUTES
     // -------------------------------------------------------------------------
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({

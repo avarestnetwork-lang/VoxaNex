@@ -185,12 +185,22 @@ export const ProfileSettingsPage: React.FC = () => {
   };
 
   const handleConfirmDelete = async () => {
+    if (deleting) return;
     setDeleting(true);
-    await safetyService.deleteAccount(user.id);
-    await deleteAccount();
-    setDeleting(false);
-    setDeleteModalOpen(false);
-    navigate('/');
+    setValidationError(null);
+    try {
+      const res = await deleteAccount();
+      if (res.success) {
+        setDeleteModalOpen(false);
+        navigate('/');
+      } else {
+        setValidationError(res.message || 'Failed to complete account deletion.');
+      }
+    } catch (err: any) {
+      setValidationError(err?.message || 'Unexpected error during account deletion.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (

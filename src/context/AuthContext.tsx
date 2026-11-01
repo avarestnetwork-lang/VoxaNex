@@ -18,7 +18,7 @@ interface AuthContextType {
   registerWithAccount: (email: string, password: string, nickname: string) => Promise<{ success: boolean; error?: string }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
   deleteAccount: () => Promise<{ success: boolean; message: string }>;
-  logout: () => Promise<void>;
+  logout: () => Promise<{ success: boolean; error?: string }>;
   updatePreferences: (prefs: Partial<UserProfile>) => Promise<void>;
   isSupabaseActive: boolean;
 }
@@ -249,18 +249,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return authService.requestPasswordReset(email);
   };
 
-  const deleteAccount = async () => {
+  const deleteAccount = async (): Promise<{ success: boolean; message: string }> => {
     const res = await authService.requestAccountDeletion();
-    await logout();
-    return res;
-  };
-
-  const logout = async () => {
-    if (!user.isGuest) {
-      await authService.logout();
-    } else {
-      await guestSessionService.revokeSession();
+    if (!res.success) {
+      return res;
     }
+
+    // Server has confirmed permanent account deletion.
+    // Perform best-effort client sign-out cleanup without failing the overall operation if Supabase signOut throws on deleted credentials.
+    if (!user.isGuest) {
+      try {
+        await authService.logout();
+      } catch (err) {
+        console.warn('[AuthContext] Post-deletion signout warning:', err);
+      }
+    }
+
     try {
       localStorage.removeItem('voxanex_user_profile');
     } catch {
@@ -279,6 +283,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       notificationSounds: true,
       createdAt: new Date().toISOString(),
     });
+
+    return res;
+  };
+
+  const logout = async (): Promise<{ success: boolean; error?: string }> => {
+    if (!user.isGuest) {
+      try {
+        await authService.logout();
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Failed to sign out from server.' };
+      }
+    } else {
+      const revokeRes = await guestSessionService.revokeSession();
+      if (!revokeRes.success) {
+        return {
+          success: false,
+          error: revokeRes.error || 'Failed to revoke guest session on server.',
+        };
+      }
+    }
+
+    try {
+      localStorage.removeItem('voxanex_user_profile');
+    } catch {
+      // ignore
+    }
+
+    setHasActiveSession(false);
+    setUser({
+      id: '',
+      nickname: 'Visitor',
+      isGuest: true,
+      is18Verified: false,
+      avatar: '',
+      languagePreference: 'en',
+      safeFilterEnabled: true,
+      notificationSounds: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    return { success: true };
   };
 
   const updatePreferences = async (prefs: Partial<UserProfile>) => {

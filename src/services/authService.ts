@@ -292,18 +292,59 @@ export const authService = {
    * Account deletion workflow foundation
    */
   async requestAccountDeletion(): Promise<{ success: boolean; message: string }> {
+    const supabase = getSupabaseClient();
+    let token: string | null = null;
+
+    if (supabase) {
+      try {
+        const { data } = await supabase.auth.getSession();
+        token = data?.session?.access_token || null;
+      } catch {
+        token = null;
+      }
+    }
+
+    if (!token) {
+      return {
+        success: false,
+        message: 'Authentication required: No active member session found.',
+      };
+    }
+
     try {
       const res = await fetch('/api/auth/delete-account', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer local-session-token',
+          Authorization: `Bearer ${token}`,
         },
       });
-      const data = (await res.json()) as { success?: boolean; message?: string };
-      return { success: Boolean(data.success), message: data.message || 'Account purged.' };
-    } catch {
-      return { success: true, message: 'Account purge registered locally.' };
+
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+
+      if (!res.ok) {
+        const errMessage = data?.error || data?.message || `Server rejected account deletion (HTTP ${res.status}).`;
+        return { success: false, message: errMessage };
+      }
+
+      if (data && data.success === true) {
+        return { success: true, message: data.message || 'Account successfully deleted.' };
+      }
+
+      return {
+        success: false,
+        message: data?.error || data?.message || 'Server did not confirm account deletion.',
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.message || 'Network error during account deletion request.',
+      };
     }
   },
 };

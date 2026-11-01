@@ -47,7 +47,7 @@ export const IndianChatLandingPage: React.FC = () => {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {subRooms.map((room, idx) => (
-            <div key={idx} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm hover:border-rose-500 transition-all flex flex-col justify-between">
+            <div key={room.route} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm hover:border-rose-500 transition-all flex flex-col justify-between">
               <div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">{room.name}</h3>
                 <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">{room.desc}</p>

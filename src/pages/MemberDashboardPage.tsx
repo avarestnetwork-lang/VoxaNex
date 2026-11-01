@@ -93,7 +93,10 @@ export const MemberDashboardPage: React.FC = () => {
   // Modals
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [avatarModalOpen, setAvatarModalOpen] = useState(false);
+  const [terminateModalOpen, setTerminateModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [terminating, setTerminating] = useState(false);
+  const [terminationError, setTerminationError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
@@ -289,12 +292,68 @@ export const MemberDashboardPage: React.FC = () => {
   };
 
   const handleConfirmDelete = async () => {
+    if (deleting) return;
     setDeleting(true);
-    await safetyService.deleteAccount(user.id);
-    await deleteAccount();
-    setDeleting(false);
-    setDeleteModalOpen(false);
-    navigate('/');
+    setValidationError(null);
+    try {
+      const res = await deleteAccount();
+      if (res.success) {
+        setDeleteModalOpen(false);
+        navigate('/');
+      } else {
+        setValidationError(res.message || 'Failed to complete account deletion.');
+      }
+    } catch (err: any) {
+      setValidationError(err?.message || 'Unexpected error during account deletion.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setTerminating(true);
+    setTerminationError(null);
+    try {
+      const res = await logout();
+      if (res.success) {
+        navigate('/');
+      } else {
+        setTerminationError(res.error || (language === 'bn' ? 'সাইন আউট ব্যর্থ হয়েছে।' : 'Sign out failed.'));
+      }
+    } catch (err: any) {
+      setTerminationError(err?.message || (language === 'bn' ? 'সাইন আউট ব্যর্থ হয়েছে।' : 'Sign out failed.'));
+    } finally {
+      setTerminating(false);
+    }
+  };
+
+  const handleConfirmTerminateGuest = async () => {
+    if (terminating) return;
+    setTerminating(true);
+    setTerminationError(null);
+    try {
+      const res = await logout();
+      if (res.success) {
+        setTerminateModalOpen(false);
+        navigate('/');
+      } else {
+        setTerminationError(
+          res.error ||
+            (language === 'bn'
+              ? 'গেস্ট সেশন সমাপ্ত করতে ব্যর্থ হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+              : 'Failed to terminate guest session. Please try again.')
+        );
+      }
+    } catch (err: any) {
+      setTerminationError(
+        err?.message ||
+          (language === 'bn'
+            ? 'সার্ভারে সংযোগে ত্রুটি।'
+            : 'Network error during session revocation.')
+      );
+    } finally {
+      setTerminating(false);
+    }
   };
 
   return (
@@ -399,14 +458,23 @@ export const MemberDashboardPage: React.FC = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={async () => {
-                await logout();
-                navigate('/');
+              onClick={() => {
+                if (user.isGuest) {
+                  setTerminationError(null);
+                  setTerminateModalOpen(true);
+                } else {
+                  handleLogout();
+                }
               }}
+              disabled={terminating}
               className="text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer"
             >
               <LogOut className="w-4 h-4 mr-1.5" />
-              <span>{language === 'bn' ? 'সাইন আউট' : 'Sign Out'}</span>
+              <span>
+                {user.isGuest
+                  ? (language === 'bn' ? 'গেস্ট সেশন সমাপ্ত করুন' : 'End Guest Session')
+                  : (language === 'bn' ? 'সাইন আউট' : 'Sign Out')}
+              </span>
             </Button>
           </div>
         </div>
@@ -490,6 +558,13 @@ export const MemberDashboardPage: React.FC = () => {
         <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-300 flex items-center gap-2">
           <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
           <span>{validationError}</span>
+        </div>
+      )}
+
+      {terminationError && !terminateModalOpen && (
+        <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-300 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+          <span>{terminationError}</span>
         </div>
       )}
 
@@ -897,6 +972,52 @@ export const MemberDashboardPage: React.FC = () => {
                 className="bg-rose-600 hover:bg-rose-700 text-white font-bold"
               >
                 {deleting ? 'Deleting...' : 'Yes, Delete My Account'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {/* End Guest Session Modal */}
+      {terminateModalOpen && (
+        <Modal
+          isOpen={terminateModalOpen}
+          onClose={() => !terminating && setTerminateModalOpen(false)}
+          title={language === 'bn' ? 'গেস্ট সেশন সমাপ্ত করুন' : 'End Guest Session'}
+          subtitle={language === 'bn' ? 'আপনার অস্থায়ী সেশন সমাপ্ত এবং প্রত্যাহার করা হবে' : 'This will securely terminate and revoke your guest session.'}
+        >
+          <div className="space-y-4 py-2">
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              {language === 'bn'
+                ? 'আপনি কি নিশ্চিত যে আপনি আপনার গেস্ট সেশন সমাপ্ত করতে চান? এটি সার্ভার থেকে আপনার অস্থায়ী সেশন প্রত্যাহার করবে এবং এই ডিভাইস থেকে গেস্ট পরিচিতি মুছে ফেলবে। পুনরায় প্রবেশ করলে একটি নতুন সেশন তৈরি হবে।'
+                : 'Are you sure you want to end your guest session? This will securely revoke your session on the server and remove your guest identity from this device. If you return, a new session will be created.'}
+            </p>
+
+            {terminationError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                <span>{terminationError}</span>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setTerminateModalOpen(false)}
+                disabled={terminating}
+              >
+                {language === 'bn' ? 'বাতিল' : 'Cancel'}
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleConfirmTerminateGuest}
+                disabled={terminating}
+                className="bg-rose-600 hover:bg-rose-700 text-white font-bold"
+              >
+                {terminating
+                  ? (language === 'bn' ? 'সমাপ্ত হচ্ছে...' : 'Ending Session...')
+                  : (language === 'bn' ? 'হ্যাঁ, সেশন সমাপ্ত করুন' : 'Yes, End Session')}
               </Button>
             </div>
           </div>

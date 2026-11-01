@@ -1,7 +1,7 @@
 import React from 'react';
 import { useRouter } from '../../context/RouterContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { MessageSquare, Globe, Shield, Lock, Sun, Moon, Monitor, Facebook } from 'lucide-react';
+import { MessageSquare, Globe, Shield, Lock, Sun, Moon, Monitor, Facebook, Mail } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 
 export const Footer: React.FC = () => {
@@ -17,16 +17,17 @@ export const Footer: React.FC = () => {
           <div className="space-y-4 md:col-span-1">
             <button
               onClick={() => navigate('/')}
-              className="flex items-center gap-2.5 text-left group focus:outline-none focus:ring-2 focus:ring-rose-500 rounded-lg cursor-pointer"
+              className="flex items-center gap-2.5 text-left group focus:outline-none focus:ring-2 focus:ring-rose-500 rounded-lg cursor-pointer shrink-0"
             >
               <img
                 src="/logo.png"
                 alt="ChatLustora Logo"
-                className="w-8 h-8 object-contain drop-shadow-[0_2px_8px_rgba(236,72,153,0.35)] group-hover:scale-105 transition-transform"
+                className="w-8 h-8 object-contain drop-shadow-[0_2px_8px_rgba(236,72,153,0.35)] group-hover:scale-105 transition-transform shrink-0"
                 width={32}
                 height={32}
+                loading="eager"
               />
-              <span className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">
+              <span className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight whitespace-nowrap">
                 Chat<span className="text-rose-600 dark:text-rose-400">Lustora</span>
               </span>
             </button>
@@ -74,6 +75,21 @@ export const Footer: React.FC = () => {
                 </svg>
               </a>
             </div>
+
+            {/* Official Support Email */}
+            <div className="pt-2 text-xs">
+              <span className="text-slate-500 dark:text-slate-400 block text-[11px] font-medium mb-1">
+                {language === 'bn' ? 'যোগাযোগ ও সাপোর্ট ইমেইল:' : 'Official Contact & Support:'}
+              </span>
+              <a
+                href="mailto:chatlustora@gmail.com"
+                className="inline-flex items-center gap-1.5 font-semibold text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 transition-colors"
+                title="Email ChatLustora Support"
+              >
+                <Mail className="w-3.5 h-3.5 shrink-0" />
+                <span>chatlustora@gmail.com</span>
+              </a>
+            </div>
           </div>
 
           {/* Col 2: COMMUNITY */}
@@ -94,9 +110,18 @@ export const Footer: React.FC = () => {
           {/* Col 3: HELP */}
           <div>
             <h4 className="text-slate-900 dark:text-white font-bold text-xs tracking-wider uppercase mb-3">
-              {language === 'bn' ? 'সাহায্য' : 'Help'}
+              {language === 'bn' ? 'সাহায্য ও যোগাযোগ' : 'Help & Support'}
             </h4>
             <ul className="space-y-2">
+              <li>
+                <button
+                  onClick={() => navigate('/contact')}
+                  className="hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1.5"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>{language === 'bn' ? 'যোগাযোগ করুন (Contact Us)' : 'Contact Us'}</span>
+                </button>
+              </li>
               <li><button onClick={() => navigate('/safety')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'চ্যাট সাহায্য' : 'Chat Help'}</button></li>
               <li><button onClick={() => navigate('/safety')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'চ্যাট নিয়মাবলী' : 'Chat Rules'}</button></li>
               <li><button onClick={() => navigate('/profile')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'ব্যবহারকারী লেভেল' : 'User Levels'}</button></li>

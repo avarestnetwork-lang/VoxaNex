@@ -422,10 +422,10 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 ...w,
                 messages: w.messages.some((m) => m.id === msg.id) ? w.messages : [...w.messages, msg],
                 unreadCount: isFocused ? 0 : w.unreadCount + 1,
-                isOpen: autoOpenPrivateChats ? true : w.isOpen,
-                isMinimized: autoOpenPrivateChats ? false : w.isMinimized,
+                isOpen: true,
+                isMinimized: false,
                 // Default mode is floating; do not switch to maximized automatically
-                displayMode: (w.displayMode === 'maximized' ? 'maximized' : (autoOpenPrivateChats ? 'floating' : (w.displayMode || 'closed'))) as ConversationDisplayMode,
+                displayMode: (w.displayMode === 'maximized' ? 'maximized' : 'floating') as ConversationDisplayMode,
               }
             : w
         );
@@ -440,11 +440,11 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
             partnerGender,
             isMinimized: false,
             isMaximized: false,
-            displayMode: autoOpenPrivateChats ? 'floating' : 'closed',
+            displayMode: 'floating',
             messages: [msg],
             unreadCount: 1,
             draft: '',
-            isOpen: autoOpenPrivateChats,
+            isOpen: true,
           },
         ];
       }

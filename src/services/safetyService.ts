@@ -10,6 +10,7 @@ import {
   ReportCategory,
   ReportTargetType,
 } from '../types';
+import { authService } from './authService';
 
 class SafetyService {
   /**
@@ -287,19 +288,10 @@ class SafetyService {
   }
 
   /**
-   * Account Deletion Purge
+   * Account Deletion Purge (Delegated to canonical authService flow)
    */
-  async deleteAccount(userId: string): Promise<{ success: boolean; message: string }> {
-    try {
-      const res = await fetch('/api/auth/delete-account', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
-      });
-      return (await res.json()) as { success: boolean; message: string };
-    } catch (err: any) {
-      return { success: false, message: err.message };
-    }
+  async deleteAccount(_userId?: string): Promise<{ success: boolean; message: string }> {
+    return authService.requestAccountDeletion();
   }
 
   /**

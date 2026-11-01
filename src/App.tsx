@@ -127,7 +127,7 @@ const AppRoutes: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F8FAFC] dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
+    <div className="min-h-screen flex flex-col bg-[#F8FAFC] dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors overflow-x-hidden max-w-full">
       {/* Top Brand Accent Line */}
       <div className="h-[2px] w-full bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600" />
       <Navbar />

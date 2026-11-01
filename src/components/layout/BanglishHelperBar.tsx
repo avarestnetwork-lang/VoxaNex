@@ -67,7 +67,7 @@ export const BanglishHelperBar: React.FC<BanglishHelperBarProps> = ({ onInsertTe
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5">
             {COMMON_BANGLISH_PHRASES.map((item, idx) => (
               <button
-                key={idx}
+                key={item.phonetic}
                 type="button"
                 onClick={() => handleSelect(item.phonetic, idx)}
                 className="flex items-center justify-between px-2.5 py-1.5 bg-[#121a2e] hover:bg-[#1a2542] border border-slate-800 hover:border-slate-700 text-left rounded transition-colors group focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400"
