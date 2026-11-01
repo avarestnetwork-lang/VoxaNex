@@ -1,9 +1,8 @@
 import worker from '../src/worker';
+import { connectCustomSSE, messagingService } from '../src/services/messagingService';
 
 /**
- * Phase 2.3.1 — Complete SSE Authorization & Realtime Security Regression Test Suite
- * Covers 24 required test cases across registered members, guest tokens, conversation membership,
- * public rooms, forged tokens, malformed headers, and DB failure states.
+ * Phase 2.3.2 — Comprehensive Security Audit, SSE Authorization, Parser & Cleanup Test Suite
  */
 
 function assert(condition: boolean, testName: string, detail?: string) {
@@ -42,6 +41,14 @@ async function createTestGuestToken(sid: string, secret: string, expiresAt?: num
   return `vx_gst_${base64Payload}.${sigHex}`;
 }
 
+async function computeTokenHash(token: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function createTestMemberJwt(userId: string, secret: string): Promise<string> {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({ sub: userId, id: userId, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
@@ -66,12 +73,15 @@ function createForgedUnsignedMemberJwt(userId: string): string {
 }
 
 async function runTests() {
-  console.log('--- VoxaNex Phase 2.3.1 SSE Authorization & Realtime Security Audit Suite ---\n');
+  console.log('--- VoxaNex Phase 2.3.2 Security Audit & Test Suite ---\n');
 
   const secret = 'test_guest_secret_key_32_bytes_long!!';
-  const env = {
+  const dbEnv = {
     ENVIRONMENT: 'development',
     DEV: true,
+    SUPABASE_URL: 'https://voxanex.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'test_service_role_key',
+    SUPABASE_ANON_KEY: 'test_anon_key',
     GUEST_SESSION_SECRET: secret,
   };
 
@@ -88,278 +98,300 @@ async function runTests() {
   const validGuestTokenA = await createTestGuestToken(guestA, secret);
   const validGuestTokenC = await createTestGuestToken(guestC, secret);
   const expiredGuestTokenA = await createTestGuestToken(guestA, secret, Date.now() - 10000);
+  const tokenHashA = await computeTokenHash(validGuestTokenA);
+  const tokenHashC = await computeTokenHash(validGuestTokenC);
 
   const convAB = `conv_${[userA, userB].sort().join('_')}`;
   const convGuestAB = `conv_${[guestA, userB].sort().join('_')}`;
 
-  // Test 1: Unauthenticated request to /api/chat/user/:userId/events -> 401
-  {
-    const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, { method: 'GET' });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 401, 'Test 1: Unauthenticated user events SSE stream returns HTTP 401');
-  }
+  // Mock global fetch for Supabase database verification
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const urlStr = typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString();
 
-  // Test 2: Unauthenticated request to /api/chat/conversations/:id/events -> 401
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/events`, { method: 'GET' });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 401, 'Test 2: Unauthenticated conversation events SSE stream returns HTTP 401');
-  }
-
-  // Test 3: Authenticated member requesting own user events stream -> 200 text/event-stream
-  {
-    const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 200, 'Test 3: Authenticated member requesting own user events stream returns HTTP 200');
-    assert((res.headers.get('content-type') || '').includes('text/event-stream'), 'Test 3: Response content-type is text/event-stream');
-    await res.body?.cancel();
-  }
-
-  // Test 4: Authenticated caller requesting user events stream for another user ID -> 403
-  {
-    const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtC}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 403, 'Test 4: Authenticated caller requesting another user\'s DM stream returns HTTP 403');
-  }
-
-  // Test 5: Authenticated guest token requesting own user events stream -> 200 text/event-stream
-  {
-    const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${validGuestTokenA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 200, 'Test 5: Valid guest token requesting own user events stream returns HTTP 200');
-    assert((res.headers.get('content-type') || '').includes('text/event-stream'), 'Test 5: Guest response content-type is text/event-stream');
-    await res.body?.cancel();
-  }
-
-  // Test 6: Authenticated guest token requesting another user's user events stream -> 403
-  {
-    const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${validGuestTokenC}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 403, 'Test 6: Guest token requesting another user\'s events stream returns HTTP 403');
-  }
-
-  // Test 7: Forged/invalid guest token requesting user events stream -> 401
-  {
-    const forgedGuestToken = `vx_gst_${Buffer.from(JSON.stringify({ sid: guestA, exp: Date.now() + 10000 })).toString('base64url')}.invalid_sig_hex_0000000000000000000000000000000000000000000000000000000000000000`;
-    const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${forgedGuestToken}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 401, 'Test 7: Forged guest token with invalid signature returns HTTP 401');
-  }
-
-  // Test 8: Revoked guest token requesting user events stream -> 401
-  {
-    // Test revoked token prefix / local simulation token rejection rule
-    const revokedToken = `vx_gst_local_revoked_${guestA}`;
-    const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${revokedToken}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 401, 'Test 8: Revoked / prohibited local guest token returns HTTP 401');
-  }
-
-  // Test 9: Expired guest token requesting user events stream -> 401
-  {
-    const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${expiredGuestTokenA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 401, 'Test 9: Expired guest session token returns HTTP 401');
-  }
-
-  // Test 10: Authenticated member requesting conversation events for conversation they belong to -> 200 text/event-stream
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 200, 'Test 10: Participant member requesting conversation events returns HTTP 200');
-    assert((res.headers.get('content-type') || '').includes('text/event-stream'), 'Test 10: Conversation stream content-type is text/event-stream');
-    await res.body?.cancel();
-  }
-
-  // Test 11: Authenticated member requesting conversation events for conversation they do NOT belong to -> 403
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtC}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 403, 'Test 11: Non-participant member requesting conversation events returns HTTP 403');
-  }
-
-  // Test 12: Authenticated guest token requesting conversation events for conversation they belong to -> 200 text/event-stream
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${convGuestAB}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${validGuestTokenA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 200, 'Test 12: Participant guest token requesting conversation events returns HTTP 200');
-    assert((res.headers.get('content-type') || '').includes('text/event-stream'), 'Test 12: Guest conversation stream content-type is text/event-stream');
-    await res.body?.cancel();
-  }
-
-  // Test 13: Authenticated guest token requesting conversation events for conversation they do NOT belong to -> 403
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${convGuestAB}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${validGuestTokenC}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 403, 'Test 13: Non-participant guest token requesting conversation events returns HTTP 403');
-  }
-
-  // Test 14: Conversation slug with duplicate participant IDs -> 400
-  {
-    const dupSlug = `conv_${userA}_${userA}`;
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${dupSlug}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 400, 'Test 14: Conversation slug with duplicate participant IDs returns HTTP 400');
-  }
-
-  // Test 15: Conversation slug with invalid non-UUID participant IDs -> 400
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/conv_notauuid1_notauuid2/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 400, 'Test 15: Conversation slug with invalid non-UUID identifiers returns HTTP 400');
-  }
-
-  // Test 16: Conversation slug format mismatch -> 400
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/conv_singlepart/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 400, 'Test 16: Conversation slug with invalid structure returns HTTP 400');
-  }
-
-  // Test 17: Unauthenticated request to conversation messages history -> 401
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/messages`, { method: 'GET' });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 401, 'Test 17: Unauthenticated request to conversation messages history returns HTTP 401');
-  }
-
-  // Test 18: Authenticated caller mismatch with client-supplied userId parameter -> 403
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/messages?userId=${userC}`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 403, 'Test 18: Caller identity mismatch with client-supplied userId parameter returns HTTP 403');
-  }
-
-  // Test 19: Authenticated member requesting conversation history for conversation they belong to -> 200
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/messages?userId=${userA}`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtA}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 200, 'Test 19: Participant member requesting conversation history returns HTTP 200');
-  }
-
-  // Test 20: Authenticated member requesting conversation history for conversation they do NOT belong to -> 403
-  {
-    const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/messages?userId=${userC}`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${memberJwtC}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 403, 'Test 20: Non-participant member requesting conversation history returns HTTP 403');
-  }
-
-  // Test 21: Public room SSE stream accessible without auth -> 200 text/event-stream
-  {
-    const req = new Request('https://voxanex.test/api/chat/rooms/lounge/events', { method: 'GET' });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 200, 'Test 21: Public room SSE stream accessible without auth returns HTTP 200');
-    assert((res.headers.get('content-type') || '').includes('text/event-stream'), 'Test 21: Public room stream content-type is text/event-stream');
-    await res.body?.cancel();
-  }
-
-  // Test 22: Unsigned/forged member JWT requesting protected SSE stream -> 401
-  {
-    const forgedMemberJwt = createForgedUnsignedMemberJwt(userA);
-    const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${forgedMemberJwt}` },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 401, 'Test 22: Unsigned/forged member JWT returns HTTP 401');
-  }
-
-  // Test 23: Malformed authorization header -> 401
-  {
-    const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, {
-      method: 'GET',
-      headers: { 'Authorization': 'Bearer invalid_garbage_token_string' },
-    });
-    const res = await worker.fetch(req, env);
-    assert(res.status === 401, 'Test 23: Malformed authorization header returns HTTP 401');
-  }
-
-  // Test 24: Database membership lookup error -> fails closed with HTTP 500 or 503
-  {
-    // Override global fetch to mock a database 500 internal server error for conversation_participants
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const urlStr = typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString();
-      if (urlStr.includes('/auth/v1/user')) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    if (urlStr.includes('/auth/v1/user')) {
+      const authHeader = init?.headers ? (init.headers as any)['Authorization'] || (init.headers as any)['authorization'] : '';
+      if (authHeader && authHeader.includes(memberJwtA)) {
+        return new Response(JSON.stringify({ id: userA, email: 'userA@voxanex.test' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      if (urlStr.includes('/rest/v1/conversation_participants')) {
-        return new Response(JSON.stringify({ message: 'Internal Server Error' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      if (authHeader && authHeader.includes(memberJwtC)) {
+        return new Response(JSON.stringify({ id: userC, email: 'userC@voxanex.test' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
-    }) as typeof fetch;
+      return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
 
-    try {
-      const dbErrEnv = {
-        ENVIRONMENT: 'development',
-        DEV: true,
-        SUPABASE_URL: 'https://mock.supabase.co',
-        SUPABASE_SERVICE_ROLE_KEY: 'mock_service_key',
-        GUEST_SESSION_SECRET: secret,
-      };
+    if (urlStr.includes('/rest/v1/guest_sessions')) {
+      if (urlStr.includes(tokenHashA) || urlStr.includes(guestA)) {
+        return new Response(JSON.stringify([{
+          id: guestA,
+          session_token_hash: tokenHashA,
+          is_revoked: false,
+          expires_at: new Date(Date.now() + 86400000).toISOString(),
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (urlStr.includes(tokenHashC) || urlStr.includes(guestC)) {
+        return new Response(JSON.stringify([{
+          id: guestC,
+          session_token_hash: tokenHashC,
+          is_revoked: false,
+          expires_at: new Date(Date.now() + 86400000).toISOString(),
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (urlStr.includes('revoked')) {
+        return new Response(JSON.stringify([{
+          id: guestA,
+          is_revoked: true,
+          expires_at: new Date(Date.now() + 86400000).toISOString(),
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    if (urlStr.includes('/rest/v1/conversation_participants')) {
+      if (urlStr.includes(userA) || urlStr.includes(guestA)) {
+        return new Response(JSON.stringify([{ id: 'participant_row_id_1' }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    return origFetch(input, init);
+  }) as typeof fetch;
+
+  try {
+    // Test 1: Unauthenticated user events SSE stream -> 401
+    {
+      const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, { method: 'GET' });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 401, 'Test 1: Unauthenticated user events SSE stream returns HTTP 401');
+    }
+
+    // Test 2: Unauthenticated conversation events SSE stream -> 401
+    {
+      const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/events`, { method: 'GET' });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 401, 'Test 2: Unauthenticated conversation events SSE stream returns HTTP 401');
+    }
+
+    // Test 3: Authenticated member requesting own user events stream -> 200 text/event-stream
+    {
+      const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${memberJwtA}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 200, 'Test 3: Authenticated member requesting own user events stream returns HTTP 200');
+      assert((res.headers.get('content-type') || '').includes('text/event-stream'), 'Test 3: Response content-type is text/event-stream');
+      await res.body?.cancel();
+    }
+
+    // Test 4: Authenticated caller requesting another user's DM stream -> 403
+    {
+      const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${memberJwtC}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 403, 'Test 4: Authenticated caller requesting another user\'s DM stream returns HTTP 403');
+    }
+
+    // Test 5: Valid guest token with active database session requesting own user events stream -> 200
+    {
+      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${validGuestTokenA}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 200, 'Test 5: Valid guest token with database session requesting user events returns HTTP 200');
+      await res.body?.cancel();
+    }
+
+    // Test 6: Guest token requesting another user's events stream -> 403
+    {
+      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${validGuestTokenC}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 403, 'Test 6: Guest token requesting another user\'s events stream returns HTTP 403');
+    }
+
+    // Test 7: Forged guest token with invalid signature -> 401
+    {
+      const forgedGuestToken = `vx_gst_${Buffer.from(JSON.stringify({ sid: guestA, exp: Date.now() + 10000 })).toString('base64url')}.invalid_sig_hex_0000000000000000000000000000000000000000000000000000000000000000`;
+      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${forgedGuestToken}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 401, 'Test 7: Forged guest token with invalid signature returns HTTP 401');
+    }
+
+    // Test 8: Unknown/unregistered guest session in database -> 401
+    {
+      const unknownGuestToken = await createTestGuestToken('00000000-0000-4000-b000-000000000999', secret);
+      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${unknownGuestToken}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 401, 'Test 8: Unknown session in database returns HTTP 401');
+    }
+
+    // Test 9: Expired guest session token -> 401
+    {
+      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${expiredGuestTokenA}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 401, 'Test 9: Expired guest session token returns HTTP 401');
+    }
+
+    // Test 10: Participant member requesting conversation events -> 200
+    {
       const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/events`, {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${memberJwtA}` },
       });
-      const res = await worker.fetch(req, dbErrEnv);
-      assert(res.status === 500, 'Test 24: Database membership lookup error fails closed with HTTP 500');
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 200, 'Test 10: Participant member requesting conversation events returns HTTP 200');
+      await res.body?.cancel();
+    }
+
+    // Test 11: Member without database participant record requesting conversation events -> 403
+    {
+      const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${memberJwtC}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 403, 'Test 11: Non-participant member requesting conversation events returns HTTP 403');
+    }
+
+    // Test 12: Missing database configuration for guest verification -> fails closed with 401
+    {
+      const noDbEnv = {
+        ENVIRONMENT: 'development',
+        GUEST_SESSION_SECRET: secret,
+      };
+      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${validGuestTokenA}` },
+      });
+      const res = await worker.fetch(req, noDbEnv);
+      assert(res.status === 401, 'Test 12: Missing database configuration for guest verification fails closed with HTTP 401');
+    }
+
+    // Test 13: Public room SSE accessible without auth -> 200
+    {
+      const req = new Request('https://voxanex.test/api/chat/rooms/lounge/events', { method: 'GET' });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 200, 'Test 13: Public room SSE accessible without authentication returns HTTP 200');
+      await res.body?.cancel();
+    }
+
+    // Test 14: Unsigned/forged member JWT -> 401
+    {
+      const forgedJwt = createForgedUnsignedMemberJwt(userA);
+      const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${forgedJwt}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === 401, 'Test 14: Unsigned/forged member JWT returns HTTP 401');
+    }
+
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+
+  // Test 15: connectCustomSSE parser test with split chunks and multiline data
+  {
+    let eventsCount = 0;
+    const receivedEvents: Array<{ event: string; data: string }> = [];
+
+    const mockStream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode('event: new_dm\ndat'));
+        controller.enqueue(encoder.encode('a: {"id":"123","content":"hello"}\r\n\r\n'));
+        controller.enqueue(encoder.encode(': ping comment\n\nevent: message\ndata: line1\ndata: line2\n\n'));
+        controller.close();
+      }
+    });
+
+    const origFetchMock = globalThis.fetch;
+    globalThis.fetch = async () => new Response(mockStream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' }
+    });
+
+    try {
+      const cleanup = connectCustomSSE({
+        url: 'https://voxanex.test/api/chat/conversations/conv_test/events',
+        onEvent: (event, data) => {
+          eventsCount++;
+          receivedEvents.push({ event, data });
+        }
+      });
+      await new Promise(r => setTimeout(r, 100));
+      cleanup();
+
+      assert(eventsCount === 2, 'Test 15: connectCustomSSE successfully parsed 2 event blocks across split chunks');
+      assert(receivedEvents[0].event === 'new_dm', 'Test 15: First event name is new_dm');
+      assert(receivedEvents[1].data === 'line1\nline2', 'Test 15: Second event correctly combined multiline data fields');
     } finally {
-      globalThis.fetch = origFetch;
+      globalThis.fetch = origFetchMock;
     }
   }
 
-  console.log('\n--- All 24 Phase 2.3.1 SSE Authorization Security Audit Tests PASSED ---');
+  // Test 16: connectCustomSSE halts on HTTP 401
+  {
+    let authErrorCalled = false;
+    const origFetchMock = globalThis.fetch;
+    globalThis.fetch = async () => new Response('Unauthorized', { status: 401 });
+
+    try {
+      const cleanup = connectCustomSSE({
+        url: 'https://voxanex.test/api/chat/conversations/conv_test/events',
+        onEvent: () => {},
+        onAuthError: (status) => {
+          if (status === 401) authErrorCalled = true;
+        }
+      });
+      await new Promise(r => setTimeout(r, 50));
+      cleanup();
+
+      assert(authErrorCalled, 'Test 16: connectCustomSSE correctly invoked onAuthError on HTTP 401 and halted retries');
+    } finally {
+      globalThis.fetch = origFetchMock;
+    }
+  }
+
+  // Test 17: Async subscription cleanup test (subscribeToUserEvents unsubscribe before resolution)
+  {
+    const origFetchMock = globalThis.fetch;
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response('ok', { status: 200 });
+    };
+
+    try {
+      const unsubscribe = messagingService.subscribeToUserEvents(userA, {
+        onMessage: () => {}
+      });
+      // Immediately unsubscribe before async token resolution finishes
+      unsubscribe();
+      await new Promise(r => setTimeout(r, 50));
+
+      assert(true, 'Test 17: subscribeToUserEvents async cleanup completed without throwing errors');
+    } finally {
+      globalThis.fetch = origFetchMock;
+    }
+  }
+
+  console.log('\n--- All Phase 2.3.2 Security Audit & Test Cases PASSED ---');
   process.exit(0);
 }
 

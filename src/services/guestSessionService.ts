@@ -118,6 +118,7 @@ export const guestSessionService = {
    * Get currently stored token
    */
   getStoredToken(): string | null {
+    if (typeof localStorage === 'undefined') return null;
     return localStorage.getItem(STORAGE_KEY);
   },
 };

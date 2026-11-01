@@ -189,20 +189,6 @@ async function verifyGuestToken(
 
     // Mandatory durable revocation & existence verification against public.guest_sessions
     if (!dbEnv?.supabaseUrl || !dbEnv?.supabaseServiceKey) {
-      if (secretInfo.isDevFallback) {
-        const session: GuestSession = {
-          id: p.sid,
-          token,
-          nickname: p.nick || p.nickname || 'Guest_User',
-          avatar: p.av || p.avatar || '⚡',
-          gender: p.gen || p.gender,
-          languagePref: p.lng || p.languagePref || 'en',
-          is18Verified: Boolean(p.v18 || p.is18Verified),
-          createdAt: p.iat,
-          expiresAt: p.exp,
-        };
-        return { valid: true, session };
-      }
       return { valid: false, reason: 'Database configuration missing for guest session verification.' };
     }
 
@@ -328,16 +314,16 @@ async function authenticateRequest(
   url: URL,
   guestSecretInfo: { secret: string | null; isDevFallback: boolean },
   dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string; supabaseAnonKey?: string },
-  supabaseClient?: any
+  supabaseClient?: any,
+  env?: any
 ): Promise<{ verifiedUserId: string; isGuestCaller: boolean } | { errorResponse: Response }> {
-  const guestTokenParam = url.searchParams.get('guestToken') || request.headers.get('x-guest-token');
   const authHeader = request.headers.get('Authorization');
   const bearerToken = authHeader && authHeader.startsWith('Bearer ')
     ? authHeader.slice(7).trim()
     : null;
 
-  const guestToken = guestTokenParam || (bearerToken && bearerToken.startsWith('vx_gst_') ? bearerToken : null);
-  const memberJwt = !guestToken && bearerToken && !bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+  const guestToken = bearerToken && bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+  const memberJwt = bearerToken && !bearerToken.startsWith('vx_gst_') ? bearerToken : null;
 
   if (guestToken) {
     const authCheck = await verifyGuestToken(guestToken, guestSecretInfo, dbEnv);
@@ -382,7 +368,10 @@ async function authenticateRequest(
       }
     }
 
-    if (!verifiedUserId && guestSecretInfo.isDevFallback) {
+    const currentEnv = env?.ENVIRONMENT || (guestSecretInfo.isDevFallback ? 'development' : 'production');
+    const isProdOrStaging = currentEnv === 'production' || currentEnv === 'staging' || currentEnv === 'prod';
+
+    if (!verifiedUserId && guestSecretInfo.isDevFallback && !isProdOrStaging) {
       verifiedUserId = await verifyMemberJwtDevFallback(memberJwt, guestSecretInfo.secret);
     }
 
@@ -1482,14 +1471,10 @@ export default {
             error: 'Database error verifying conversation membership.',
           }, 500);
         }
-      } else if (guestSecretInfo.isDevFallback) {
-        if (convId.includes(verifiedUserId) || dbConvId.includes(verifiedUserId)) {
-          isMember = true;
-        }
       } else {
         return jsonResponse({
           success: false,
-          error: 'Server configuration error: Database bindings missing in production.',
+          error: 'Server configuration error: Database bindings missing.',
         }, 503);
       }
 

@@ -148,7 +148,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       // Fetch server-backed conversations for this user (robust for cleared localStorage / fresh browser session)
       try {
         const token = guestSessionService.getStoredToken();
-        const serverConvs = await messagingService.fetchUserConversations(user.id, token || undefined);
+        const serverConvs = await messagingService.fetchUserConversations(user.id);
         serverConvs.forEach((id) => knownConversationIdsRef.current.add(id));
       } catch {
         // ignore

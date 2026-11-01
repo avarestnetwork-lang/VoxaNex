@@ -38,7 +38,7 @@ export interface SendMessageOptions {
   clientNonce?: string;
 }
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
+const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || (typeof window !== 'undefined' && window.location?.origin) || 'https://voxanex.test';
 
 async function getAuthToken(): Promise<string | null> {
   const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
@@ -531,11 +531,7 @@ export const messagingService = {
   ): Promise<{ success: boolean; messages: ChatMessage[]; error?: string }> {
     try {
       const token = await getAuthToken();
-      const guestToken = guestSessionService.getStoredToken();
-      let url = `${API_BASE}/api/chat/conversations/${convId}/messages?userId=${encodeURIComponent(userId)}`;
-      if (guestToken) {
-        url += `&guestToken=${encodeURIComponent(guestToken)}`;
-      }
+      const url = `${API_BASE}/api/chat/conversations/${convId}/messages?userId=${encodeURIComponent(userId)}`;
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -634,13 +630,10 @@ export const messagingService = {
     }
   },
 
-  async fetchUserConversations(userId: string, guestToken?: string): Promise<string[]> {
+  async fetchUserConversations(userId: string): Promise<string[]> {
     try {
-      const authToken = !guestToken ? await getAuthToken() : undefined;
-      let url = `${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`;
-      if (guestToken) {
-        url += `&guestToken=${encodeURIComponent(guestToken)}`;
-      }
+      const authToken = await getAuthToken();
+      const url = `${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`;
       const headers: Record<string, string> = {};
       if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
