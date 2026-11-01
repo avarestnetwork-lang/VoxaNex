@@ -112,7 +112,7 @@ async function computeTokenHash(token: string): Promise<string> {
 
 async function verifyGuestToken(
   token: string | undefined,
-  secretInfo: { secret: string | null },
+  secretInfo: { secret: string | null; isDevFallback?: boolean },
   dbEnv?: { supabaseUrl?: string; supabaseServiceKey?: string }
 ): Promise<{ valid: boolean; session?: GuestSession; reason?: string }> {
   if (!secretInfo.secret) {
@@ -189,6 +189,20 @@ async function verifyGuestToken(
 
     // Mandatory durable revocation & existence verification against public.guest_sessions
     if (!dbEnv?.supabaseUrl || !dbEnv?.supabaseServiceKey) {
+      if (secretInfo.isDevFallback) {
+        const session: GuestSession = {
+          id: p.sid,
+          token,
+          nickname: p.nick || p.nickname || 'Guest_User',
+          avatar: p.av || p.avatar || '⚡',
+          gender: p.gen || p.gender,
+          languagePref: p.lng || p.languagePref || 'en',
+          is18Verified: Boolean(p.v18 || p.is18Verified),
+          createdAt: p.iat,
+          expiresAt: p.exp,
+        };
+        return { valid: true, session };
+      }
       return { valid: false, reason: 'Database configuration missing for guest session verification.' };
     }
 
@@ -258,6 +272,57 @@ async function verifyGuestToken(
   }
 }
 
+async function verifyMemberJwtDevFallback(
+  token: string,
+  secret: string | null
+): Promise<string | null> {
+  if (!secret) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+
+  const [headerB64, payloadB64, sigB64] = parts;
+  if (!headerB64 || !payloadB64 || !sigB64) return null;
+
+  try {
+    const encoder = new TextEncoder();
+    const dataToVerify = encoder.encode(`${headerB64}.${payloadB64}`);
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify']
+    );
+
+    let sigBytes: Uint8Array | null = null;
+    try {
+      const base64 = sigB64.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = base64.length % 4;
+      const padded = pad ? base64 + '='.repeat(4 - pad) : base64;
+      const binary = atob(padded);
+      sigBytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        sigBytes[i] = binary.charCodeAt(i);
+      }
+    } catch {
+      if (/^[0-9a-f]+$/i.test(sigB64) && sigB64.length % 2 === 0) {
+        sigBytes = new Uint8Array(sigB64.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
+      }
+    }
+
+    if (!sigBytes) return null;
+
+    const isValid = await crypto.subtle.verify('HMAC', key, sigBytes as unknown as BufferSource, dataToVerify);
+    if (!isValid) return null;
+
+    const payloadJson = fromBase64Url(payloadB64);
+    const payload = JSON.parse(payloadJson);
+    return payload.sub || payload.id || null;
+  } catch {
+    return null;
+  }
+}
+
 async function authenticateRequest(
   request: Request,
   url: URL,
@@ -318,17 +383,7 @@ async function authenticateRequest(
     }
 
     if (!verifiedUserId && guestSecretInfo.isDevFallback) {
-      try {
-        const parts = memberJwt.split('.');
-        if (parts.length === 3) {
-          const payload = JSON.parse(fromBase64Url(parts[1]));
-          if (payload.sub || payload.id) {
-            verifiedUserId = payload.sub || payload.id;
-          }
-        }
-      } catch {
-        // ignore
-      }
+      verifiedUserId = await verifyMemberJwtDevFallback(memberJwt, guestSecretInfo.secret);
     }
 
     if (!verifiedUserId) {

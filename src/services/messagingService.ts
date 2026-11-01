@@ -724,22 +724,22 @@ export const messagingService = {
       // ignore
     }
 
-    // 2. SSE Connection (Authenticated via HTTP Headers - Authorization / X-Guest-Token)
+    // 2. SSE Connection (Authenticated via HTTP Headers - Authorization)
     let unsubscribeSSE = () => {};
     (async () => {
       if (isClosed) return;
       const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
       const authToken = !guestToken ? await getAuthToken() : undefined;
+      if (isClosed) return;
 
       const headers: Record<string, string> = {};
       if (guestToken) {
         headers['Authorization'] = `Bearer ${guestToken}`;
-        headers['X-Guest-Token'] = guestToken;
       } else if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
 
-      unsubscribeSSE = connectCustomSSE({
+      const cleanup = connectCustomSSE({
         url: `${API_BASE}/api/chat/conversations/${convId}/events`,
         headers,
         onEvent: (eventName, dataStr) => {
@@ -770,6 +770,12 @@ export const messagingService = {
           console.warn(`[VX-DM] SSE authorization error ${status}:`, message);
         },
       });
+
+      if (isClosed) {
+        cleanup();
+      } else {
+        unsubscribeSSE = cleanup;
+      }
     })();
 
     // 4. Supabase Realtime Private channel subscription (Shared state)
@@ -831,16 +837,16 @@ export const messagingService = {
       if (isClosed) return;
       const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
       const authToken = !guestToken ? await getAuthToken() : undefined;
+      if (isClosed) return;
 
       const headers: Record<string, string> = {};
       if (guestToken) {
         headers['Authorization'] = `Bearer ${guestToken}`;
-        headers['X-Guest-Token'] = guestToken;
       } else if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
 
-      unsubscribeSSE = connectCustomSSE({
+      const cleanup = connectCustomSSE({
         url: `${API_BASE}/api/chat/user/${userId}/events`,
         headers,
         onEvent: (eventName, dataStr) => {
@@ -855,6 +861,12 @@ export const messagingService = {
         },
         onAuthError: callbacks.onAuthError,
       });
+
+      if (isClosed) {
+        cleanup();
+      } else {
+        unsubscribeSSE = cleanup;
+      }
     })();
 
     return () => {
