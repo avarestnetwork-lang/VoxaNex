@@ -49,8 +49,6 @@ async function getAuthToken(): Promise<string | null> {
   if (typeof __testAuthTokenResolver === 'function') {
     return await __testAuthTokenResolver();
   }
-  const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
-  if (guestToken) return guestToken;
 
   const supabase = getSupabaseClient();
   if (supabase) {
@@ -63,6 +61,10 @@ async function getAuthToken(): Promise<string | null> {
       // ignore
     }
   }
+
+  const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
+  if (guestToken) return guestToken;
+
   return null;
 }
 
@@ -247,6 +249,7 @@ export const messagingService = {
   ): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
     try {
       const headers = await this.getIdentityHeaders();
+      const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
       const clientNonce =
         options.clientNonce || `nonce_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -258,6 +261,7 @@ export const messagingService = {
         headers,
         body: JSON.stringify({
           ...options,
+          guestToken,
           clientNonce,
         }),
       });

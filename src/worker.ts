@@ -283,28 +283,20 @@ async function authenticateRequest(
   guestSecretInfo: { secret: string | null; isDevFallback: boolean },
   dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string; supabaseAnonKey?: string },
   supabaseClient?: any,
-  env?: any
+  env?: any,
+  bodyToken?: string
 ): Promise<{ verifiedUserId: string; isGuestCaller: boolean; guestSession?: GuestSession } | { errorResponse: Response }> {
   const authHeader = request.headers.get('Authorization');
   const bearerToken = authHeader && authHeader.startsWith('Bearer ')
     ? authHeader.slice(7).trim()
     : null;
 
-  const guestToken = bearerToken && bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+  const headerGuestToken = bearerToken && bearerToken.startsWith('vx_gst_') ? bearerToken : null;
   const memberJwt = bearerToken && !bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+  const effectiveBodyToken = bodyToken && bodyToken.startsWith('vx_gst_') ? bodyToken : null;
 
-  if (guestToken) {
-    const authCheck = await verifyGuestToken(guestToken, guestSecretInfo, dbEnv);
-    if (!authCheck.valid || !authCheck.session) {
-      return {
-        errorResponse: jsonResponse({
-          success: false,
-          error: `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}`,
-        }, 401)
-      };
-    }
-    return { verifiedUserId: authCheck.session.id, isGuestCaller: true, guestSession: authCheck.session };
-  } else if (memberJwt) {
+  // Registered member priority
+  if (memberJwt) {
     let verifiedUserId: string | null = null;
     if (dbEnv.supabaseUrl) {
       try {
@@ -336,15 +328,35 @@ async function authenticateRequest(
       }
     }
 
-    if (!verifiedUserId) {
+    if (verifiedUserId) {
+      return { verifiedUserId, isGuestCaller: false };
+    }
+  }
+
+  // Guest token handling
+  const finalGuestToken = headerGuestToken || effectiveBodyToken;
+
+  if (finalGuestToken) {
+    // If both exist, they must match
+    if (headerGuestToken && effectiveBodyToken && headerGuestToken !== effectiveBodyToken) {
       return {
         errorResponse: jsonResponse({
           success: false,
-          error: 'Unauthorized: Invalid or expired member session token.',
+          error: 'Unauthorized: Conflicting guest credentials in header and body.',
         }, 401)
       };
     }
-    return { verifiedUserId, isGuestCaller: false };
+
+    const authCheck = await verifyGuestToken(finalGuestToken, guestSecretInfo, dbEnv);
+    if (!authCheck.valid || !authCheck.session) {
+      return {
+        errorResponse: jsonResponse({
+          success: false,
+          error: `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}`,
+        }, 401)
+      };
+    }
+    return { verifiedUserId: authCheck.session.id, isGuestCaller: true, guestSession: authCheck.session };
   }
 
   return {
@@ -358,8 +370,9 @@ async function authenticateRequest(
 async function fetchMemberProfile(
   userId: string,
   dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string }
-): Promise<{ nickname: string; avatar: string } | null> {
-  if (!dbEnv.supabaseUrl || !dbEnv.supabaseServiceKey) return null;
+): Promise<{ nickname: string; avatar: string }> {
+  const fallback = { nickname: 'User', avatar: '👤' };
+  if (!dbEnv.supabaseUrl || !dbEnv.supabaseServiceKey) return fallback;
   try {
     const res = await fetch(`${dbEnv.supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=nickname,avatar_url`, {
       headers: {
@@ -371,15 +384,15 @@ async function fetchMemberProfile(
       const rows: any = await res.json();
       if (Array.isArray(rows) && rows.length > 0) {
         return {
-          nickname: rows[0].nickname || 'User',
-          avatar: rows[0].avatar_url || '👤',
+          nickname: rows[0].nickname || fallback.nickname,
+          avatar: rows[0].avatar_url || fallback.avatar,
         };
       }
     }
   } catch (err) {
     console.error('[Worker] Error fetching member profile:', err);
   }
-  return null;
+  return fallback;
 }
 
 // Global in-memory maps for Edge instance
@@ -723,23 +736,6 @@ export default {
       // POST: Send new message
       if (request.method === 'POST') {
         try {
-          // 1. Authenticate Request
-          const authResult = await authenticateRequest(
-            request,
-            url,
-            guestSecretInfo,
-            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
-            supabaseClient,
-            env
-          );
-
-          if ('errorResponse' in authResult) {
-            return authResult.errorResponse;
-          }
-
-          const { verifiedUserId, isGuestCaller, guestSession } = authResult;
-
-          // 2. Validate Body
           const body: any = await request.json().catch(() => ({}));
           const {
             content,
@@ -748,9 +744,41 @@ export default {
             linkPreview,
             clientNonce,
             senderId: clientSenderId,
+            senderType: clientSenderType,
+            guestToken: bodyGuestToken,
           } = body || {};
 
-          // Identity Spoofing Check
+          // 1. Authenticate Request (Deterministic precedence)
+          const authResult = await authenticateRequest(
+            request,
+            url,
+            guestSecretInfo,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+            supabaseClient,
+            env,
+            bodyGuestToken
+          );
+
+          if ('errorResponse' in authResult) {
+            return authResult.errorResponse;
+          }
+
+          const { verifiedUserId, isGuestCaller, guestSession } = authResult;
+
+          // 2. Validate senderType
+          if (!clientSenderType || !['registered', 'guest'].includes(clientSenderType)) {
+             return jsonResponse({ success: false, error: 'Bad Request: Missing or invalid senderType.' }, 400);
+          }
+
+          // Cross-check declared type and verified identity
+          if (isGuestCaller && clientSenderType !== 'guest') {
+             return jsonResponse({ success: false, error: 'Forbidden: Guest session cannot claim registered identity.' }, 403);
+          }
+          if (!isGuestCaller && clientSenderType !== 'registered') {
+             return jsonResponse({ success: false, error: 'Forbidden: Registered session cannot be downgraded to guest identity.' }, 403);
+          }
+
+          // 3. Identity Spoofing Check
           if (clientSenderId && clientSenderId !== verifiedUserId) {
              return jsonResponse({ success: false, error: 'Forbidden: Sender identity mismatch (spoofing attempt rejected).' }, 403);
           }
@@ -759,7 +787,7 @@ export default {
             return jsonResponse({ success: false, error: 'Message content or media is required.' }, 400);
           }
 
-          // 3. Derive Identity from Verified Source
+          // 4. Derive Identity from Verified Source (Zero-trust fallback)
           let verifiedNickname: string;
           let verifiedAvatar: string;
 
@@ -768,14 +796,8 @@ export default {
             verifiedAvatar = guestSession.avatar;
           } else {
             const profile = await fetchMemberProfile(verifiedUserId, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey });
-            if (profile) {
-              verifiedNickname = profile.nickname;
-              verifiedAvatar = profile.avatar;
-            } else {
-              // Fallback if profile missing (e.g. newly registered or DB error)
-              verifiedNickname = body.senderNickname || 'User';
-              verifiedAvatar = body.senderAvatar || '👤';
-            }
+            verifiedNickname = profile.nickname;
+            verifiedAvatar = profile.avatar;
           }
 
           const cleanContent = sanitizeContent(content || '');
@@ -797,7 +819,39 @@ export default {
             status: 'delivered',
           };
 
-          // 4. Persistence-before-Broadcast
+          // 5. Pre-write Nonce Deduplication (Cross-isolate race-risk minimized via DB check)
+          if (baseSupabaseUrl && supabaseServiceKey && clientNonce) {
+             try {
+                const queryUrl = `${baseSupabaseUrl}/rest/v1/messages?client_nonce=eq.${encodeURIComponent(clientNonce)}&select=id,room_id,sender_nickname,content,created_at`;
+                const checkRes = await fetch(queryUrl, {
+                  headers: {
+                    'apikey': supabaseServiceKey,
+                    'Authorization': `Bearer ${supabaseServiceKey}`,
+                  },
+                });
+                if (checkRes.ok) {
+                   const existingRows: any = await checkRes.json();
+                   if (Array.isArray(existingRows) && existingRows.length > 0) {
+                      const m = existingRows[0];
+                      return jsonResponse({
+                        success: true,
+                        message: {
+                          id: m.id,
+                          roomId: m.room_id,
+                          senderNickname: m.sender_nickname,
+                          content: m.content,
+                          timestamp: m.created_at,
+                          status: 'delivered'
+                        }
+                      });
+                   }
+                }
+             } catch (err) {
+               console.warn('[Worker] Pre-write deduplication query failed:', err);
+             }
+          }
+
+          // 6. Persistence-before-Broadcast
           if (baseSupabaseUrl && supabaseServiceKey) {
             try {
               const realRoomId = await databaseService.resolveRoomId(roomId, supabaseClient);
@@ -851,17 +905,11 @@ export default {
             }, 503);
           }
 
-          // 5. Update Local Map & Broadcast
+          // 7. Update Local Map & Broadcast (Only after successful persistence)
           if (!roomMessages.has(roomId)) {
             roomMessages.set(roomId, []);
           }
           const list = roomMessages.get(roomId)!;
-
-          // Deduplicate if clientNonce already exists
-          if (clientNonce && list.some((m) => m.clientNonce === clientNonce)) {
-            const existing = list.find((m) => m.clientNonce === clientNonce)!;
-            return jsonResponse({ success: true, message: existing });
-          }
 
           list.push(message);
           if (list.length > 500) {
