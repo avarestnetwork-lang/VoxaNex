@@ -2,7 +2,7 @@ import worker from '../src/worker';
 import { connectCustomSSE, messagingService, setTestAuthTokenResolver } from '../src/services/messagingService';
 
 /**
- * Phase 2.3.4.2 — SSE Transport Test Integrity & Deterministic Cancellation Suite
+ * Phase 2.3.4.3 — Complete Guest Security Regression Matrix & SSE Transport Verification
  */
 
 let passedCount = 0;
@@ -57,7 +57,7 @@ async function computeTokenHash(token: string): Promise<string> {
 }
 
 async function runTests() {
-  console.log('--- VoxaNex Phase 2.3.4.2 Test Suite ---\n');
+  console.log('--- VoxaNex Phase 2.3.4.3 Test Suite ---\n');
 
   const secret = 'test_guest_secret_key_32_bytes_long!!';
   const dbEnv = {
@@ -74,43 +74,196 @@ async function runTests() {
   const tokenA = await createTestGuestToken(guestA, secret);
   const hashA = await computeTokenHash(tokenA);
 
-  // Mock global fetch for guest session verification
-  let activeMockScenario = 'valid_canonical';
+  // =========================================================================
+  // TASK 1: RESTORE GUEST SESSION DATABASE INTEGRITY MATRIX (15 SCENARIOS)
+  // =========================================================================
+  console.log('--- Task 1: Guest Session Database Integrity Matrix ---');
+
   const origFetch = globalThis.fetch;
 
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const urlStr = typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString();
-
-    if (urlStr.includes('/rest/v1/guest_sessions')) {
-      if (activeMockScenario === 'valid_canonical') {
-        return new Response(JSON.stringify([{
-          id: guestA,
-          session_token_hash: hashA,
-          is_revoked: false,
-          expires_at: new Date(Date.now() + 86400000).toISOString(),
-        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  async function runGuestTest(scenarioName: string, mockFetchHandler: () => Response | Promise<Response>, expectedStatus: number) {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlStr = typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString();
+      if (urlStr.includes('/rest/v1/guest_sessions')) {
+        return await mockFetchHandler();
       }
-      return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return origFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${tokenA}` },
+      });
+      const res = await worker.fetch(req, dbEnv);
+      assert(res.status === expectedStatus, `Guest Matrix: ${scenarioName}`, `Expected status ${expectedStatus}, got ${res.status}`);
+      await res.body?.cancel();
+    } finally {
+      globalThis.fetch = origFetch;
     }
+  }
 
-    return origFetch(input, init);
-  }) as typeof fetch;
+  // 1. Valid canonical guest session
+  await runGuestTest(
+    '1. Valid canonical guest session accepted',
+    () => new Response(JSON.stringify([{
+      id: guestA,
+      session_token_hash: hashA,
+      is_revoked: false,
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    200
+  );
 
-  try {
-    // Basic guest test to ensure security checks are preserved
-    activeMockScenario = 'valid_canonical';
+  // 2. Zero database rows
+  await runGuestTest(
+    '2. Zero database rows rejected',
+    () => new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 3. Multiple database rows
+  await runGuestTest(
+    '3. Multiple database rows rejected',
+    () => new Response(JSON.stringify([
+      { id: guestA, session_token_hash: hashA, is_revoked: false, expires_at: new Date(Date.now() + 86400000).toISOString() },
+      { id: guestA, session_token_hash: hashA, is_revoked: false, expires_at: new Date(Date.now() + 86400000).toISOString() }
+    ]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 4. Non-array database response
+  await runGuestTest(
+    '4. Non-array database response rejected',
+    () => new Response(JSON.stringify({ error: 'object response' }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 5. Malformed JSON response
+  await runGuestTest(
+    '5. Malformed JSON response rejected',
+    () => new Response('not valid json {', { status: 200, headers: { 'Content-Type': 'text/plain' } }),
+    401
+  );
+
+  // 6. Session ID mismatch
+  await runGuestTest(
+    '6. Session ID mismatch rejected',
+    () => new Response(JSON.stringify([{
+      id: '00000000-0000-4000-b000-000000000999',
+      session_token_hash: hashA,
+      is_revoked: false,
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 7. Stored session_token_hash mismatch
+  await runGuestTest(
+    '7. Stored session_token_hash mismatch rejected',
+    () => new Response(JSON.stringify([{
+      id: guestA,
+      session_token_hash: 'bad_hash_value',
+      is_revoked: false,
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 8. is_revoked === true
+  await runGuestTest(
+    '8. is_revoked === true rejected',
+    () => new Response(JSON.stringify([{
+      id: guestA,
+      session_token_hash: hashA,
+      is_revoked: true,
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 9. Missing is_revoked
+  await runGuestTest(
+    '9. Missing is_revoked rejected',
+    () => new Response(JSON.stringify([{
+      id: guestA,
+      session_token_hash: hashA,
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 10. is_revoked === null
+  await runGuestTest(
+    '10. is_revoked === null rejected',
+    () => new Response(JSON.stringify([{
+      id: guestA,
+      session_token_hash: hashA,
+      is_revoked: null,
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 11. is_revoked === "false" (string)
+  await runGuestTest(
+    '11. is_revoked === "false" string rejected',
+    () => new Response(JSON.stringify([{
+      id: guestA,
+      session_token_hash: hashA,
+      is_revoked: 'false',
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 12. is_revoked === 0 (number)
+  await runGuestTest(
+    '12. is_revoked === 0 number rejected',
+    () => new Response(JSON.stringify([{
+      id: guestA,
+      session_token_hash: hashA,
+      is_revoked: 0,
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 13. Expired database session
+  await runGuestTest(
+    '13. Expired database session rejected',
+    () => new Response(JSON.stringify([{
+      id: guestA,
+      session_token_hash: hashA,
+      is_revoked: false,
+      expires_at: new Date(Date.now() - 3600000).toISOString(),
+    }]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    401
+  );
+
+  // 14. Database HTTP error
+  await runGuestTest(
+    '14. Database HTTP error rejected',
+    () => new Response('Internal Server Error', { status: 500 }),
+    401
+  );
+
+  // 15. Missing database configuration
+  {
     const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${tokenA}` },
     });
-    const res = await worker.fetch(req, dbEnv);
-    assert(res.status === 200, 'Security Test: Valid guest session accepted');
+    const res = await worker.fetch(req, { ...dbEnv, SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '' });
+    assert(res.status === 401, '15. Missing database configuration rejected');
     await res.body?.cancel();
-  } finally {
-    globalThis.fetch = origFetch;
   }
 
-  // --- TASK 2: INDEPENDENT HTTP 401 AND HTTP 403 TESTS ---
+
+  // =========================================================================
+  // TASK 2 & 3: SSE TRANSPORT TESTS (401, 403, 500 retry, AbortController, async unsubscribe)
+  // =========================================================================
+  console.log('\n--- Task 2 & 3: SSE Transport & Cancellation Verification ---');
 
   // Test 2A: HTTP 401 independent test
   {
@@ -168,7 +321,7 @@ async function runTests() {
     }
   }
 
-  // --- TASK 3: HTTP 500 RETRY BEHAVIOR ---
+  // --- HTTP 500 Retry & Recovery Test ---
   {
     let fetchCount = 0;
     let openCalled = false;
@@ -196,14 +349,14 @@ async function runTests() {
       await new Promise(r => setTimeout(r, 1500));
       cleanup();
 
-      assert(fetchCount >= 2, 'HTTP 500 Retry Test: Retried after initial 500 error');
+      assert(fetchCount >= 2, 'HTTP 500 Retry Test: Retried after initial 500 error (fetchCount >= 2)');
       assert(openCalled, 'HTTP 500 Retry Test: Successfully reconnected and established stream on subsequent attempt');
     } finally {
       globalThis.fetch = origFetchMock;
     }
   }
 
-  // --- TASK 4: ABORTCONTROLLER CANCELLATION VERIFICATION ---
+  // --- AbortController Cancellation Signal Test ---
   {
     let capturedSignal: AbortSignal | null = null;
     const origFetchMock = globalThis.fetch;
@@ -235,7 +388,7 @@ async function runTests() {
     }
   }
 
-  // --- TASK 5: DETERMINISTIC ASYNCHRONOUS UNSUBSCRIBE TEST ---
+  // --- Deterministic Asynchronous Unsubscribe Test ---
   {
     let resolveDeferredToken: ((val: string) => void) | null = null;
     const deferredTokenPromise = new Promise<string>((resolve) => {
@@ -272,7 +425,11 @@ async function runTests() {
     }
   }
 
-  // --- TASK 6: PARSER COVERAGE (UTF-8 split, multiline, comments) ---
+
+  // =========================================================================
+  // TASK 4: PARSER COMPLETION AND EVENT COVERAGE
+  // =========================================================================
+  console.log('\n--- Task 4: Parser Completion & Event Coverage ---');
   {
     let eventsCount = 0;
     const receivedEvents: Array<{ event: string; data: string }> = [];
@@ -315,6 +472,9 @@ async function runTests() {
     }
   }
 
+  // =========================================================================
+  // TASK 5: TEST RESULTS SUMMARY & EXIT CODE
+  // =========================================================================
   console.log(`\n--- Test Results Summary ---`);
   console.log(`Total Assertions Executed: ${assertionCount}`);
   console.log(`Passed: ${passedCount}`);
@@ -324,7 +484,7 @@ async function runTests() {
     console.error(`❌ Test suite failed with ${failedCount} error(s).`);
     process.exit(1);
   } else {
-    console.log(`✅ All Phase 2.3.4.2 Test Cases PASSED.`);
+    console.log(`✅ All Phase 2.3.4.3 Test Cases PASSED.`);
     process.exit(0);
   }
 }
