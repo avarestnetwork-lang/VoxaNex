@@ -195,7 +195,7 @@ async function verifyGuestToken(
     const tokenHash = await computeTokenHash(token);
     let canonicalRow: any = null;
     try {
-      const queryUrl = `${dbEnv.supabaseUrl}/rest/v1/guest_sessions?session_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,is_revoked,expires_at`;
+      const queryUrl = `${dbEnv.supabaseUrl}/rest/v1/guest_sessions?session_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,session_token_hash,is_revoked,expires_at`;
       const res = await fetch(queryUrl, {
         headers: {
           'apikey': dbEnv.supabaseServiceKey,
@@ -208,16 +208,35 @@ async function verifyGuestToken(
         return { valid: false, reason: `Database verification failed (HTTP ${res.status})` };
       }
 
-      const rows: any = await res.json().catch(() => []);
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return { valid: false, reason: 'Guest session not found or unregistered.' };
+      let rows: any;
+      try {
+        rows = await res.json();
+      } catch {
+        return { valid: false, reason: 'Malformed JSON response from database.' };
+      }
+
+      if (!Array.isArray(rows)) {
+        return { valid: false, reason: 'Invalid database response: expected an array.' };
+      }
+
+      if (rows.length !== 1) {
+        return { valid: false, reason: rows.length === 0 ? 'Guest session not found or unregistered.' : 'Ambiguous session: multiple records matched.' };
       }
 
       canonicalRow = rows[0];
 
+      if (!canonicalRow || typeof canonicalRow !== 'object') {
+        return { valid: false, reason: 'Invalid canonical session record.' };
+      }
+
       // Explicitly enforce row.id === p.sid
-      if (canonicalRow.id !== p.sid) {
+      if (canonicalRow.id !== p.sid || typeof canonicalRow.id !== 'string') {
         return { valid: false, reason: 'Session identity mismatch.' };
+      }
+
+      // Explicitly enforce session_token_hash match
+      if (canonicalRow.session_token_hash !== tokenHash) {
+        return { valid: false, reason: 'Token hash verification mismatch.' };
       }
 
       if (canonicalRow.is_revoked !== false) {
