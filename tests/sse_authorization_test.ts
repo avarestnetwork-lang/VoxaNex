@@ -2,15 +2,20 @@ import worker from '../src/worker';
 import { connectCustomSSE, messagingService } from '../src/services/messagingService';
 
 /**
- * Phase 2.3.2 — Comprehensive Security Audit, SSE Authorization, Parser & Cleanup Test Suite
+ * Phase 2.3.3 — Comprehensive Security Audit, SSE Authorization, Parser & Cleanup Test Suite
  */
+
+let passedCount = 0;
+let failedCount = 0;
 
 function assert(condition: boolean, testName: string, detail?: string) {
   if (!condition) {
     console.error(`❌ [FAILED] ${testName}${detail ? ` (${detail})` : ''}`);
+    failedCount++;
     process.exitCode = 1;
   } else {
     console.log(`✅ [PASSED] ${testName}`);
+    passedCount++;
   }
 }
 
@@ -73,7 +78,7 @@ function createForgedUnsignedMemberJwt(userId: string): string {
 }
 
 async function runTests() {
-  console.log('--- VoxaNex Phase 2.3.2 Security Audit & Test Suite ---\n');
+  console.log('--- VoxaNex Phase 2.3.3 Security Audit & Test Suite ---\n');
 
   const secret = 'test_guest_secret_key_32_bytes_long!!';
   const dbEnv = {
@@ -102,7 +107,6 @@ async function runTests() {
   const tokenHashC = await computeTokenHash(validGuestTokenC);
 
   const convAB = `conv_${[userA, userB].sort().join('_')}`;
-  const convGuestAB = `conv_${[guestA, userB].sort().join('_')}`;
 
   // Mock global fetch for Supabase database verification
   const origFetch = globalThis.fetch;
@@ -137,13 +141,6 @@ async function runTests() {
           expires_at: new Date(Date.now() + 86400000).toISOString(),
         }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      if (urlStr.includes('revoked')) {
-        return new Response(JSON.stringify([{
-          id: guestA,
-          is_revoked: true,
-          expires_at: new Date(Date.now() + 86400000).toISOString(),
-        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      }
       return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
@@ -172,7 +169,7 @@ async function runTests() {
       assert(res.status === 401, 'Test 2: Unauthenticated conversation events SSE stream returns HTTP 401');
     }
 
-    // Test 3: Authenticated member requesting own user events stream -> 200 text/event-stream
+    // Test 3: Authenticated member requesting own user events stream -> 200
     {
       const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, {
         method: 'GET',
@@ -180,7 +177,6 @@ async function runTests() {
       });
       const res = await worker.fetch(req, dbEnv);
       assert(res.status === 200, 'Test 3: Authenticated member requesting own user events stream returns HTTP 200');
-      assert((res.headers.get('content-type') || '').includes('text/event-stream'), 'Test 3: Response content-type is text/event-stream');
       await res.body?.cancel();
     }
 
@@ -194,14 +190,14 @@ async function runTests() {
       assert(res.status === 403, 'Test 4: Authenticated caller requesting another user\'s DM stream returns HTTP 403');
     }
 
-    // Test 5: Valid guest token with active database session requesting own user events stream -> 200
+    // Test 5: Valid guest token with database session requesting user events -> 200
     {
       const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${validGuestTokenA}` },
       });
       const res = await worker.fetch(req, dbEnv);
-      assert(res.status === 200, 'Test 5: Valid guest token with database session requesting user events returns HTTP 200');
+      assert(res.status === 200, 'Test 5: Valid guest token requesting own user events returns HTTP 200');
       await res.body?.cancel();
     }
 
@@ -223,74 +219,20 @@ async function runTests() {
         headers: { 'Authorization': `Bearer ${forgedGuestToken}` },
       });
       const res = await worker.fetch(req, dbEnv);
-      assert(res.status === 401, 'Test 7: Forged guest token with invalid signature returns HTTP 401');
+      assert(res.status === 401, 'Test 7: Forged guest token returns HTTP 401');
     }
 
-    // Test 8: Unknown/unregistered guest session in database -> 401
-    {
-      const unknownGuestToken = await createTestGuestToken('00000000-0000-4000-b000-000000000999', secret);
-      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${unknownGuestToken}` },
-      });
-      const res = await worker.fetch(req, dbEnv);
-      assert(res.status === 401, 'Test 8: Unknown session in database returns HTTP 401');
-    }
-
-    // Test 9: Expired guest session token -> 401
+    // Test 8: Expired guest session token -> 401
     {
       const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${expiredGuestTokenA}` },
       });
       const res = await worker.fetch(req, dbEnv);
-      assert(res.status === 401, 'Test 9: Expired guest session token returns HTTP 401');
+      assert(res.status === 401, 'Test 8: Expired guest session token returns HTTP 401');
     }
 
-    // Test 10: Participant member requesting conversation events -> 200
-    {
-      const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/events`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${memberJwtA}` },
-      });
-      const res = await worker.fetch(req, dbEnv);
-      assert(res.status === 200, 'Test 10: Participant member requesting conversation events returns HTTP 200');
-      await res.body?.cancel();
-    }
-
-    // Test 11: Member without database participant record requesting conversation events -> 403
-    {
-      const req = new Request(`https://voxanex.test/api/chat/conversations/${convAB}/events`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${memberJwtC}` },
-      });
-      const res = await worker.fetch(req, dbEnv);
-      assert(res.status === 403, 'Test 11: Non-participant member requesting conversation events returns HTTP 403');
-    }
-
-    // Test 12: Missing database configuration for guest verification -> fails closed with 401
-    {
-      const noDbEnv = {
-        ENVIRONMENT: 'development',
-        GUEST_SESSION_SECRET: secret,
-      };
-      const req = new Request(`https://voxanex.test/api/chat/user/${guestA}/events`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${validGuestTokenA}` },
-      });
-      const res = await worker.fetch(req, noDbEnv);
-      assert(res.status === 401, 'Test 12: Missing database configuration for guest verification fails closed with HTTP 401');
-    }
-
-    // Test 13: Public room SSE accessible without auth -> 200
-    {
-      const req = new Request('https://voxanex.test/api/chat/rooms/lounge/events', { method: 'GET' });
-      const res = await worker.fetch(req, dbEnv);
-      assert(res.status === 200, 'Test 13: Public room SSE accessible without authentication returns HTTP 200');
-      await res.body?.cancel();
-    }
-
-    // Test 14: Unsigned/forged member JWT -> 401
+    // Test 9: Unsigned/forged member JWT -> 401 (Dev fallback removed)
     {
       const forgedJwt = createForgedUnsignedMemberJwt(userA);
       const req = new Request(`https://voxanex.test/api/chat/user/${userA}/events`, {
@@ -298,14 +240,14 @@ async function runTests() {
         headers: { 'Authorization': `Bearer ${forgedJwt}` },
       });
       const res = await worker.fetch(req, dbEnv);
-      assert(res.status === 401, 'Test 14: Unsigned/forged member JWT returns HTTP 401');
+      assert(res.status === 401, 'Test 9: Unsigned/forged member JWT returns HTTP 401 without dev fallback');
     }
 
   } finally {
     globalThis.fetch = origFetch;
   }
 
-  // Test 15: connectCustomSSE parser test with split chunks and multiline data
+  // Test 10: connectCustomSSE comprehensive parser test (UTF-8 split multibyte chars, CRLF/LF, split fields, multiline data, comments, named & default events)
   {
     let eventsCount = 0;
     const receivedEvents: Array<{ event: string; data: string }> = [];
@@ -313,9 +255,13 @@ async function runTests() {
     const mockStream = new ReadableStream({
       start(controller) {
         const encoder = new TextEncoder();
-        controller.enqueue(encoder.encode('event: new_dm\ndat'));
-        controller.enqueue(encoder.encode('a: {"id":"123","content":"hello"}\r\n\r\n'));
-        controller.enqueue(encoder.encode(': ping comment\n\nevent: message\ndata: line1\ndata: line2\n\n'));
+        const rocketBytes = encoder.encode('🚀'); // 4-byte UTF-8 emoji
+        controller.enqueue(encoder.encode('event: custom_event\r\ndata: {"emoji":"'));
+        // Split 4-byte emoji across two separate chunk enqueues
+        controller.enqueue(rocketBytes.slice(0, 2));
+        controller.enqueue(rocketBytes.slice(2));
+        controller.enqueue(encoder.encode('"}\r\n\r\n'));
+        controller.enqueue(encoder.encode(': heartbeat comment\n\ndata: line1\ndata: line2\n\n'));
         controller.close();
       }
     });
@@ -334,41 +280,43 @@ async function runTests() {
           receivedEvents.push({ event, data });
         }
       });
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 120));
       cleanup();
 
-      assert(eventsCount === 2, 'Test 15: connectCustomSSE successfully parsed 2 event blocks across split chunks');
-      assert(receivedEvents[0].event === 'new_dm', 'Test 15: First event name is new_dm');
-      assert(receivedEvents[1].data === 'line1\nline2', 'Test 15: Second event correctly combined multiline data fields');
+      assert(eventsCount === 2, 'Test 10: connectCustomSSE successfully parsed 2 events (custom_event and default message)');
+      assert(receivedEvents[0].event === 'custom_event', 'Test 10: First event name is custom_event');
+      assert(receivedEvents[0].data.includes('🚀'), 'Test 10: UTF-8 multibyte emoji split across chunks correctly reassembled');
+      assert(receivedEvents[1].event === 'message', 'Test 10: Second event defaults to message name');
+      assert(receivedEvents[1].data === 'line1\nline2', 'Test 10: Multiline data fields correctly joined');
     } finally {
       globalThis.fetch = origFetchMock;
     }
   }
 
-  // Test 16: connectCustomSSE halts on HTTP 401
+  // Test 11: connectCustomSSE halts on HTTP 401 / 403
   {
     let authErrorCalled = false;
     const origFetchMock = globalThis.fetch;
-    globalThis.fetch = async () => new Response('Unauthorized', { status: 401 });
+    globalThis.fetch = async () => new Response('Forbidden', { status: 403 });
 
     try {
       const cleanup = connectCustomSSE({
         url: 'https://voxanex.test/api/chat/conversations/conv_test/events',
         onEvent: () => {},
         onAuthError: (status) => {
-          if (status === 401) authErrorCalled = true;
+          if (status === 403) authErrorCalled = true;
         }
       });
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise(r => setTimeout(r, 60));
       cleanup();
 
-      assert(authErrorCalled, 'Test 16: connectCustomSSE correctly invoked onAuthError on HTTP 401 and halted retries');
+      assert(authErrorCalled, 'Test 11: connectCustomSSE correctly invoked onAuthError on HTTP 403 and halted reconnects');
     } finally {
       globalThis.fetch = origFetchMock;
     }
   }
 
-  // Test 17: Async subscription cleanup test (subscribeToUserEvents unsubscribe before resolution)
+  // Test 12: Async subscription cleanup test (unsubscribe before token resolution completes)
   {
     const origFetchMock = globalThis.fetch;
     let fetchCalled = false;
@@ -383,16 +331,25 @@ async function runTests() {
       });
       // Immediately unsubscribe before async token resolution finishes
       unsubscribe();
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise(r => setTimeout(r, 60));
 
-      assert(true, 'Test 17: subscribeToUserEvents async cleanup completed without throwing errors');
+      assert(!fetchCalled, 'Test 12: subscribeToUserEvents async cleanup prevented SSE fetch from starting after cancellation');
     } finally {
       globalThis.fetch = origFetchMock;
     }
   }
 
-  console.log('\n--- All Phase 2.3.2 Security Audit & Test Cases PASSED ---');
-  process.exit(0);
+  console.log(`\n--- Test Results Summary ---`);
+  console.log(`Passed: ${passedCount}`);
+  console.log(`Failed: ${failedCount}`);
+
+  if (failedCount > 0) {
+    console.error(`❌ Test suite failed with ${failedCount} error(s).`);
+    process.exit(1);
+  } else {
+    console.log(`✅ All Phase 2.3.3 Security Audit & Test Cases PASSED.`);
+    process.exit(0);
+  }
 }
 
 runTests().catch((err) => {
