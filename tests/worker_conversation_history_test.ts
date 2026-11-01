@@ -85,6 +85,18 @@ async function runWorkerHistoryTests() {
   const hashB = await computeTokenHash(tokenB);
   const hashC = await computeTokenHash(tokenC);
 
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/rest/v1/guest_sessions')) {
+      const hash = url.split('session_token_hash=eq.')[1].split('&')[0];
+      const sid = hash === hashA ? idA : hash === hashB ? idB : hash === hashC ? idC : 'unknown';
+      if (sid === 'unknown') return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(JSON.stringify([{ id: sid, session_token_hash: hash, is_revoked: false, expires_at: new Date(Date.now() + 86400000).toISOString() }]), { status: 200 });
+    }
+    return origFetch(input, init);
+  };
+
 
   const regMember1Id = '44444444-4444-4444-4444-444444444444';
   const regMember2Id = '55555555-5555-5555-5555-555555555555';
