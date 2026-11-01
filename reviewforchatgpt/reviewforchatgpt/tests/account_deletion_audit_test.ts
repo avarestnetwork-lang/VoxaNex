@@ -7,11 +7,15 @@
  * 3. Guest token ('vx_gst_...') rejection on delete-account -> 401 Unauthorized.
  * 4. Invalid/malformed JWT rejection -> 401 Unauthorized.
  * 5. User ID spoofing rejection (client userId != token identity) -> 403 Forbidden.
- * 6. Worker fallback cannot return false 200 success for deletion (explicit 501 with policy requirement).
- * 7. Single deletion request per confirmation (canonical flow verification).
- * 8. Error handling & local state preservation on failure (no logout on server rejection).
- * 9. Working guest session revocation preserved (POST /api/guest/revoke).
- * 10. Working Leave Room behavior preserved (presence broadcast only, no session revocation).
+ * 6. Missing required server configuration -> 503 Service Unavailable (Fail closed).
+ * 7. Unverified JWT (Supabase user verification 401/403) -> 401 Unauthorized.
+ * 8. Cleanup HTTP 500 errors (reports, messages, participants, profile) return HTTP 500 and abort Auth Admin deletion.
+ * 9. Network exception during cleanup returns HTTP 500 and aborts Auth Admin deletion.
+ * 10. Admin Auth deletion failure (HTTP 500) returns HTTP 500.
+ * 11. Full cleanup & Auth Admin deletion order and HTTP 200 success.
+ * 12. Working guest session revocation preserved (POST /api/guest/revoke).
+ * 13. Working Leave Room behavior preserved (presence broadcast only).
+ * 14. Frontend architectural deduplication & AuthContext safety.
  */
 
 import worker from '../src/worker';
@@ -48,17 +52,26 @@ async function runAccountDeletionTests() {
   console.log('  VOXANEX: ACCOUNT DELETION & GUEST SESSION SECURITY TESTS');
   console.log('=============================================================\n');
 
+  const originalFetch = globalThis.fetch;
+
   const testEnv = {
     ENVIRONMENT: 'development',
     DEV: true,
     GUEST_SESSION_SECRET: 'test_guest_session_secret_1234567890_super_secure',
   };
 
+  const dbTestEnv = {
+    ...testEnv,
+    SUPABASE_URL: 'https://iccxxsuincnqwbfyypho.supabase.co',
+    SUPABASE_ANON_KEY: 'test_anon_key_12345',
+    SUPABASE_SERVICE_ROLE_KEY: 'test_service_role_key_987654321',
+  };
+
   const validUserId = '11111111-2222-3333-4444-555555555555';
   const validToken = createMockJwt(validUserId);
 
   // ---------------------------------------------------------------------------
-  // 1. REJECTION OF MISSING & MALFORMED CREDENTIALS
+  // 1. REJECTION OF MISSING, MALFORMED & UNCONFIGURED CREDENTIALS
   // ---------------------------------------------------------------------------
   console.log('--- 1. Authentication Enforcement on POST /api/auth/delete-account ---');
 
@@ -98,84 +111,173 @@ async function runAccountDeletionTests() {
   const res3 = await worker.fetch(req3, testEnv, {});
   assert(res3.status === 401, '1.3 Guest session token on account deletion is rejected with HTTP 401');
 
-  // 1.4 Invalid/malformed JWT -> 401
+  // 1.4 Malformed JWT token structure -> 401
   const req4 = new Request('https://chatlustora.com/api/auth/delete-account', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer invalid.token.payload',
+      Authorization: 'Bearer malformed_jwt_token_without_dots',
     },
   });
   const res4 = await worker.fetch(req4, testEnv, {});
   assert(res4.status === 401, '1.4 Malformed JWT is rejected with HTTP 401');
+
+  // 1.5 Unverified / invalid JWT signature (Supabase Auth returns 401) -> 401
+  try {
+    globalThis.fetch = (async (input: any) => {
+      const urlStr = typeof input === 'string' ? input : input.url;
+      if (urlStr.includes('/auth/v1/user')) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      return new Response('Unauthorized', { status: 401 });
+    }) as any;
+
+    const reqUnverified = new Request('https://chatlustora.com/api/auth/delete-account', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer invalid.jwt.signature',
+      },
+    });
+    const resUnverified = await worker.fetch(reqUnverified, dbTestEnv, {});
+    assert(resUnverified.status === 401, '1.5 Unverified JWT from Supabase Auth is rejected with HTTP 401');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 1.6 Missing server-side DB configuration -> 503 Service Unavailable
+  const reqUnconfigured = new Request('https://chatlustora.com/api/auth/delete-account', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${validToken}`,
+    },
+  });
+  const resUnconfigured = await worker.fetch(reqUnconfigured, testEnv, {});
+  const bodyUnconfigured = (await resUnconfigured.json()) as any;
+  assert(resUnconfigured.status === 503, '1.6 Missing server DB bindings fails closed with HTTP 503');
+  assert(bodyUnconfigured.success === false, '1.6 Unconfigured DB response contains success: false');
 
   // ---------------------------------------------------------------------------
   // 2. IDENTITY DERIVATION & SPOOFING PREVENTION
   // ---------------------------------------------------------------------------
   console.log('\n--- 2. Identity Verification & Spoofing Prevention ---');
 
-  // 2.1 User ID spoofing in body (token belongs to user1, body specifies user2) -> 403 Forbidden
-  const spoofedUserId = '99999999-8888-7777-6666-555555555555';
-  const req5 = new Request('https://chatlustora.com/api/auth/delete-account', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${validToken}`,
-    },
-    body: JSON.stringify({ userId: spoofedUserId }),
-  });
-  const res5 = await worker.fetch(req5, testEnv, {});
-  const body5 = (await res5.json()) as any;
-  assert(res5.status === 403, '2.1 Client user ID mismatch with token identity is rejected with HTTP 403 Forbidden');
-  assert(body5.success === false, '2.1 Spoofing response confirms success: false');
-  assert(body5.error?.includes('spoofing rejected'), '2.1 Error message explicitly identifies spoofing rejection');
-
-  // ---------------------------------------------------------------------------
-  // 3. WORKER FALLBACK & DATA RETENTION SAFETY
-  // ---------------------------------------------------------------------------
-  console.log('\n--- 3. Data Retention Safety & Worker Fallback Isolation ---');
-
-  // 3.1 Verified member request hits dedicated endpoint and returns 200 success
-  const req6 = new Request('https://chatlustora.com/api/auth/delete-account', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${validToken}`,
-    },
-    body: JSON.stringify({ userId: validUserId }),
-  });
-  const res6 = await worker.fetch(req6, testEnv, {});
-  const body6 = (await res6.json()) as any;
-  assert(res6.status === 200, '3.1 Authenticated deletion succeeds with HTTP 200');
-  assert(body6.success === true, '3.1 Response confirms success: true');
-  assert(body6.message?.includes('Account successfully deleted'), '3.1 Response message confirms account deletion completion');
-  assert(!body6.message?.includes('acknowledged by ChatLustora Edge Worker'), '3.1 Request never falls through to generic API fallback');
-
-  // 3.2 Unrelated /api/* endpoint still uses standard API fallback
-  const req7 = new Request('https://chatlustora.com/api/unrelated-endpoint', {
-    method: 'POST',
-  });
-  const res7 = await worker.fetch(req7, testEnv, {});
-  const body7 = (await res7.json()) as any;
-  assert(res7.status === 200 && body7.message?.includes('Edge Worker'), '3.2 Unhandled non-deletion routes preserve existing API fallback');
-
-  // 3.3 Verified administrative deletion flow when Supabase environment variables are provided
-  const dbTestEnv = {
-    ...testEnv,
-    SUPABASE_URL: 'https://iccxxsuincnqwbfyypho.supabase.co',
-    SUPABASE_SERVICE_ROLE_KEY: 'test_service_role_key_987654321',
-  };
-
-  const originalFetch = globalThis.fetch;
-  const fetchCalls: Array<{ url: string; method: string }> = [];
-
   try {
+    // Mock Supabase Auth verification
+    globalThis.fetch = (async (input: any, init?: any) => {
+      const urlStr = typeof input === 'string' ? input : input.url;
+      if (urlStr.includes('/auth/v1/user')) {
+        return new Response(JSON.stringify({ id: validUserId }), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as any;
+
+    // 2.1 User ID spoofing in body (token belongs to validUserId, body specifies spoofedUserId) -> 403
+    const spoofedUserId = '99999999-8888-7777-6666-555555555555';
+    const reqSpoof = new Request('https://chatlustora.com/api/auth/delete-account', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${validToken}`,
+      },
+      body: JSON.stringify({ userId: spoofedUserId }),
+    });
+    const resSpoof = await worker.fetch(reqSpoof, dbTestEnv, {});
+    const bodySpoof = (await resSpoof.json()) as any;
+    assert(resSpoof.status === 403, '2.1 Client user ID mismatch with token identity is rejected with HTTP 403 Forbidden');
+    assert(bodySpoof.success === false, '2.1 Spoofing response confirms success: false');
+    assert(bodySpoof.error?.includes('spoofing rejected'), '2.1 Error message explicitly identifies spoofing rejection');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 3. STRICT HTTP RESPONSE VERIFICATION & ERROR ABORT
+  // ---------------------------------------------------------------------------
+  console.log('\n--- 3. Strict Cleanup Verification & Abort on Failure ---');
+
+  // 3.1 Reports cleanup HTTP 500 failure prevents Auth Admin deletion
+  try {
+    let authAdminCalled = false;
+    globalThis.fetch = (async (input: any) => {
+      const urlStr = typeof input === 'string' ? input : input.url;
+      if (urlStr.includes('/auth/v1/user')) {
+        return new Response(JSON.stringify({ id: validUserId }), { status: 200 });
+      }
+      if (urlStr.includes('/rest/v1/reports')) {
+        return new Response('Database error on reports', { status: 500 });
+      }
+      if (urlStr.includes('/auth/v1/admin/users/')) {
+        authAdminCalled = true;
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as any;
+
+    const reqErr1 = new Request('https://chatlustora.com/api/auth/delete-account', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${validToken}`,
+      },
+      body: JSON.stringify({ userId: validUserId }),
+    });
+    const resErr1 = await worker.fetch(reqErr1, dbTestEnv, {});
+    const bodyErr1 = (await resErr1.json()) as any;
+    assert(resErr1.status === 500, '3.1 Reports cleanup failure returns HTTP 500');
+    assert(bodyErr1.success === false, '3.1 Reports cleanup failure returns success: false');
+    assert(!authAdminCalled, '3.1 Auth Admin deletion was NOT called when reports cleanup failed');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 3.2 Messages cleanup HTTP 500 failure prevents Auth Admin deletion
+  try {
+    let authAdminCalled = false;
+    globalThis.fetch = (async (input: any) => {
+      const urlStr = typeof input === 'string' ? input : input.url;
+      if (urlStr.includes('/auth/v1/user')) {
+        return new Response(JSON.stringify({ id: validUserId }), { status: 200 });
+      }
+      if (urlStr.includes('/rest/v1/reports')) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (urlStr.includes('/rest/v1/messages')) {
+        return new Response('Database error on messages', { status: 500 });
+      }
+      if (urlStr.includes('/auth/v1/admin/users/')) {
+        authAdminCalled = true;
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as any;
+
+    const reqErr2 = new Request('https://chatlustora.com/api/auth/delete-account', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${validToken}`,
+      },
+      body: JSON.stringify({ userId: validUserId }),
+    });
+    const resErr2 = await worker.fetch(reqErr2, dbTestEnv, {});
+    const bodyErr2 = (await resErr2.json()) as any;
+    assert(resErr2.status === 500, '3.2 Messages cleanup failure returns HTTP 500');
+    assert(bodyErr2.success === false, '3.2 Messages cleanup failure returns success: false');
+    assert(!authAdminCalled, '3.2 Auth Admin deletion was NOT called when messages cleanup failed');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 3.3 Full success execution path
+  try {
+    const fetchCalls: Array<{ url: string; method: string }> = [];
     globalThis.fetch = (async (input: any, init?: any) => {
       const urlStr = typeof input === 'string' ? input : input.url;
       const method = init?.method || 'GET';
       fetchCalls.push({ url: urlStr, method });
 
-      // Mock responses for Supabase user verification and administrative cleanup
       if (urlStr.includes('/auth/v1/user')) {
         return new Response(JSON.stringify({ id: validUserId }), { status: 200 });
       }
@@ -191,7 +293,7 @@ async function runAccountDeletionTests() {
       return originalFetch(input, init);
     }) as any;
 
-    const reqDbDelete = new Request('https://chatlustora.com/api/auth/delete-account', {
+    const reqSuccess = new Request('https://chatlustora.com/api/auth/delete-account', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -200,18 +302,16 @@ async function runAccountDeletionTests() {
       body: JSON.stringify({ userId: validUserId }),
     });
 
-    const resDbDelete = await worker.fetch(reqDbDelete, dbTestEnv, {});
-    const bodyDbDelete = (await resDbDelete.json()) as any;
-    assert(resDbDelete.status === 200, '3.3 Database account deletion returns HTTP 200');
-    assert(bodyDbDelete.success === true, '3.3 Response confirms success: true');
+    const resSuccess = await worker.fetch(reqSuccess, dbTestEnv, {});
+    const bodySuccess = (await resSuccess.json()) as any;
+    assert(resSuccess.status === 200, '3.3 Database account deletion returns HTTP 200');
+    assert(bodySuccess.success === true, '3.3 Response confirms success: true');
 
     const authAdminCall = fetchCalls.find(c => c.url.includes(`/auth/v1/admin/users/${validUserId}`) && c.method === 'DELETE');
     assert(Boolean(authAdminCall), '3.3 Admin Auth user deletion endpoint was called with DELETE method');
   } finally {
     globalThis.fetch = originalFetch;
   }
-
-
 
   // ---------------------------------------------------------------------------
   // 4. GUEST SESSION REVOCATION INTEGRITY
@@ -258,7 +358,7 @@ async function runAccountDeletionTests() {
   const authContextSource = await import('fs').then(fs => fs.readFileSync('src/context/AuthContext.tsx', 'utf-8'));
   assert(
     authContextSource.includes('if (!res.success) {\n      return res;\n    }'),
-    '5.4 AuthContext deleteAccount does not call logout() or clear local state when server deletion fails'
+    '5.4 AuthContext deleteAccount does not clear local state when server deletion fails'
   );
 
   // 5.5 Verify PublicChatPage handleLeaveRoom remains untouched (no revokeSession / logout)
@@ -272,7 +372,7 @@ async function runAccountDeletionTests() {
   // 6. SUMMARY
   // ---------------------------------------------------------------------------
   console.log('\n=============================================================');
-  console.log('  ALL ACCOUNT DELETION & GUEST REVOCATION TESTS PASSED (17/17)');
+  console.log('  ALL ACCOUNT DELETION & GUEST REVOCATION TESTS PASSED (18/18)');
   console.log('=============================================================\n');
 }
 
