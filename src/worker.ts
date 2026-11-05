@@ -1463,8 +1463,25 @@ async function authorizeConversationAccess(
         };
       }
 
-      const rows: any = await partsRes.json().catch(() => null);
-      if (!Array.isArray(rows) || rows.length !== 2) {
+      let rows: any;
+      try {
+        rows = await partsRes.json();
+      } catch (err) {
+        console.error('[Worker] Participant JSON parse error:', err);
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Database error parsing participant records.' }, 500),
+        };
+      }
+
+      if (!Array.isArray(rows)) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Invalid participant data format.' }, 403),
+        };
+      }
+
+      if (rows.length !== 2) {
         return {
           authorized: false,
           errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Conversation must have exactly two participant records.' }, 403),

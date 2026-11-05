@@ -715,6 +715,7 @@ async function runTests() {
     const dbConvGuestWrongCol = await databaseService.getDeterministicConvId(guestAId, '12121212-1212-1212-1212-121212121212');
     const dbConvRegWrongCol = await databaseService.getDeterministicConvId(user1Id, '13131313-1313-1313-1313-131313131313');
     const dbConvDupIdentity = await databaseService.getDeterministicConvId(guestAId, '14141414-1414-1414-1414-141414141414');
+    const dbConvAC = await databaseService.getDeterministicConvId(guestAId, guestCId);
 
     let insertedParticipantRecords = 0;
 
@@ -756,6 +757,12 @@ async function runTests() {
           const convId = convIdParam?.startsWith('eq.') ? convIdParam.slice(3) : convIdParam;
 
           if (convId === dbConvGuestAB) {
+            return new Response(JSON.stringify([
+              { guest_id: guestAId, user_id: null },
+              { guest_id: guestBId, user_id: null }
+            ]), { status: 200 });
+          }
+          if (convId === dbConvAC) {
             return new Response(JSON.stringify([
               { guest_id: guestAId, user_id: null },
               { guest_id: guestBId, user_id: null }
@@ -870,19 +877,21 @@ async function runTests() {
       assert(res.status === 403, '5.3: Guest C cannot access A/B (403)');
     }
 
-    // Case 5.4: Caller cannot access A/C using A/B conversation UUID (403)
+    // Case 5.4: Caller cannot access using a slug whose recipient does not match database participants (slug/UUID mismatch -> 403)
     {
       const forgedSlugForAandC = `conv_${[guestAId, guestCId].sort().join('_')}`;
-      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${dbConvGuestAB}/messages?convSlug=${forgedSlugForAandC}`, {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${forgedSlugForAandC}/messages`, {
         headers: { 'Authorization': `Bearer ${tokenGuestA}` }
       }), env, {});
 
-      // Requesting A/B's UUID with a forged A/C slug or mismatching participant context fails with 403
+      assert(res.status === 403, '5.4: Slug/UUID mismatch rejected with 403');
+
+      // Requesting A/B's UUID with a mismatching participant context fails with 403
       const resSlugMismatch = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
         headers: { 'Authorization': `Bearer ${tokenGuestC}` }
       }), env, {});
 
-      assert(resSlugMismatch.status === 403, '5.4: Caller cannot access A/C using A/B conversation UUID (403)');
+      assert(resSlugMismatch.status === 403, '5.4: Nonparticipant Guest C rejected with 403');
     }
 
     // Case 5.5: Caller cannot access conversation with only caller as participant (403)
@@ -949,6 +958,29 @@ async function runTests() {
         headers: { 'Authorization': `Bearer ${tokenGuestA}` }
       }), env, {});
       assert(res.status === 403, '5.18: Duplicate identity rows rejected with 403');
+    }
+
+    // Case 5.19: Invalid JSON from participant lookup returns HTTP 500
+    {
+      const dbConvInvalidJson = await databaseService.getDeterministicConvId(guestAId, '15151515-1515-1515-1515-151515151515');
+      const originalFetchBefore = globalThis.fetch;
+      globalThis.fetch = (async (url: any) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/rest/v1/guest_sessions')) {
+          return new Response(JSON.stringify([{ id: guestAId, is_revoked: false, expires_at: new Date(Date.now() + 100000).toISOString(), session_token_hash: hashGuestA }]), { status: 200 });
+        }
+        if (urlStr.includes('/rest/v1/conversation_participants')) {
+          return new Response('INVALID_JSON_STREAM_DATA', { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('Not Found', { status: 404 });
+      }) as any;
+
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${dbConvInvalidJson}/messages`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestA}` }
+      }), env, {});
+
+      assert(res.status === 500, '5.19: Invalid JSON from participant lookup returns HTTP 500');
+      globalThis.fetch = originalFetchBefore;
     }
 
     // Case 5.7: Missing conversation is rejected without inserting participant records (403)
