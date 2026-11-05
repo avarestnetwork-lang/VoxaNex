@@ -262,7 +262,7 @@ async function startServer() {
       senderId,
       senderNickname,
       senderAvatar,
-      senderType,
+      senderType: bodySenderType,
       guestToken,
       content,
       mediaUrl,
@@ -272,14 +272,22 @@ async function startServer() {
     } = req.body || {};
 
     // Guest validation check
+    const senderType = bodySenderType || 'guest';
+    let verifiedSenderId = senderId;
+    let verifiedNickname = senderNickname;
+    let verifiedAvatar = senderAvatar;
+
     if (senderType === 'guest') {
       const auth = validateGuestToken(guestToken || '');
-      if (!auth.valid) {
+      if (!auth.valid || !auth.session) {
         return res.status(401).json({ success: false, error: 'Unauthorized: Invalid guest session.' });
       }
-      verifiedSenderId = auth.session?.id || verifiedSenderId;
-      verifiedNickname = auth.session?.nickname || verifiedNickname;
-      verifiedAvatar = auth.session?.avatar || verifiedAvatar;
+      // Exclusive trust: derive identity from session
+      verifiedSenderId = auth.session.id;
+      verifiedNickname = auth.session.nickname;
+      verifiedAvatar = auth.session.avatar;
+    } else if (senderType !== 'registered') {
+      return res.status(400).json({ success: false, error: 'Invalid senderType.' });
     }
 
     const postResult = postRoomMessage({
