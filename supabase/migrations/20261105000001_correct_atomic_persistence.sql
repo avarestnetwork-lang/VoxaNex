@@ -65,6 +65,18 @@ ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS media_url TEXT;
 ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS media_type VARCHAR(16);
 ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS link_preview JSONB;
 
+-- Allow empty/null content when media_url is provided
+ALTER TABLE public.messages ALTER COLUMN content DROP NOT NULL;
+
+ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS chk_message_content_length;
+ALTER TABLE public.messages
+    ADD CONSTRAINT chk_message_content_length
+    CHECK (
+        (media_url IS NOT NULL AND length(trim(media_url)) > 0 AND (content IS NULL OR length(content) <= 2000))
+        OR
+        (content IS NOT NULL AND length(trim(content)) > 0 AND length(content) <= 2000)
+    );
+
 -- 3. Partial Unique Indexes for Idempotency
 CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_reg_room_nonce 
 ON public.messages (room_id, sender_user_id, client_nonce)
@@ -151,11 +163,13 @@ BEGIN
         RAISE EXCEPTION 'Invalid sender: exactly one of sender_user_id or sender_guest_id must be provided.';
     END IF;
 
-    -- 3. Validate message content
-    IF p_content IS NULL OR length(trim(p_content)) = 0 THEN
-        RAISE EXCEPTION 'Message content cannot be empty.';
+    -- 3. Validate message content and media
+    IF (p_content IS NULL OR length(trim(p_content)) = 0) AND 
+       (p_media_url IS NULL OR length(trim(p_media_url)) = 0) THEN
+        RAISE EXCEPTION 'Message content or media URL is required.';
     END IF;
-    IF length(p_content) > 2000 THEN
+
+    IF p_content IS NOT NULL AND length(p_content) > 2000 THEN
         RAISE EXCEPTION 'Message content exceeds 2000 characters.';
     END IF;
 
@@ -182,7 +196,7 @@ BEGIN
                 )
                 VALUES (
                     p_id, p_room_id, NULL, p_sender_user_id, NULL,
-                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), p_content, p_client_nonce,
+                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), coalesce(p_content, ''), p_client_nonce,
                     p_media_url, p_media_type, p_link_preview
                 )
                 ON CONFLICT (room_id, sender_user_id, client_nonce)
@@ -223,7 +237,7 @@ BEGIN
                 )
                 VALUES (
                     p_id, p_room_id, NULL, p_sender_user_id, NULL,
-                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), p_content, NULL,
+                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), coalesce(p_content, ''), NULL,
                     p_media_url, p_media_type, p_link_preview
                 )
                 RETURNING 
@@ -247,7 +261,7 @@ BEGIN
                 )
                 VALUES (
                     p_id, p_room_id, NULL, NULL, p_sender_guest_id,
-                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), p_content, p_client_nonce,
+                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), coalesce(p_content, ''), p_client_nonce,
                     p_media_url, p_media_type, p_link_preview
                 )
                 ON CONFLICT (room_id, sender_guest_id, client_nonce)
@@ -288,7 +302,7 @@ BEGIN
                 )
                 VALUES (
                     p_id, p_room_id, NULL, NULL, p_sender_guest_id,
-                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), p_content, NULL,
+                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), coalesce(p_content, ''), NULL,
                     p_media_url, p_media_type, p_link_preview
                 )
                 RETURNING 
@@ -315,7 +329,7 @@ BEGIN
                 )
                 VALUES (
                     p_id, NULL, p_conversation_id, p_sender_user_id, NULL,
-                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), p_content, p_client_nonce,
+                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), coalesce(p_content, ''), p_client_nonce,
                     p_media_url, p_media_type, p_link_preview
                 )
                 ON CONFLICT (conversation_id, sender_user_id, client_nonce)
@@ -356,7 +370,7 @@ BEGIN
                 )
                 VALUES (
                     p_id, NULL, p_conversation_id, p_sender_user_id, NULL,
-                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), p_content, NULL,
+                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), coalesce(p_content, ''), NULL,
                     p_media_url, p_media_type, p_link_preview
                 )
                 RETURNING 
@@ -380,7 +394,7 @@ BEGIN
                 )
                 VALUES (
                     p_id, NULL, p_conversation_id, NULL, p_sender_guest_id,
-                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), p_content, p_client_nonce,
+                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), coalesce(p_content, ''), p_client_nonce,
                     p_media_url, p_media_type, p_link_preview
                 )
                 ON CONFLICT (conversation_id, sender_guest_id, client_nonce)
@@ -421,7 +435,7 @@ BEGIN
                 )
                 VALUES (
                     p_id, NULL, p_conversation_id, NULL, p_sender_guest_id,
-                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), p_content, NULL,
+                    p_sender_nickname, coalesce(p_sender_avatar, '💬'), coalesce(p_content, ''), NULL,
                     p_media_url, p_media_type, p_link_preview
                 )
                 RETURNING 
