@@ -803,15 +803,16 @@ export default {
           const { verifiedUserId, isGuestCaller, guestSession } = authResult;
 
           // 2. Validate senderType
-          if (!clientSenderType || !['registered', 'guest'].includes(clientSenderType)) {
+          const senderType = clientSenderType || 'guest';
+          if (!['registered', 'guest'].includes(senderType)) {
              return jsonResponse({ success: false, error: 'Bad Request: Missing or invalid senderType.' }, 400);
           }
 
           // Cross-check declared type and verified identity
-          if (isGuestCaller && clientSenderType !== 'guest') {
+          if (isGuestCaller && senderType !== 'guest') {
              return jsonResponse({ success: false, error: 'Forbidden: Guest session cannot claim registered identity.' }, 403);
           }
-          if (!isGuestCaller && clientSenderType !== 'registered') {
+          if (!isGuestCaller && senderType !== 'registered') {
              return jsonResponse({ success: false, error: 'Forbidden: Registered session cannot be downgraded to guest identity.' }, 403);
           }
 
