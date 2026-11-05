@@ -65,16 +65,15 @@ ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS media_url TEXT;
 ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS media_type VARCHAR(16);
 ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS link_preview JSONB;
 
--- Allow empty/null content when media_url is provided
-ALTER TABLE public.messages ALTER COLUMN content DROP NOT NULL;
-
 ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS chk_message_content_length;
 ALTER TABLE public.messages
     ADD CONSTRAINT chk_message_content_length
     CHECK (
-        (media_url IS NOT NULL AND length(trim(media_url)) > 0 AND (content IS NULL OR length(content) <= 2000))
-        OR
-        (content IS NOT NULL AND length(trim(content)) > 0 AND length(content) <= 2000)
+        length(content) <= 2000 AND (
+            (media_url IS NOT NULL AND length(trim(media_url)) > 0)
+            OR
+            (length(trim(content)) > 0)
+        )
     );
 
 -- 3. Partial Unique Indexes for Idempotency
