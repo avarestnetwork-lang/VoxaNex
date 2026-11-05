@@ -1464,40 +1464,81 @@ async function authorizeConversationAccess(
       }
 
       const rows: any = await partsRes.json().catch(() => null);
-      if (!Array.isArray(rows)) {
+      if (!Array.isArray(rows) || rows.length !== 2) {
         return {
           authorized: false,
-          errorResponse: jsonResponse({ success: false, error: 'Database error parsing participant records.' }, 500),
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Conversation must have exactly two participant records.' }, 403),
         };
       }
 
-      // Collect distinct non-null participant IDs
-      const participantIds = Array.from(
-        new Set(
-          rows
-            .map((row) => (row && typeof row === 'object' ? row.user_id || row.guest_id : null))
-            .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
-        )
-      );
+      const verifiedParticipantIds: string[] = [];
+      let callerFound = false;
 
-      // Must have exactly two distinct participants for a direct 1-to-1 conversation
-      if (participantIds.length !== 2) {
-        return {
-          authorized: false,
-          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Invalid or incomplete conversation participant set.' }, 403),
-        };
+      for (const row of rows) {
+        if (!row || typeof row !== 'object') {
+          return {
+            authorized: false,
+            errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Invalid participant record format.' }, 403),
+          };
+        }
+
+        const hasUserId = typeof row.user_id === 'string' && row.user_id.trim().length > 0;
+        const hasGuestId = typeof row.guest_id === 'string' && row.guest_id.trim().length > 0;
+
+        // Reject rows where both columns are populated or both columns are null/invalid
+        if ((hasUserId && hasGuestId) || (!hasUserId && !hasGuestId)) {
+          return {
+            authorized: false,
+            errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Participant record must have exactly one identity column populated.' }, 403),
+          };
+        }
+
+        const identityId = hasUserId ? row.user_id.trim() : row.guest_id.trim();
+        if (!uuidFullRegex.test(identityId)) {
+          return {
+            authorized: false,
+            errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Invalid identity identifier in participant record.' }, 403),
+          };
+        }
+
+        // Require authenticated caller to match the correct identity column
+        if (identityId === verifiedUserId) {
+          if (isGuestCaller && !hasGuestId) {
+            return {
+              authorized: false,
+              errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Guest caller identity mismatch with user_id column.' }, 403),
+            };
+          }
+          if (!isGuestCaller && !hasUserId) {
+            return {
+              authorized: false,
+              errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Registered caller identity mismatch with guest_id column.' }, 403),
+            };
+          }
+          callerFound = true;
+        }
+
+        verifiedParticipantIds.push(identityId);
       }
 
-      // Authenticated caller must be one of the participants
-      if (!participantIds.includes(verifiedUserId)) {
+      if (!callerFound) {
         return {
           authorized: false,
           errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Authenticated caller is not a participant in this conversation.' }, 403),
         };
       }
 
+      // Reject duplicate participant identities
+      const uniqueIds = Array.from(new Set(verifiedParticipantIds));
+      if (uniqueIds.length !== 2) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Conversation participant identities must be distinct.' }, 403),
+        };
+      }
+
       // Derive actual recipient from database records
-      const dbRecipientId = participantIds.find((id) => id !== verifiedUserId);
+      const dbRecipientId = verifiedParticipantIds.find((id) => id !== verifiedUserId);
       if (!dbRecipientId) {
         return {
           authorized: false,

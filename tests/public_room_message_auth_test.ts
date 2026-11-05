@@ -709,6 +709,12 @@ async function runTests() {
     const dbConvUser12 = await databaseService.getDeterministicConvId(user1Id, user2Id);
     const dbConvSoloA = await databaseService.getDeterministicConvId(guestAId, guestAId);
     const dbConvUnrelated = await databaseService.getDeterministicConvId(guestBId, guestCId);
+    const dbConvThreeRows = await databaseService.getDeterministicConvId(guestAId, '77777777-7777-7777-7777-777777777777');
+    const dbConvBothPopulated = await databaseService.getDeterministicConvId(guestAId, '88888888-8888-8888-8888-888888888888');
+    const dbConvBothNull = await databaseService.getDeterministicConvId(guestAId, '99999999-9999-9999-9999-999999999999');
+    const dbConvGuestWrongCol = await databaseService.getDeterministicConvId(guestAId, '12121212-1212-1212-1212-121212121212');
+    const dbConvRegWrongCol = await databaseService.getDeterministicConvId(user1Id, '13131313-1313-1313-1313-131313131313');
+    const dbConvDupIdentity = await databaseService.getDeterministicConvId(guestAId, '14141414-1414-1414-1414-141414141414');
 
     let insertedParticipantRecords = 0;
 
@@ -770,6 +776,43 @@ async function runTests() {
             return new Response(JSON.stringify([
               { guest_id: guestBId, user_id: null },
               { guest_id: guestCId, user_id: null }
+            ]), { status: 200 });
+          }
+          if (convId === dbConvThreeRows) {
+            return new Response(JSON.stringify([
+              { guest_id: guestAId, user_id: null },
+              { guest_id: guestBId, user_id: null },
+              { guest_id: guestBId, user_id: null }
+            ]), { status: 200 });
+          }
+          if (convId === dbConvBothPopulated) {
+            return new Response(JSON.stringify([
+              { guest_id: guestAId, user_id: user1Id },
+              { guest_id: guestBId, user_id: null }
+            ]), { status: 200 });
+          }
+          if (convId === dbConvBothNull) {
+            return new Response(JSON.stringify([
+              { guest_id: null, user_id: null },
+              { guest_id: guestBId, user_id: null }
+            ]), { status: 200 });
+          }
+          if (convId === dbConvGuestWrongCol) {
+            return new Response(JSON.stringify([
+              { guest_id: null, user_id: guestAId },
+              { guest_id: guestBId, user_id: null }
+            ]), { status: 200 });
+          }
+          if (convId === dbConvRegWrongCol) {
+            return new Response(JSON.stringify([
+              { guest_id: user1Id, user_id: null },
+              { guest_id: null, user_id: user2Id }
+            ]), { status: 200 });
+          }
+          if (convId === dbConvDupIdentity) {
+            return new Response(JSON.stringify([
+              { guest_id: guestAId, user_id: null },
+              { guest_id: guestAId, user_id: null }
             ]), { status: 200 });
           }
           return new Response(JSON.stringify([]), { status: 200 });
@@ -858,6 +901,54 @@ async function runTests() {
       }), env, {});
 
       assert(res.status === 403, '5.6: Conversation containing unrelated participants rejected (403)');
+    }
+
+    // Case 5.13: Three participant rows rejected (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${dbConvThreeRows}/messages`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestA}` }
+      }), env, {});
+      assert(res.status === 403, '5.13: Three participant rows rejected with 403');
+    }
+
+    // Case 5.14: Row containing both user_id and guest_id rejected (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${dbConvBothPopulated}/messages`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestA}` }
+      }), env, {});
+      assert(res.status === 403, '5.14: Row with both identity columns populated rejected with 403');
+    }
+
+    // Case 5.15: Row with both identity columns null rejected (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${dbConvBothNull}/messages`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestA}` }
+      }), env, {});
+      assert(res.status === 403, '5.15: Row with both identity columns null rejected with 403');
+    }
+
+    // Case 5.16: Guest caller in registered user_id column rejected (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${dbConvGuestWrongCol}/messages`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestA}` }
+      }), env, {});
+      assert(res.status === 403, '5.16: Guest caller in wrong identity column rejected with 403');
+    }
+
+    // Case 5.17: Registered caller in guest guest_id column rejected (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${dbConvRegWrongCol}/messages`, {
+        headers: { 'Authorization': 'Bearer user-1' }
+      }), env, {});
+      assert(res.status === 403, '5.17: Registered caller in wrong identity column rejected with 403');
+    }
+
+    // Case 5.18: Duplicate identity rows rejected (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${dbConvDupIdentity}/messages`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestA}` }
+      }), env, {});
+      assert(res.status === 403, '5.18: Duplicate identity rows rejected with 403');
     }
 
     // Case 5.7: Missing conversation is rejected without inserting participant records (403)
