@@ -1264,6 +1264,7 @@ export default {
 
             // Generate deterministic conversation ID and slug using verified caller and partner IDs
             dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, resolvedPartnerId);
+            console.log('[Worker Debug] computed dbConvId:', dbConvId, 'verifiedUserId:', verifiedUserId, 'resolvedPartnerId:', resolvedPartnerId);
             convId = `conv_${[verifiedUserId, resolvedPartnerId].sort().join('_')}`;
 
             // Create or upsert conversation row
@@ -1334,7 +1335,7 @@ export default {
                 if (!insertRes.ok) {
                   // Concurrent insert race condition handling: re-verify if participant row was persisted concurrently
                   const recheckRes = await fetch(
-                    `${baseSupabaseUrl}/rest/v1/conversation_participants?${filter}&select=id`,
+                    `${baseSupabaseUrl}/rest/v1/conversation_participants?${filter}&select=conversation_id,user_id,guest_id`,
                     {
                       headers: {
                         'apikey': supabaseServiceKey,
@@ -1345,8 +1346,22 @@ export default {
 
                   let recheckExists = false;
                   if (recheckRes.ok) {
-                    const recheckRows: any = await recheckRes.json().catch(() => []);
-                    recheckExists = Array.isArray(recheckRows) && recheckRows.length > 0;
+                    try {
+                      const recheckRows: any = await recheckRes.json();
+                      if (Array.isArray(recheckRows)) {
+                        recheckExists = recheckRows.some((row: any) => {
+                          if (!row || typeof row !== 'object') return false;
+                          const matchesConv = row.conversation_id === dbConvId;
+                          const matchesId = p.type === 'guest'
+                            ? row.guest_id === p.id
+                            : row.user_id === p.id;
+                          console.log('[Worker Debug] recheck row:', row, 'dbConvId:', dbConvId, 'p:', p, 'matchesConv:', matchesConv, 'matchesId:', matchesId);
+                          return matchesConv && matchesId;
+                        });
+                      }
+                    } catch {
+                      recheckExists = false;
+                    }
                   }
 
                   if (!recheckExists) {
