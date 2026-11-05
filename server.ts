@@ -271,18 +271,22 @@ async function startServer() {
       clientNonce,
     } = req.body || {};
 
-    // Guest validation check (permissive and resilient for uninterrupted chatroom messaging)
+    // Guest validation check
     if (senderType === 'guest') {
-      if (guestToken) {
-        validateGuestToken(guestToken);
+      const auth = validateGuestToken(guestToken || '');
+      if (!auth.valid) {
+        return res.status(401).json({ success: false, error: 'Unauthorized: Invalid guest session.' });
       }
+      verifiedSenderId = auth.session?.id || verifiedSenderId;
+      verifiedNickname = auth.session?.nickname || verifiedNickname;
+      verifiedAvatar = auth.session?.avatar || verifiedAvatar;
     }
 
     const postResult = postRoomMessage({
       roomId,
-      senderId: senderId || 'anon',
-      senderNickname: senderNickname || 'Anonymous',
-      senderAvatar: senderAvatar || '💬',
+      senderId: verifiedSenderId || 'anon',
+      senderNickname: verifiedNickname || 'Anonymous',
+      senderAvatar: verifiedAvatar || '💬',
       senderType: senderType || 'guest',
       rawContent: content,
       mediaUrl,

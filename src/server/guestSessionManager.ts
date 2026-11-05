@@ -15,7 +15,6 @@ export interface ServerGuestSession {
   ipHash: string;
 }
 
-const SECRET_SALT = process.env.GUEST_SESSION_SECRET || 'voxanex_default_secure_entropy_salt_2026';
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // In-memory session registry and rate limiter for local / container execution
@@ -23,12 +22,20 @@ const activeSessions = new Map<string, ServerGuestSession>();
 const revokedTokenHashes = new Set<string>();
 const ipRateLimits = new Map<string, { count: number; windowStart: number }>();
 
+function getSecret(): string {
+  const secret = process.env.GUEST_SESSION_SECRET;
+  if (!secret || secret === 'voxanex_default_secure_entropy_salt_2026') {
+    throw new Error('GUEST_SESSION_SECRET is missing or unsafe.');
+  }
+  return secret;
+}
+
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
 function signPayload(payloadString: string): string {
-  return crypto.createHmac('sha256', SECRET_SALT).update(payloadString).digest('hex');
+  return crypto.createHmac('sha256', getSecret()).update(payloadString).digest('hex');
 }
 
 export function createGuestSession(params: {
@@ -104,27 +111,11 @@ export function createGuestSession(params: {
 
 export function validateGuestToken(token: string): {
   valid: boolean;
-  session?: Partial<ServerGuestSession>;
+  session?: ServerGuestSession;
   reason?: string;
 } {
   if (!token || !token.startsWith('vx_gst_')) {
     return { valid: false, reason: 'Malformed token prefix' };
-  }
-
-  // Gracefully accept local fallback or non-strict guest tokens so messaging never blocks
-  if (token.startsWith('vx_gst_local_') || token.includes('_local_')) {
-    return {
-      valid: true,
-      session: {
-        id: `guest_${Date.now()}`,
-        nickname: 'Guest_User',
-        avatar: '⚡',
-        languagePref: 'en',
-        is18Verified: false,
-        issuedAt: Date.now(),
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      },
-    };
   }
 
   const tokenHash = hashToken(token);
@@ -134,18 +125,7 @@ export function validateGuestToken(token: string): {
 
   const parts = token.slice('vx_gst_'.length).split('.');
   if (parts.length !== 2) {
-    return {
-      valid: true,
-      session: {
-        id: `guest_${Date.now()}`,
-        nickname: 'Guest_User',
-        avatar: '⚡',
-        languagePref: 'en',
-        is18Verified: false,
-        issuedAt: Date.now(),
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      },
-    };
+    return { valid: false, reason: 'Invalid token structure' };
   }
 
   const [base64Payload, signature] = parts;
@@ -168,18 +148,14 @@ export function validateGuestToken(token: string): {
       return { valid: false, reason: 'Guest session has expired' };
     }
 
+    const session = activeSessions.get(payload.sid);
+    if (!session || session.tokenHash !== tokenHash) {
+       return { valid: false, reason: 'Guest session not found or invalid' };
+    }
+
     return {
       valid: true,
-      session: {
-        id: payload.sid,
-        nickname: payload.nick,
-        avatar: payload.av,
-        languagePref: payload.lng,
-        is18Verified: payload.v18,
-        gender: payload.gen,
-        issuedAt: payload.iat,
-        expiresAt: payload.exp,
-      },
+      session,
     };
   } catch {
     return {

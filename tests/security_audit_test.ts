@@ -1,7 +1,5 @@
-/**
- * VOXANEX SECURITY & SESSION VERIFICATION TEST RUNNER
- * Tests token signing, tampering rejection, expiration, revocation, and rate limiting.
- */
+// Set mandatory secret for tests
+process.env.GUEST_SESSION_SECRET = 'test_secret_for_audit_only';
 
 import {
   createGuestSession,
@@ -47,13 +45,17 @@ async function runSecurityTests() {
   const tamperedCheck = validateGuestToken(tamperedToken);
   assert(tamperedCheck.valid === false, '5. Tampered token payload is strictly rejected by signature check');
 
-  // Test 4: Session Revocation
-  const revoked = revokeGuestSession(token);
-  assert(revoked === true, '6. Session revocation executes successfully');
-  const checkAfterRevoke = validateGuestToken(token);
-  assert(checkAfterRevoke.valid === false, '7. Revoked token is immediately rejected');
+  // Test 4: Malformed Token Rejection
+  const malformedCheck = validateGuestToken('vx_gst_malformed_token');
+  assert(malformedCheck.valid === false, '6. Malformed token is strictly rejected');
 
-  // Test 5: Rate Limiting Enforcement
+  // Test 5: Session Revocation
+  const revoked = revokeGuestSession(token);
+  assert(revoked === true, '7. Session revocation executes successfully');
+  const checkAfterRevoke = validateGuestToken(token);
+  assert(checkAfterRevoke.valid === false, '8. Revoked token is immediately rejected');
+
+  // Test 6: Rate Limiting Enforcement
   const spamIp = '10.0.0.99';
   let rejected = false;
   for (let i = 0; i < 25; i++) {
@@ -69,7 +71,7 @@ async function runSecurityTests() {
       break;
     }
   }
-  assert(rejected === true, '8. Excessive session requests trigger rate limit threshold rejection');
+  assert(rejected === true, '9. Excessive session requests trigger rate limit threshold rejection');
 
   console.log('\n--- ALL SECURITY TESTS COMPLETED SUCCESSFULLY ---\n');
 }
