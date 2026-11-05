@@ -1395,9 +1395,9 @@ async function authorizeConversationAccess(
   | { authorized: false; errorResponse: Response }
 > {
   const uuidFullRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let requestedSlugRecipientId: string | null = null;
   let convSlug: string = '';
   let dbConvId: string = '';
-  let recipientId: string = '';
 
   if (convIdParam.startsWith('conv_')) {
     const idWithoutPrefix = convIdParam.slice('conv_'.length);
@@ -1432,9 +1432,9 @@ async function authorizeConversationAccess(
       };
     }
 
-    recipientId = id1 === verifiedUserId ? id2 : id1;
+    requestedSlugRecipientId = id1 === verifiedUserId ? id2 : id1;
     convSlug = `conv_${[id1, id2].sort().join('_')}`;
-    dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, recipientId);
+    dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, requestedSlugRecipientId);
   } else if (uuidFullRegex.test(convIdParam)) {
     dbConvId = convIdParam;
   } else {
@@ -1444,7 +1444,7 @@ async function authorizeConversationAccess(
     };
   }
 
-  // Database verification
+  // Database verification (Strictly Read-Only)
   if (dbEnv.supabaseUrl && dbEnv.supabaseServiceKey) {
     try {
       const partsUrl = `${dbEnv.supabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(dbConvId)}&select=user_id,guest_id`;
@@ -1471,110 +1471,59 @@ async function authorizeConversationAccess(
         };
       }
 
-      let callerPresent = false;
-      let dbRecipientId: string | null = null;
+      // Collect distinct non-null participant IDs
+      const participantIds = Array.from(
+        new Set(
+          rows
+            .map((row) => (row && typeof row === 'object' ? row.user_id || row.guest_id : null))
+            .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+        )
+      );
 
-      for (const row of rows) {
-        const rowId = row.user_id || row.guest_id;
-        if (rowId === verifiedUserId) {
-          callerPresent = true;
-        } else if (rowId) {
-          dbRecipientId = rowId;
-        }
+      // Must have exactly two distinct participants for a direct 1-to-1 conversation
+      if (participantIds.length !== 2) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Invalid or incomplete conversation participant set.' }, 403),
+        };
       }
 
-      if (callerPresent) {
-        if (!recipientId && dbRecipientId) {
-          recipientId = dbRecipientId;
-        }
-        if (!convSlug && recipientId) {
-          convSlug = `conv_${[verifiedUserId, recipientId].sort().join('_')}`;
-        }
-        return { authorized: true, dbConvId, convSlug, recipientId };
-      }
-
-      // If participants exist for this conversation but caller is not among them: forbidden!
-      if (rows.length > 0 && !callerPresent) {
+      // Authenticated caller must be one of the participants
+      if (!participantIds.includes(verifiedUserId)) {
         return {
           authorized: false,
           errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Authenticated caller is not a participant in this conversation.' }, 403),
         };
       }
 
-      // If rows.length === 0, check partner and lazily initialize conversation & participants
-      if (recipientId) {
-        let partnerValid = false;
-        const gRes = await fetch(
-          `${dbEnv.supabaseUrl}/rest/v1/guest_sessions?id=eq.${encodeURIComponent(recipientId)}&select=id,is_revoked,expires_at`,
-          { headers: { apikey: dbEnv.supabaseServiceKey, Authorization: `Bearer ${dbEnv.supabaseServiceKey}` } }
-        );
-        if (gRes.ok) {
-          const gRows: any = await gRes.json().catch(() => []);
-          if (Array.isArray(gRows) && gRows.length > 0) {
-            const g = gRows[0];
-            const exp = g.expires_at ? new Date(g.expires_at).getTime() : NaN;
-            if (!g.is_revoked && Number.isFinite(exp) && Date.now() < exp) {
-              partnerValid = true;
-            }
-          }
-        }
-        if (!partnerValid) {
-          const pRes = await fetch(
-            `${dbEnv.supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(recipientId)}&select=id`,
-            { headers: { apikey: dbEnv.supabaseServiceKey, Authorization: `Bearer ${dbEnv.supabaseServiceKey}` } }
-          );
-          if (pRes.ok) {
-            const pRows: any = await pRes.json().catch(() => []);
-            if (Array.isArray(pRows) && pRows.length > 0) {
-              partnerValid = true;
-            }
-          }
-        }
-
-        if (partnerValid) {
-          await fetch(`${dbEnv.supabaseUrl}/rest/v1/conversations`, {
-            method: 'POST',
-            headers: {
-              apikey: dbEnv.supabaseServiceKey,
-              Authorization: `Bearer ${dbEnv.supabaseServiceKey}`,
-              'Content-Type': 'application/json',
-              Prefer: 'resolution=merge-duplicates',
-            },
-            body: JSON.stringify({ id: dbConvId, type: 'direct' }),
-          }).catch(() => {});
-
-          const callerPayload = isGuestCaller
-            ? { conversation_id: dbConvId, guest_id: verifiedUserId }
-            : { conversation_id: dbConvId, user_id: verifiedUserId };
-
-          await fetch(`${dbEnv.supabaseUrl}/rest/v1/conversation_participants`, {
-            method: 'POST',
-            headers: {
-              apikey: dbEnv.supabaseServiceKey,
-              Authorization: `Bearer ${dbEnv.supabaseServiceKey}`,
-              'Content-Type': 'application/json',
-              Prefer: 'resolution=merge-duplicates',
-            },
-            body: JSON.stringify(callerPayload),
-          }).catch(() => {});
-
-          const recheckUrl = `${dbEnv.supabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(dbConvId)}&${isGuestCaller ? 'guest_id' : 'user_id'}=eq.${encodeURIComponent(verifiedUserId)}&select=id`;
-          const recheckRes = await fetch(recheckUrl, {
-            headers: { apikey: dbEnv.supabaseServiceKey, Authorization: `Bearer ${dbEnv.supabaseServiceKey}` },
-          });
-          if (recheckRes.ok) {
-            const recheckRows: any = await recheckRes.json().catch(() => []);
-            if (Array.isArray(recheckRows) && recheckRows.length > 0) {
-              return { authorized: true, dbConvId, convSlug, recipientId };
-            }
-          }
-        }
+      // Derive actual recipient from database records
+      const dbRecipientId = participantIds.find((id) => id !== verifiedUserId);
+      if (!dbRecipientId) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Recipient participant not found in conversation.' }, 403),
+        };
       }
 
-      return {
-        authorized: false,
-        errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Not a member of this conversation.' }, 403),
-      };
+      // If a slug was requested, the slug's recipient must match the DB's recipient
+      if (requestedSlugRecipientId && requestedSlugRecipientId !== dbRecipientId) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Conversation slug does not match database participants.' }, 403),
+        };
+      }
+
+      // Verify the dbConvId matches the deterministic UUID for (verifiedUserId, dbRecipientId)
+      const expectedDbConvId = await databaseService.getDeterministicConvId(verifiedUserId, dbRecipientId);
+      if (dbConvId !== expectedDbConvId) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Conversation UUID mismatch.' }, 403),
+        };
+      }
+
+      const canonicalSlug = `conv_${[verifiedUserId, dbRecipientId].sort().join('_')}`;
+      return { authorized: true, dbConvId, convSlug: canonicalSlug, recipientId: dbRecipientId };
     } catch (err) {
       console.error('[Worker] DB authorization exception:', err);
       return {
@@ -1588,6 +1537,8 @@ async function authorizeConversationAccess(
       errorResponse: jsonResponse({ success: false, error: 'Server configuration error: Database bindings missing in production.' }, 503),
     };
   } else {
+    // Local development fallback
+    const recipientId = requestedSlugRecipientId || 'dev_partner';
     if (convSlug && (convSlug.includes(verifiedUserId) || dbConvId.includes(verifiedUserId))) {
       return { authorized: true, dbConvId, convSlug, recipientId };
     }

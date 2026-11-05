@@ -3,6 +3,7 @@
  */
 
 import worker from '../src/worker';
+import { databaseService } from '../src/services/databaseService';
 import { createGuestSession } from '../src/server/guestSessionManager';
 
 function assert(condition: boolean, testName: string, detail?: string) {
@@ -146,20 +147,27 @@ async function runWorkerHistoryTests() {
 
     // 4. Conversation Participants (Membership Check)
     if (urlObj.pathname.includes('/rest/v1/conversation_participants')) {
-      // Check if Guest C is being looked up (who is not in Alice-Bob conversation)
-      const guestIdParam = urlObj.searchParams.get('guest_id');
-      const guestId = guestIdParam?.startsWith('eq.') ? guestIdParam.slice(3) : guestIdParam;
+      const dbConvGuestId = await databaseService.getDeterministicConvId(idA, idB);
+      const dbConvRegId = await databaseService.getDeterministicConvId(regMember1Id, regMember2Id);
       
-      if (guestId === idC) {
-        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const convIdParam = urlObj.searchParams.get('conversation_id');
+      const convId = convIdParam?.startsWith('eq.') ? convIdParam.slice(3) : convIdParam;
+
+      if (convId === dbConvGuestId) {
+        return new Response(JSON.stringify([
+          { id: 'part_1', guest_id: idA, user_id: null },
+          { id: 'part_2', guest_id: idB, user_id: null }
+        ]), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      
-      return new Response(JSON.stringify([
-        { id: 'part_1', guest_id: idA, user_id: null },
-        { id: 'part_2', guest_id: idB, user_id: null },
-        { id: 'part_3', user_id: regMember1Id, guest_id: null },
-        { id: 'part_4', user_id: regMember2Id, guest_id: null },
-      ]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+      if (convId === dbConvRegId) {
+        return new Response(JSON.stringify([
+          { id: 'part_3', user_id: regMember1Id, guest_id: null },
+          { id: 'part_4', user_id: regMember2Id, guest_id: null }
+        ]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
     // 5. Default Pass-through/Success
