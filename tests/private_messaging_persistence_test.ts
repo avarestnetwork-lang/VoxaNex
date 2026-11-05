@@ -197,6 +197,40 @@ async function runTests() {
       assert(res.status === 500, 'C.1: Incorrect participant recovery returns 500 error');
     }
 
+    // Scenario D: Malformed JSON (POST returns 409, retry GET returns malformed JSON)
+    {
+      globalThis.fetch = (async (url: any, init: any) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/rest/v1/guest_sessions')) {
+          return new Response(JSON.stringify([{ id: guestAId, is_revoked: false, expires_at: new Date(Date.now() + 100000).toISOString(), session_token_hash: hashGuestA }]), { status: 200 });
+        }
+        if (urlStr.includes('/rest/v1/profiles')) {
+          return new Response(JSON.stringify([{ id: guestBId, nickname: 'GuestB', avatar_url: '🌸' }]), { status: 200 });
+        }
+        if (urlStr.includes('/rest/v1/conversations')) {
+          return new Response(JSON.stringify([{ id: dbConvId }]), { status: 201 });
+        }
+        if (urlStr.includes('/rest/v1/conversation_participants')) {
+          const method = init?.method || 'GET';
+          if (method === 'POST') {
+            return new Response(JSON.stringify({ message: 'Conflict duplicate' }), { status: 409 });
+          }
+          // Retry GET returns malformed JSON
+          return new Response('NOT_JSON', { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('Not Found', { status: 404 });
+      }) as any;
+
+      const req = new Request('https://voxanex.test/api/chat/conversations', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${tokenGuestA}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ partnerId: guestBId })
+      });
+
+      const res = await worker.fetch(req, env, {});
+      assert(res.status === 500, 'D.1: Malformed JSON retry returns 500 error');
+    }
+
     console.log(`\n🎉 Test Summary: ${passedCount}/${assertionCount} assertions passed.`);
     if (failedCount > 0) {
       process.exit(1);

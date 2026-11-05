@@ -1262,9 +1262,7 @@ export default {
               return jsonResponse({ success: false, error: 'Partner identity could not be verified or user does not exist.' }, 400);
             }
 
-            // Generate deterministic conversation ID and slug using verified caller and partner IDs
             dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, resolvedPartnerId);
-            console.log('[Worker Debug] computed dbConvId:', dbConvId, 'verifiedUserId:', verifiedUserId, 'resolvedPartnerId:', resolvedPartnerId);
             convId = `conv_${[verifiedUserId, resolvedPartnerId].sort().join('_')}`;
 
             // Create or upsert conversation row
@@ -1355,7 +1353,6 @@ export default {
                           const matchesId = p.type === 'guest'
                             ? row.guest_id === p.id
                             : row.user_id === p.id;
-                          console.log('[Worker Debug] recheck row:', row, 'dbConvId:', dbConvId, 'p:', p, 'matchesConv:', matchesConv, 'matchesId:', matchesId);
                           return matchesConv && matchesId;
                         });
                       }
