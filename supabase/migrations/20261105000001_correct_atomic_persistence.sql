@@ -452,7 +452,7 @@ END;
 $$;
 
 -- 6. Restrict EXECUTE privileges strictly to service_role
-REVOKE ALL ON FUNCTION public.upsert_message FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.upsert_message FROM anon;
-REVOKE ALL ON FUNCTION public.upsert_message FROM authenticated;
-GRANT EXECUTE ON FUNCTION public.upsert_message TO service_role;
+REVOKE ALL ON FUNCTION public.upsert_message(UUID, UUID, UUID, UUID, UUID, VARCHAR, TEXT, TEXT, VARCHAR, TEXT, VARCHAR, JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.upsert_message(UUID, UUID, UUID, UUID, UUID, VARCHAR, TEXT, TEXT, VARCHAR, TEXT, VARCHAR, JSONB) FROM anon;
+REVOKE ALL ON FUNCTION public.upsert_message(UUID, UUID, UUID, UUID, UUID, VARCHAR, TEXT, TEXT, VARCHAR, TEXT, VARCHAR, JSONB) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.upsert_message(UUID, UUID, UUID, UUID, UUID, VARCHAR, TEXT, TEXT, VARCHAR, TEXT, VARCHAR, JSONB) TO service_role;
