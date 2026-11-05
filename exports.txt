@@ -1,0 +1,103 @@
+src/server/communityAdminHub.ts:export function getForumTopics(params?: { category?: string; query?: string; page?: number; limit?: number }) {
+src/server/communityAdminHub.ts:export function getForumTopicById(id: string): (ForumTopic & { replies: ForumReply[] }) | null {
+src/server/communityAdminHub.ts:export function createForumTopic(params: {
+src/server/communityAdminHub.ts:export function editForumTopic(params: {
+src/server/communityAdminHub.ts:export function toggleLockForumTopic(topicId: string, isLocked: boolean, requesterRole: string): {
+src/server/communityAdminHub.ts:export function togglePinForumTopic(topicId: string, pinned: boolean, requesterRole: string): {
+src/server/communityAdminHub.ts:export function replyToForumTopic(params: {
+src/server/communityAdminHub.ts:export function deleteForumTopic(topicId: string, requesterId?: string, requesterRole?: string): boolean {
+src/server/communityAdminHub.ts:export function deleteForumReply(
+src/server/communityAdminHub.ts:export function moderateForumReply(
+src/server/communityAdminHub.ts:export function getBlogArticles(params?: { status?: string; tag?: string }) {
+src/server/communityAdminHub.ts:export function getBlogArticleBySlug(slug: string): BlogArticle | null {
+src/server/communityAdminHub.ts:export function saveBlogArticle(
+src/server/communityAdminHub.ts:export function deleteBlogArticle(slug: string, requesterRole: string): boolean {
+src/server/communityAdminHub.ts:export function addBlogComment(params: {
+src/server/communityAdminHub.ts:export function moderateBlogComment(
+src/server/communityAdminHub.ts:export function deleteBlogComment(slug: string, commentId: string, requesterRole: string): boolean {
+src/server/communityAdminHub.ts:export function getCommunityGuides(): { guides: CommunityGuide[]; legalDisclaimer: string } {
+src/server/communityAdminHub.ts:export function getCommunityGuideBySlug(slug: string): CommunityGuide | null {
+src/server/communityAdminHub.ts:export function updateCommunityGuide(
+src/server/communityAdminHub.ts:export function getDynamicRoomsCatalog(): Room[] {
+src/server/communityAdminHub.ts:export function createDynamicRoom(
+src/server/communityAdminHub.ts:export function updateDynamicRoom(
+src/server/communityAdminHub.ts:export function deleteDynamicRoom(roomId: string, requesterRole: string): boolean {
+src/server/communityAdminHub.ts:export function filterProhibitedContent(text: string): {
+src/server/communityAdminHub.ts:export function submitSafetyReport(params: {
+src/server/communityAdminHub.ts:export function getPlatformReports(requesterRole = 'user'): SafetyReport[] {
+src/server/communityAdminHub.ts:export function getPublicReportStatus(reportId: string, reporterId?: string) {
+src/server/communityAdminHub.ts:export function updateReportStatus(
+src/server/communityAdminHub.ts:export function imposeUserRestriction(params: {
+src/server/communityAdminHub.ts:export function checkUserRestriction(userId: string): {
+src/server/communityAdminHub.ts:export function liftUserRestriction(userId: string, reason: string, actor = 'VoxaNex_Admin'): boolean {
+src/server/communityAdminHub.ts:export function getUserRestrictions(requesterRole = 'user'): UserRestrictionRecord[] {
+src/server/communityAdminHub.ts:export function submitAppeal(params: {
+src/server/communityAdminHub.ts:export function getModerationAppeals(requesterRole = 'user'): ModerationAppeal[] {
+src/server/communityAdminHub.ts:export function reviewAppeal(
+src/server/communityAdminHub.ts:export function addModerationAuditLog(entry: Omit<ModerationAuditLog, 'id' | 'timestamp'>) {
+src/server/communityAdminHub.ts:export function getModerationAuditLogs(requesterRole = 'user'): ModerationAuditLog[] {
+src/server/communityAdminHub.ts:export function getAgeAssuranceConfig(): AgeAssuranceConfig {
+src/server/communityAdminHub.ts:export function updateAgeAssuranceConfig(newConfig: Partial<AgeAssuranceConfig>, actor = 'Admin'): AgeAssuranceConfig {
+src/server/communityAdminHub.ts:export function getUserAgeAssurance(userId: string): AgeAssuranceRecord {
+src/server/communityAdminHub.ts:export function submitAgeDeclaration(params: {
+src/server/communityAdminHub.ts:export function initiateAgeProviderSession(params: {
+src/server/communityAdminHub.ts:export function completeAgeProviderVerification(params: {
+src/server/communityAdminHub.ts:export function revokeAgeVerification(userId: string, reason: string, actor = 'VoxaNex_Admin'): boolean {
+src/server/communityAdminHub.ts:export function isUserEligibleForAdultAreas(userId: string, isGuest: boolean): {
+src/server/communityAdminHub.ts:export function getBlockedUsers(userId: string): BlockedUserEntry[] {
+src/server/communityAdminHub.ts:export function addBlockedUserEntry(params: {
+src/server/communityAdminHub.ts:export function removeBlockedUserEntry(blockerId: string, targetId: string) {
+src/server/communityAdminHub.ts:export function sendConnectionRequest(params: {
+src/server/communityAdminHub.ts:export function respondConnectionRequest(connectionId: string, recipientId: string, accept: boolean) {
+src/server/communityAdminHub.ts:export function getUserConnections(userId: string): UserConnection[] {
+src/server/communityAdminHub.ts:export function exportUserData(userId: string) {
+src/server/communityAdminHub.ts:export function purgeUserData(userId: string, actor = 'user'): { success: boolean; message: string } {
+src/server/communityAdminHub.ts:export function updatePlatformSettings(newSettings: Partial<AdminPlatformSettings>): AdminPlatformSettings {
+src/server/communityAdminHub.ts:export function getPlatformSettings(): AdminPlatformSettings {
+src/server/communityAdminHub.ts:export function getRoomModerators(roomId?: string, requesterRole = 'user'): RoomModeratorAssignment[] {
+src/server/communityAdminHub.ts:export function assignRoomModerator(
+src/server/communityAdminHub.ts:export function revokeRoomModerator(
+src/server/mediaAndEmbedManager.ts:export function validateYouTubeUrl(inputUrl: string): YouTubeValidationResult {
+src/server/mediaAndEmbedManager.ts:export function validateMediaUpload(params: {
+src/server/mediaAndEmbedManager.ts:export function removeMediaUpload(uploadId: string, requesterRole: string): boolean {
+src/server/mediaAndEmbedManager.ts:export function flagMediaUpload(uploadId: string): boolean {
+src/server/mediaAndEmbedManager.ts:export function getMediaList(requesterRole: string): MediaRecord[] {
+src/server/realtimeHub.ts:export function sanitizeContent(input: string): string {
+src/server/realtimeHub.ts:export function extractSafeUrl(text: string): string | null {
+src/server/realtimeHub.ts:export function checkRateLimitAndSpam(
+src/server/realtimeHub.ts:export function registerRoomStream(roomId: string, res: Response) {
+src/server/realtimeHub.ts:export function registerConversationStream(convId: string, res: Response) {
+src/server/realtimeHub.ts:export function registerUserDMStream(userId: string, res: Response) {
+src/server/realtimeHub.ts:export function broadcastToUser(userId: string, event: string, data: any) {
+src/server/realtimeHub.ts:export function getRoomMessages(roomId: string, limit = 50, beforeTimestamp?: string): HubMessage[] {
+src/server/realtimeHub.ts:export function postRoomMessage(params: {
+src/server/realtimeHub.ts:export function updateRoomPresence(roomId: string, member: PresenceMember) {
+src/server/realtimeHub.ts:export function removeRoomPresence(roomId: string, memberId: string) {
+src/server/realtimeHub.ts:export function getRoomPresence(roomId: string): PresenceMember[] {
+src/server/realtimeHub.ts:export function setRoomTyping(roomId: string, memberId: string, nickname: string, isTyping: boolean) {
+src/server/realtimeHub.ts:export function registerConversationMembers(convId: string, memberIds: string[]) {
+src/server/realtimeHub.ts:export async function isConversationMember(convId: string, userId: string): Promise<boolean> {
+src/server/realtimeHub.ts:export async function getUserConversations(userId: string): Promise<string[]> {
+src/server/realtimeHub.ts:export async function getConversationMessages(convId: string, requesterId: string, limit = 50): Promise<HubMessage[]> {
+src/server/realtimeHub.ts:export async function postConversationMessage(params: {
+src/server/realtimeHub.ts:export function setUserBlock(blockerId: string, targetId: string, blocked: boolean) {
+src/server/realtimeHub.ts:export function isUserBlocked(userA: string, userB: string): boolean {
+src/server/realtimeHub.ts:export async function fetchSafeLinkPreview(rawUrl: string): Promise<{
+src/server/realtimeHub.ts:export function searchGifs(query = ''): typeof CURATED_GIFS {
+src/server/matchmakingEngine.ts:export function joinMatchmakingQueue(params: {
+src/server/matchmakingEngine.ts:export function cancelMatchmakingQueue(ticketId: string, userId: string): boolean {
+src/server/matchmakingEngine.ts:export function pollTicketStatus(ticketId: string, userId: string): {
+src/server/matchmakingEngine.ts:export function disconnectMatch(matchId: string, userId: string): { success: boolean; match?: MatchSession } {
+src/server/matchmakingEngine.ts:export function getActiveMatchForUser(userId: string): {
+src/server/matchmakingEngine.ts:export function registerTicketStream(ticketId: string, res: Response) {
+src/server/matchmakingEngine.ts:export function registerMatchStream(matchId: string, res: Response) {
+src/server/webrtcCallHub.ts:export function getIceServers(): IceServerConfig[] {
+src/server/webrtcCallHub.ts:export function checkCallRateLimit(userId: string): { allowed: boolean; reason?: string } {
+src/server/webrtcCallHub.ts:export function registerUserSignalingStream(userId: string, res: Response) {
+src/server/webrtcCallHub.ts:export function initiateCall(params: {
+src/server/webrtcCallHub.ts:export function acceptCall(callId: string, calleeId: string): { success: boolean; call?: CallSessionData; error?: string } {
+src/server/webrtcCallHub.ts:export function rejectCall(callId: string, calleeId: string, reason = 'Call declined'): { success: boolean; error?: string } {
+src/server/webrtcCallHub.ts:export function endCall(callId: string, userId: string, reason = 'Call ended'): { success: boolean; call?: CallSessionData; error?: string } {
+src/server/webrtcCallHub.ts:export function postSignal(params: {
+src/server/webrtcCallHub.ts:export function getCallSession(callId: string, userId: string): CallSessionData | null {
+src/server/webrtcCallHub.ts:export function getActiveCallForUser(userId: string): CallSessionData | null {

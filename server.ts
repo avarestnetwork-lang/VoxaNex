@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import {
   createGuestSession,
@@ -130,7 +131,11 @@ const __dirname = path.dirname(__filename);
  * Robustly authenticate a request, supporting both registered members (Supabase JWT)
  * and guests (VoxaNex cryptographic tokens).
  */
-async function authenticateRequest(
+async function computeTokenHash(token: string): Promise<string> {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+export async function authenticateRequest(
   req: express.Request,
   dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string; supabaseAnonKey?: string },
   bodyToken?: string
@@ -187,6 +192,40 @@ async function authenticateRequest(
     if (!authCheck.valid || !authCheck.session) {
       return { errorCode: 401, error: `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}` };
     }
+
+    // MANDATORY: Durable database verification if bindings are available (Production Hardening)
+    if (dbEnv.supabaseUrl && dbEnv.supabaseServiceKey) {
+      try {
+        const tokenHash = await computeTokenHash(finalGuestToken);
+        const queryUrl = `${dbEnv.supabaseUrl}/rest/v1/guest_sessions?session_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,is_revoked,expires_at`;
+        const res = await fetch(queryUrl, {
+          headers: {
+            'apikey': dbEnv.supabaseServiceKey,
+            'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+          },
+        });
+        if (res.ok) {
+          const rows: any = await res.json();
+          if (Array.isArray(rows) && rows.length === 1) {
+            const row = rows[0];
+            if (row.is_revoked) {
+              return { errorCode: 401, error: 'Unauthorized: Guest session has been revoked by security policy.' };
+            }
+            if (new Date(row.expires_at).getTime() <= Date.now()) {
+              return { errorCode: 401, error: 'Unauthorized: Guest session has expired in database.' };
+            }
+          } else if (Array.isArray(rows) && rows.length === 0) {
+             // In strict production or CI, fail closed if not in database
+             if (process.env.NODE_ENV === 'production' || process.env.CI) {
+               return { errorCode: 401, error: 'Unauthorized: Guest session not recognized by durable store.' };
+             }
+          }
+        }
+      } catch (err) {
+        console.error('[Server] Guest session DB verification exception:', err);
+      }
+    }
+
     return { verifiedUserId: authCheck.session.id, isGuestCaller: true, guestSession: authCheck.session };
   }
 
@@ -436,9 +475,19 @@ async function startServer() {
   });
 
   // Post presence / heartbeat
-  app.post('/api/chat/rooms/:roomId/presence', (req, res) => {
+  app.post('/api/chat/rooms/:roomId/presence', async (req, res) => {
     const { roomId } = req.params;
-    const { id, nickname, avatar, isGuest, gender, action, status } = req.body || {};
+    const { id, nickname, avatar, isGuest, gender, action, status, guestToken } = req.body || {};
+
+    // 1. Authenticate to prevent impersonation
+    const authResult = await authenticateRequest(req, dbEnv, guestToken);
+    if ('errorCode' in authResult) {
+      return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
+    }
+
+    if (id && id !== authResult.verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Identity mismatch in presence update.' });
+    }
 
     if (action === 'leave' || status === 'offline') {
       if (id) {
@@ -447,13 +496,13 @@ async function startServer() {
       return res.json({ success: true, members: getRoomPresence(roomId) });
     }
 
-    if (id && nickname) {
+    if (id && (nickname || authResult.guestSession?.nickname)) {
       updateRoomPresence(roomId, {
         id,
-        nickname,
-        avatar: avatar || '👤',
-        isGuest: Boolean(isGuest),
-        gender,
+        nickname: authResult.guestSession?.nickname || nickname,
+        avatar: authResult.guestSession?.avatar || avatar || '👤',
+        isGuest: authResult.isGuestCaller,
+        gender: authResult.guestSession?.gender || gender,
         lastSeen: Date.now(),
       });
     }
@@ -468,12 +517,21 @@ async function startServer() {
   });
 
   // Typing indicator
-  app.post('/api/chat/rooms/:roomId/typing', (req, res) => {
+  app.post('/api/chat/rooms/:roomId/typing', async (req, res) => {
     const { roomId } = req.params;
-    const { memberId, nickname, isTyping } = req.body || {};
+    const { memberId, nickname, isTyping, guestToken } = req.body || {};
 
-    if (memberId && nickname) {
-      setRoomTyping(roomId, memberId, nickname, Boolean(isTyping));
+    const authResult = await authenticateRequest(req, dbEnv, guestToken);
+    if ('errorCode' in authResult) {
+      return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
+    }
+
+    if (memberId && memberId !== authResult.verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Identity mismatch in typing update.' });
+    }
+
+    if (memberId) {
+      setRoomTyping(roomId, memberId, authResult.guestSession?.nickname || nickname, Boolean(isTyping));
     }
     res.json({ success: true });
   });
@@ -637,11 +695,16 @@ async function startServer() {
   });
 
   // Block / Unblock peer
-  app.post('/api/moderation/block', (req, res) => {
+  app.post('/api/moderation/block', async (req, res) => {
     const { blockerId, targetId, targetNickname, targetAvatar, blocked, reason } = req.body || {};
     if (!blockerId || !targetId) {
       return res.status(400).json({ success: false, error: 'Both IDs are required.' });
     }
+    
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+    if (blockerId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+
     const isBlocked = Boolean(blocked);
     setUserBlock(blockerId, targetId, isBlocked);
 
@@ -661,11 +724,15 @@ async function startServer() {
   });
 
   // Get user's blocked list
-  app.get('/api/moderation/blocks', (req, res) => {
+  app.get('/api/moderation/blocks', async (req, res) => {
     const userId = req.query.userId as string;
     if (!userId) {
       return res.status(400).json({ success: false, error: 'userId required.' });
     }
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+    if (userId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+
     const blockedList = getBlockedUsers(userId);
     res.json({ success: true, blockedUsers: blockedList });
   });
@@ -1211,11 +1278,16 @@ async function startServer() {
   });
 
   // Account Deletion & Permanent Purge
-  app.post('/api/auth/delete-account', (req, res) => {
+  app.post('/api/auth/delete-account', async (req, res) => {
     const { userId } = req.body || {};
     if (!userId) {
       return res.status(400).json({ success: false, error: 'userId required.' });
     }
+    
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+    if (userId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+
     const result = purgeUserData(userId);
     res.json(result);
   });
@@ -1356,16 +1428,20 @@ async function startServer() {
     res.json({ success: true, topic });
   });
 
-  app.post('/api/forum/topics', (req, res) => {
+  app.post('/api/forum/topics', async (req, res) => {
     const { authorId, authorNickname, authorAvatar, authorRole, title, category, categoryLabel, content } = req.body || {};
     if (!authorId || !title || !content) {
       return res.status(400).json({ success: false, error: 'Missing required topic fields.' });
     }
 
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+    if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+
     const result = createForumTopic({
       authorId,
-      authorNickname: authorNickname || 'Anonymous',
-      authorAvatar: authorAvatar || '⚡',
+      authorNickname: authResult.guestSession?.nickname || authorNickname || 'Anonymous',
+      authorAvatar: authResult.guestSession?.avatar || authorAvatar || '⚡',
       authorRole: authorRole || 'user',
       title,
       category: category || 'general',
@@ -1379,17 +1455,21 @@ async function startServer() {
     res.json(result);
   });
 
-  app.post('/api/forum/topics/:id/reply', (req, res) => {
+  app.post('/api/forum/topics/:id/reply', async (req, res) => {
     const { authorId, authorNickname, authorAvatar, authorRole, content } = req.body || {};
     if (!authorId || !content) {
       return res.status(400).json({ success: false, error: 'Author and content required.' });
     }
 
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+    if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+
     const result = replyToForumTopic({
       topicId: req.params.id,
       authorId,
-      authorNickname: authorNickname || 'User',
-      authorAvatar: authorAvatar || '💬',
+      authorNickname: authResult.guestSession?.nickname || authorNickname || 'User',
+      authorAvatar: authResult.guestSession?.avatar || authorAvatar || '💬',
       authorRole: authorRole || 'user',
       content,
     });
@@ -1400,9 +1480,14 @@ async function startServer() {
     res.json(result);
   });
 
-  app.put('/api/forum/topics/:id', (req, res) => {
+  app.put('/api/forum/topics/:id', async (req, res) => {
     const { authorId, title, content } = req.body || {};
     const role = (req.headers['x-user-role'] as string) || req.body?.authorRole || 'user';
+    
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+    if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+
     const result = editForumTopic({
       topicId: req.params.id,
       authorId,
@@ -1436,9 +1521,14 @@ async function startServer() {
     res.json(result);
   });
 
-  app.delete('/api/forum/topics/:id', (req, res) => {
+  app.delete('/api/forum/topics/:id', async (req, res) => {
     const authorId = req.query.authorId as string;
     const role = (req.headers['x-user-role'] as string) || 'user';
+    
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+    if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+
     const result = deleteForumTopic(req.params.id, authorId, role);
     if (!result.success) {
       return res.status(403).json(result);
@@ -1446,14 +1536,25 @@ async function startServer() {
     res.json(result);
   });
 
-  app.delete('/api/forum/replies/:id', (req, res) => {
+  app.delete('/api/forum/replies/:id', async (req, res) => {
     const authorId = req.query.authorId as string;
     const role = (req.headers['x-user-role'] as string) || 'user';
+
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+    if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+
     const result = deleteForumReply(req.params.id, authorId, role);
     if (!result.success) {
       return res.status(403).json(result);
     }
     res.json(result);
+  });
+
+  app.post('/api/forum/replies/:id/moderate', adminAuthMiddleware('moderator'), (req, res) => {
+    const { status, reason } = req.body || {};
+    const result = moderateForumReply(req.params.id, status, (req as any).adminUser?.username || 'Staff', reason);
+    res.json({ success: result });
   });
 
   // ---------------------------------------------------------------------------
@@ -1474,6 +1575,28 @@ async function startServer() {
     res.json({ success: true, article });
   });
 
+  app.delete('/api/blog/articles/:slug', adminAuthMiddleware('admin'), (req, res) => {
+    const success = deleteBlogArticle(req.params.slug);
+    res.json({ success });
+  });
+
+  app.post('/api/blog/articles/:slug/comments', async (req, res) => {
+    const { nickname, content } = req.body || {};
+    const result = addBlogComment(req.params.slug, { nickname, content });
+    res.json({ success: !!result, comment: result });
+  });
+
+  app.put('/api/blog/comments/:id', adminAuthMiddleware('moderator'), (req, res) => {
+    const { status } = req.body || {};
+    const success = moderateBlogComment(req.params.id, status);
+    res.json({ success });
+  });
+
+  app.delete('/api/blog/comments/:id', adminAuthMiddleware('moderator'), (req, res) => {
+    const success = deleteBlogComment(req.params.id);
+    res.json({ success });
+  });
+
   app.get('/api/community/guides', (req, res) => {
     res.json({ success: true, guides: getCommunityGuides() });
   });
@@ -1482,6 +1605,11 @@ async function startServer() {
     const guide = getCommunityGuideBySlug(req.params.slug);
     if (!guide) return res.status(404).json({ success: false, error: 'Guide not found.' });
     res.json({ success: true, guide });
+  });
+
+  app.put('/api/community/guides/:slug', adminAuthMiddleware('admin'), (req, res) => {
+    const guide = updateCommunityGuide(req.params.slug, req.body || {});
+    res.json({ success: !!guide, guide });
   });
 
   // ---------------------------------------------------------------------------
@@ -1504,6 +1632,97 @@ async function startServer() {
 
   app.delete('/api/admin/rooms/:id', adminAuthMiddleware('admin'), (req, res) => {
     const success = deleteDynamicRoom(req.params.id);
+    res.json({ success });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ADDITIONAL ADMIN & MODERATION ENDPOINTS
+  // ---------------------------------------------------------------------------
+  app.get('/api/admin/reports', adminAuthMiddleware('moderator'), (req, res) => {
+    res.json({ success: true, reports: getPlatformReports() });
+  });
+
+  app.patch('/api/admin/reports/:id', adminAuthMiddleware('moderator'), (req, res) => {
+    const { status, actionTaken, moderatorNotes } = req.body || {};
+    const success = updateReportStatus(req.params.id, status, actionTaken, (req as any).adminUser?.username || 'Staff', moderatorNotes);
+    res.json({ success });
+  });
+
+  app.post('/api/admin/restrictions', adminAuthMiddleware('moderator'), (req, res) => {
+    const result = imposeUserRestriction(req.body || {}, (req as any).adminUser?.username || 'Staff');
+    res.json({ success: !!result, restriction: result });
+  });
+
+  app.get('/api/admin/restrictions', adminAuthMiddleware('moderator'), (req, res) => {
+    res.json({ success: true, restrictions: getUserRestrictions() });
+  });
+
+  app.post('/api/admin/restrictions/:id/lift', adminAuthMiddleware('moderator'), (req, res) => {
+    const success = liftUserRestriction(req.params.id, (req as any).adminUser?.username || 'Staff', req.body.reason);
+    res.json({ success });
+  });
+
+  app.post('/api/moderation/appeals', async (req, res) => {
+    const result = submitAppeal(req.body || {});
+    res.json({ success: !!result, appeal: result });
+  });
+
+  app.get('/api/admin/appeals', adminAuthMiddleware('moderator'), (req, res) => {
+    res.json({ success: true, appeals: getModerationAppeals() });
+  });
+
+  app.post('/api/admin/appeals/:id/review', adminAuthMiddleware('moderator'), (req, res) => {
+    const { status, notes } = req.body || {};
+    const success = reviewAppeal(req.params.id, status, (req as any).adminUser?.username || 'Staff', notes);
+    res.json({ success });
+  });
+
+  app.get('/api/admin/audit-logs', adminAuthMiddleware('admin'), (req, res) => {
+    res.json({ success: true, logs: getModerationAuditLogs() });
+  });
+
+  app.get('/api/admin/settings', adminAuthMiddleware('moderator'), (req, res) => {
+    res.json({ success: true, settings: getPlatformSettings() });
+  });
+
+  app.post('/api/admin/settings', adminAuthMiddleware('admin'), (req, res) => {
+    const settings = updatePlatformSettings(req.body || {}, (req as any).adminUser?.username || 'Admin');
+    res.json({ success: true, settings });
+  });
+
+  app.get('/api/chat/rooms/:roomId/moderators', (req, res) => {
+    res.json({ success: true, moderators: getRoomModerators(req.params.roomId) });
+  });
+
+  app.post('/api/chat/rooms/:roomId/moderators', adminAuthMiddleware('admin'), (req, res) => {
+    const success = assignRoomModerator(req.params.roomId, req.body.userId, req.body.nickname);
+    res.json({ success });
+  });
+
+  app.delete('/api/chat/rooms/:roomId/moderators/:userId', adminAuthMiddleware('admin'), (req, res) => {
+    const success = revokeRoomModerator(req.params.roomId, req.params.userId);
+    res.json({ success });
+  });
+
+  // ---------------------------------------------------------------------------
+  // MEDIA ENDPOINTS
+  // ---------------------------------------------------------------------------
+  app.post('/api/media/upload', async (req, res) => {
+    const result = validateMediaUpload(req.body || {});
+    res.status(result.valid ? 200 : 400).json(result);
+  });
+
+  app.get('/api/media/list', adminAuthMiddleware('moderator'), (req, res) => {
+    res.json({ success: true, media: getMediaList((req as any).adminUser?.role) });
+  });
+
+  app.delete('/api/media/:id', adminAuthMiddleware('moderator'), (req, res) => {
+    const success = removeMediaUpload(req.params.id, (req as any).adminUser?.role);
+    res.json({ success });
+  });
+
+  app.post('/api/media/:id/flag', (req, res) => {
+    const success = flagMediaUpload(req.params.id);
     res.json({ success });
   });
 
@@ -1542,7 +1761,14 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('[ChatLustora Backend] Fatal startup error:', err);
-  process.exit(1);
-});
+const isMainModule = process.argv[1] && 
+  (process.argv[1].endsWith('server.ts') || 
+   process.argv[1].endsWith('server.js') || 
+   process.argv[1].endsWith('server'));
+
+if (isMainModule) {
+  startServer().catch((err) => {
+    console.error('[ChatLustora Backend] Fatal startup error:', err);
+    process.exit(1);
+  });
+}
