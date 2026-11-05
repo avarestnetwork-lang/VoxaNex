@@ -268,6 +268,71 @@ export const databaseService = {
   },
 
   /**
+   * Atomic message persistence using privileged database function.
+   * Prevents duplicates at the database level using ON CONFLICT.
+   */
+  async atomicMessage(params: {
+    id: string;
+    roomId?: string;
+    conversationId?: string;
+    senderUserId?: string;
+    senderGuestId?: string;
+    senderNickname: string;
+    senderAvatar: string;
+    content: string;
+    clientNonce?: string;
+  }, overrideClient?: any): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
+    const supabase = overrideClient || getSupabaseClient();
+    if (!supabase) return { success: false, error: 'Supabase client not configured' };
+
+    try {
+      let realRoomId = null;
+      if (params.roomId) {
+        realRoomId = await this.resolveRoomId(params.roomId, overrideClient);
+      }
+
+      // Call the privileged RPC function
+      const { data, error } = await supabase.rpc('upsert_message', {
+        p_id: params.id,
+        p_room_id: realRoomId,
+        p_conversation_id: params.conversationId || null,
+        p_sender_user_id: params.senderUserId || null,
+        p_sender_guest_id: params.senderGuestId || null,
+        p_sender_nickname: params.senderNickname,
+        p_sender_avatar: params.senderAvatar,
+        p_content: params.content,
+        p_client_nonce: params.clientNonce || null
+      });
+
+      if (error) {
+        console.error('[DatabaseService] upsert_message error:', error);
+        return { success: false, error: error.message };
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) return { success: false, error: 'Database did not return the persisted message.' };
+
+      const message: ChatMessage = {
+        id: row.id,
+        roomId: row.room_id,
+        conversationId: row.conversation_id,
+        senderId: row.sender_user_id || row.sender_guest_id || 'usr',
+        senderNickname: row.sender_nickname,
+        senderAvatar: row.sender_avatar,
+        content: row.content,
+        timestamp: row.created_at,
+        clientNonce: row.client_nonce,
+        status: 'delivered'
+      };
+
+      return { success: true, message };
+    } catch (err: any) {
+      console.error('[DatabaseService] atomicMessage exception:', err);
+      return { success: false, error: err.message || 'Internal database error' };
+    }
+  },
+
+  /**
    * Send a message to a public room, persisting to Supabase and broadcasting
    */
   async sendRoomMessage(params: {
@@ -283,7 +348,26 @@ export const databaseService = {
     clientNonce?: string;
   }): Promise<ChatMessage | null> {
     const supabase = getSupabaseClient();
-    const msgId = params.id || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const msgId = params.id || crypto.randomUUID();
+    
+    if (supabase) {
+      const result = await this.atomicMessage({
+        id: msgId,
+        roomId: params.roomId,
+        senderUserId: params.senderUserId,
+        senderGuestId: params.senderGuestId,
+        senderNickname: params.senderNickname,
+        senderAvatar: params.senderAvatar,
+        content: params.content,
+        clientNonce: params.clientNonce
+      }, supabase);
+
+      if (result.success && result.message) {
+        await this.broadcastMessage(params.roomId, result.message);
+        return result.message;
+      }
+    }
+
     const newMsg: ChatMessage = {
       id: msgId,
       roomId: params.roomId,
@@ -297,51 +381,9 @@ export const databaseService = {
       timestamp: new Date().toISOString(),
       status: 'delivered',
     };
-
-    if (!supabase) return newMsg;
-
-    try {
-      // Resolve slug to authoritative UUID for database persistence
-      const realRoomId = await this.resolveRoomId(params.roomId);
-
-      const { data, error } = await supabase
-        .from('messages')
-        .insert({
-          id: msgId,
-          room_id: realRoomId,
-          sender_user_id: params.senderUserId || null,
-          sender_guest_id: params.senderGuestId || null,
-          sender_nickname: params.senderNickname,
-          sender_avatar: params.senderAvatar,
-          content: params.content,
-        })
-        .select()
-        .single();
-
-      const savedMsg: ChatMessage = (error || !data)
-        ? newMsg
-        : {
-            id: data.id,
-            roomId: data.room_id,
-            senderId: data.sender_user_id || data.sender_guest_id || 'usr',
-            senderNickname: data.sender_nickname,
-            senderAvatar: data.sender_avatar,
-            content: data.content,
-            mediaUrl: params.mediaUrl,
-            mediaType: params.mediaType,
-            clientNonce: params.clientNonce,
-            timestamp: data.created_at,
-            status: 'delivered',
-          };
-
-      // Broadcast immediately across all browser clients in this room
-      await this.broadcastMessage(params.roomId, savedMsg);
-
-      return savedMsg;
-    } catch {
-      await this.broadcastMessage(params.roomId, newMsg);
-      return newMsg;
-    }
+    
+    await this.broadcastMessage(params.roomId, newMsg);
+    return newMsg;
   },
 
   /**

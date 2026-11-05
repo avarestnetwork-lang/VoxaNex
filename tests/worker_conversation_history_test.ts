@@ -71,7 +71,36 @@ async function runWorkerHistoryTests() {
     const headers = (init?.headers || {}) as Record<string, string>;
     interceptedCalls.push({ url: urlStr, headers, method });
 
-    // 1. Messages REST
+    // 1. Messages REST & RPC
+    if (urlObj.pathname.includes('/rpc/upsert_message')) {
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : (init?.body || {});
+      const newMsg = {
+        id: body.p_id || 'msg_' + Date.now(),
+        conversation_id: body.p_conversation_id,
+        room_id: body.p_room_id || null,
+        sender_guest_id: body.p_sender_guest_id || null,
+        sender_user_id: body.p_sender_user_id || null,
+        sender_nickname: body.p_sender_nickname,
+        sender_avatar: body.p_sender_avatar,
+        content: body.p_content,
+        client_nonce: body.p_client_nonce || null,
+        created_at: new Date().toISOString(),
+      };
+      storedMessages.push(newMsg);
+      return new Response(JSON.stringify([{
+        id: newMsg.id,
+        room_id: newMsg.room_id,
+        conversation_id: newMsg.conversation_id,
+        sender_user_id: newMsg.sender_user_id,
+        sender_guest_id: newMsg.sender_guest_id,
+        sender_nickname: newMsg.sender_nickname,
+        sender_avatar: newMsg.sender_avatar,
+        content: newMsg.content,
+        client_nonce: newMsg.client_nonce,
+        created_at: newMsg.created_at
+      }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
     if (urlObj.pathname.includes('/rest/v1/messages')) {
       if (method === 'POST') {
         const body = JSON.parse(init?.body as string || '{}');

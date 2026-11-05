@@ -69,7 +69,20 @@ async function runTests() {
         if (urlStr.includes('/auth/v1/user')) return new Response(JSON.stringify({ id: userId }), { status: 200 });
         if (urlStr.includes('/rest/v1/profiles')) return new Response(JSON.stringify([{ nickname: 'RealNick', avatar_url: 'RealAvatar' }]), { status: 200 });
         if (urlStr.includes('/rest/v1/rooms')) return new Response(JSON.stringify([{ id: ROOM_ID }]), { status: 200 });
-        if (urlStr.includes('/rest/v1/messages')) return new Response(null, { status: 201 });
+        if (urlStr.includes('/rpc/upsert_message')) {
+            const body = JSON.parse(init.body);
+            return new Response(JSON.stringify([{
+                id: body.p_id,
+                room_id: body.p_room_id,
+                sender_user_id: body.p_sender_user_id,
+                sender_guest_id: body.p_sender_guest_id,
+                sender_nickname: body.p_sender_nickname,
+                sender_avatar: body.p_sender_avatar,
+                content: body.p_content,
+                client_nonce: body.p_client_nonce,
+                created_at: new Date().toISOString()
+            }]), { status: 200 });
+        }
         return new Response('Not Found', { status: 404 });
       }) as any;
 
@@ -95,12 +108,25 @@ async function runTests() {
     // Case 1.2: Registered profile lookup failure fallback
     {
       const userId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-      globalThis.fetch = (async (url: any) => {
+      globalThis.fetch = (async (url: any, init: any) => {
         const urlStr = url.toString();
         if (urlStr.includes('/auth/v1/user')) return new Response(JSON.stringify({ id: userId }), { status: 200 });
         if (urlStr.includes('/rest/v1/profiles')) return new Response('DB Error', { status: 500 });
         if (urlStr.includes('/rest/v1/rooms')) return new Response(JSON.stringify([{ id: ROOM_ID }]), { status: 200 });
-        if (urlStr.includes('/rest/v1/messages')) return new Response(null, { status: 201 });
+        if (urlStr.includes('/rpc/upsert_message')) {
+            const body = JSON.parse(init.body);
+            return new Response(JSON.stringify([{
+                id: body.p_id,
+                room_id: body.p_room_id,
+                sender_user_id: body.p_sender_user_id,
+                sender_guest_id: body.p_sender_guest_id,
+                sender_nickname: body.p_sender_nickname,
+                sender_avatar: body.p_sender_avatar,
+                content: body.p_content,
+                client_nonce: body.p_client_nonce,
+                created_at: new Date().toISOString()
+            }]), { status: 200 });
+        }
         return new Response('Not Found', { status: 404 });
       }) as any;
 
@@ -124,12 +150,25 @@ async function runTests() {
     // Case 1.3: Registered profile missing data fallback
     {
       const userId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-      globalThis.fetch = (async (url: any) => {
+      globalThis.fetch = (async (url: any, init: any) => {
         const urlStr = url.toString();
         if (urlStr.includes('/auth/v1/user')) return new Response(JSON.stringify({ id: userId }), { status: 200 });
         if (urlStr.includes('/rest/v1/profiles')) return new Response(JSON.stringify([{ nickname: null, avatar_url: null }]), { status: 200 });
         if (urlStr.includes('/rest/v1/rooms')) return new Response(JSON.stringify([{ id: ROOM_ID }]), { status: 200 });
-        if (urlStr.includes('/rest/v1/messages')) return new Response(null, { status: 201 });
+        if (urlStr.includes('/rpc/upsert_message')) {
+            const body = JSON.parse(init.body);
+            return new Response(JSON.stringify([{
+                id: body.p_id,
+                room_id: body.p_room_id,
+                sender_user_id: body.p_sender_user_id,
+                sender_guest_id: body.p_sender_guest_id,
+                sender_nickname: body.p_sender_nickname,
+                sender_avatar: body.p_sender_avatar,
+                content: body.p_content,
+                client_nonce: body.p_client_nonce,
+                created_at: new Date().toISOString()
+            }]), { status: 200 });
+        }
         return new Response('Not Found', { status: 404 });
       }) as any;
 
@@ -159,11 +198,24 @@ async function runTests() {
       const guestToken = await createGuestToken({ sid: sessionId, nick: 'Guesty', exp: Date.now() + 10000, iat: Date.now() });
       const tokenHash = await computeHash(guestToken);
       
-      globalThis.fetch = (async (url: any) => {
+      globalThis.fetch = (async (url: any, init: any) => {
         const urlStr = url.toString();
         if (urlStr.includes('/rest/v1/guest_sessions')) return new Response(JSON.stringify([{ id: sessionId, session_token_hash: tokenHash, is_revoked: false, expires_at: new Date(Date.now() + 10000).toISOString() }]), { status: 200 });
         if (urlStr.includes('/rest/v1/rooms')) return new Response(JSON.stringify([{ id: ROOM_ID }]), { status: 200 });
-        if (urlStr.includes('/rest/v1/messages')) return new Response(null, { status: 201 });
+        if (urlStr.includes('/rpc/upsert_message')) {
+            const body = JSON.parse(init.body);
+            return new Response(JSON.stringify([{
+                id: body.p_id,
+                room_id: body.p_room_id,
+                sender_user_id: body.p_sender_user_id,
+                sender_guest_id: body.p_sender_guest_id,
+                sender_nickname: body.p_sender_nickname,
+                sender_avatar: body.p_sender_avatar,
+                content: body.p_content,
+                client_nonce: body.p_client_nonce,
+                created_at: new Date().toISOString()
+            }]), { status: 200 });
+        }
         return new Response('Not Found', { status: 404 });
       }) as any;
 
@@ -190,11 +242,24 @@ async function runTests() {
       const guestToken = await createGuestToken({ sid: sessionId, nick: 'Guesty', exp: Date.now() + 10000, iat: Date.now() });
       const tokenHash = await computeHash(guestToken);
       
-      globalThis.fetch = (async (url: any) => {
+      globalThis.fetch = (async (url: any, init: any) => {
         const urlStr = url.toString();
         if (urlStr.includes('/rest/v1/guest_sessions')) return new Response(JSON.stringify([{ id: sessionId, session_token_hash: tokenHash, is_revoked: false, expires_at: new Date(Date.now() + 10000).toISOString() }]), { status: 200 });
         if (urlStr.includes('/rest/v1/rooms')) return new Response(JSON.stringify([{ id: ROOM_ID }]), { status: 200 });
-        if (urlStr.includes('/rest/v1/messages')) return new Response(null, { status: 201 });
+        if (urlStr.includes('/rpc/upsert_message')) {
+            const body = JSON.parse(init.body);
+            return new Response(JSON.stringify([{
+                id: body.p_id,
+                room_id: body.p_room_id,
+                sender_user_id: body.p_sender_user_id,
+                sender_guest_id: body.p_sender_guest_id,
+                sender_nickname: body.p_sender_nickname,
+                sender_avatar: body.p_sender_avatar,
+                content: body.p_content,
+                client_nonce: body.p_client_nonce,
+                created_at: new Date().toISOString()
+            }]), { status: 200 });
+        }
         return new Response('Not Found', { status: 404 });
       }) as any;
 
@@ -239,12 +304,25 @@ async function runTests() {
       const userId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
       const guestToken = await createGuestToken({ sid: '77777777-7777-7777-7777-777777777777', nick: 'G', exp: Date.now() + 10000, iat: Date.now() });
       
-      globalThis.fetch = (async (url: any) => {
+      globalThis.fetch = (async (url: any, init: any) => {
         const urlStr = url.toString();
         if (urlStr.includes('/auth/v1/user')) return new Response(JSON.stringify({ id: userId }), { status: 200 });
         if (urlStr.includes('/rest/v1/profiles')) return new Response(JSON.stringify([{ nickname: 'User', avatar_url: '👤' }]), { status: 200 });
         if (urlStr.includes('/rest/v1/rooms')) return new Response(JSON.stringify([{ id: ROOM_ID }]), { status: 200 });
-        if (urlStr.includes('/rest/v1/messages')) return new Response(null, { status: 201 });
+        if (urlStr.includes('/rpc/upsert_message')) {
+            const body = JSON.parse(init.body);
+            return new Response(JSON.stringify([{
+                id: body.p_id,
+                room_id: body.p_room_id,
+                sender_user_id: body.p_sender_user_id,
+                sender_guest_id: body.p_sender_guest_id,
+                sender_nickname: body.p_sender_nickname,
+                sender_avatar: body.p_sender_avatar,
+                content: body.p_content,
+                client_nonce: body.p_client_nonce,
+                created_at: new Date().toISOString()
+            }]), { status: 200 });
+        }
         return new Response('Not Found', { status: 404 });
       }) as any;
 
@@ -333,16 +411,22 @@ async function runTests() {
         if (urlStr.includes('/rest/v1/profiles')) return new Response(JSON.stringify([{ nickname: 'N' }]), { status: 200 });
         if (urlStr.includes('/rest/v1/rooms')) return new Response(JSON.stringify([{ id: ROOM_ID }]), { status: 200 });
         
-        // Nonce check: return existing on second call
-        if (urlStr.includes('/rest/v1/messages?client_nonce=')) {
-           if (simulateRetryMatch) {
-             return new Response(JSON.stringify([{ id: firstId, room_id: ROOM_ID, sender_nickname: 'N', content: 'H', created_at: '2026-01-01T00:00:00Z' }]), { status: 200 });
-           }
-           return new Response(JSON.stringify([]), { status: 200 });
-        }
-        
-        if (urlStr.includes('/rest/v1/messages') && init.method === 'POST') {
-          return new Response(null, { status: 201 });
+        if (urlStr.includes('/rpc/upsert_message')) {
+            const body = typeof init?.body === 'string' ? JSON.parse(init.body) : (init?.body || {});
+            if (simulateRetryMatch) {
+               return new Response(JSON.stringify([{ id: firstId, room_id: body.p_room_id, sender_nickname: 'N', content: body.p_content, created_at: '2026-01-01T00:00:00Z' }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
+            return new Response(JSON.stringify([{
+                id: body.p_id,
+                room_id: body.p_room_id,
+                sender_user_id: body.p_sender_user_id,
+                sender_guest_id: body.p_sender_guest_id,
+                sender_nickname: body.p_sender_nickname,
+                sender_avatar: body.p_sender_avatar,
+                content: body.p_content,
+                client_nonce: body.p_client_nonce,
+                created_at: new Date().toISOString()
+            }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
         return new Response('Not Found', { status: 404 });
       }) as any;
@@ -388,8 +472,8 @@ async function runTests() {
         if (urlStr.includes('/rest/v1/profiles')) return new Response(JSON.stringify([{ nickname: 'N' }]));
         if (urlStr.includes('/rest/v1/rooms')) return new Response(JSON.stringify([{ id: ROOM_ID }]));
         
-        // Simulate DB Insert failure
-        if (urlStr.includes('/rest/v1/messages')) return new Response('Persistence Failed', { status: 500 });
+        // Simulate DB Insert failure via RPC
+        if (urlStr.includes('/rpc/upsert_message')) return new Response(JSON.stringify({ message: 'Persistence Failed' }), { status: 500 });
         
         return new Response('Not Found', { status: 404 });
       }) as any;
