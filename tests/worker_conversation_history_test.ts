@@ -97,7 +97,8 @@ async function runWorkerHistoryTests() {
         sender_avatar: newMsg.sender_avatar,
         content: newMsg.content,
         client_nonce: newMsg.client_nonce,
-        created_at: newMsg.created_at
+        created_at: newMsg.created_at,
+        inserted: true
       }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 

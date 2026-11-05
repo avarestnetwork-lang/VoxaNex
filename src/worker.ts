@@ -297,6 +297,15 @@ async function authenticateRequest(
 
   // Registered member priority
   if (memberJwt) {
+    if (!dbEnv.supabaseUrl && !guestSecretInfo.isDevFallback) {
+      return {
+        errorResponse: jsonResponse({
+          success: false,
+          error: 'Server configuration error: Database bindings missing in production.',
+        }, 503)
+      };
+    }
+
     let verifiedUserId: string | null = null;
     if (dbEnv.supabaseUrl) {
       try {
@@ -351,8 +360,8 @@ async function authenticateRequest(
       return {
         errorResponse: jsonResponse({
           success: false,
-          error: 'Unauthorized: Conflicting guest credentials in header and body.',
-        }, 401)
+          error: 'Conflicting guest authentication tokens in header and body.',
+        }, 400)
       };
     }
 
@@ -841,39 +850,8 @@ export default {
             status: 'delivered',
           };
 
-          // 5. Pre-write Nonce Deduplication (Cross-isolate race-risk minimized via DB check)
-          if (baseSupabaseUrl && supabaseServiceKey && clientNonce) {
-             try {
-                const queryUrl = `${baseSupabaseUrl}/rest/v1/messages?client_nonce=eq.${encodeURIComponent(clientNonce)}&select=id,room_id,sender_nickname,content,created_at`;
-                const checkRes = await fetch(queryUrl, {
-                  headers: {
-                    'apikey': supabaseServiceKey,
-                    'Authorization': `Bearer ${supabaseServiceKey}`,
-                  },
-                });
-                if (checkRes.ok) {
-                   const existingRows: any = await checkRes.json();
-                   if (Array.isArray(existingRows) && existingRows.length > 0) {
-                      const m = existingRows[0];
-                      return jsonResponse({
-                        success: true,
-                        message: {
-                          id: m.id,
-                          roomId: m.room_id,
-                          senderNickname: m.sender_nickname,
-                          content: m.content,
-                          timestamp: m.created_at,
-                          status: 'delivered'
-                        }
-                      });
-                   }
-                }
-             } catch (err) {
-               console.warn('[Worker] Pre-write deduplication query failed:', err);
-             }
-          }
-
-          // 6. Atomic Persistence-before-Broadcast
+          // 5. Atomic Persistence-before-Broadcast
+          let isInserted = true;
           if (baseSupabaseUrl && supabaseServiceKey) {
              const result = await databaseService.atomicMessage({
                 id: message.id,
@@ -883,7 +861,10 @@ export default {
                 senderNickname: verifiedNickname,
                 senderAvatar: verifiedAvatar,
                 content: cleanContent,
-                clientNonce: clientNonce
+                clientNonce: clientNonce,
+                mediaUrl,
+                mediaType,
+                linkPreview
              }, supabaseClient);
 
              if (!result.success) {
@@ -893,13 +874,15 @@ export default {
                }, 500);
              }
 
-             // Use the confirmed message from DB (handles deduplication)
+             isInserted = result.inserted;
+
+             // Use the confirmed canonical message from DB
              if (result.message) {
                message.id = result.message.id;
                message.timestamp = result.message.timestamp;
-               
-               // If it's a duplicate, result.message might be different from our local 'message'
-               // but they should be logically equivalent for the broadcast.
+               message.content = result.message.content;
+               message.senderNickname = result.message.senderNickname;
+               message.senderAvatar = result.message.senderAvatar;
              }
           } else if (!guestSecretInfo.isDevFallback) {
             return jsonResponse({
@@ -907,19 +890,6 @@ export default {
               error: 'Server configuration error: Database bindings missing in production.'
             }, 503);
           }
-
-          // 7. Update Local Map & Broadcast (Only after successful persistence)
-          if (!roomMessages.has(roomId)) {
-            roomMessages.set(roomId, []);
-          }
-          const list = roomMessages.get(roomId)!;
-
-          list.push(message);
-          if (list.length > 500) {
-            list.shift();
-          }
-
-          broadcastToRoom(roomId, 'new_message', message);
 
           const rtDiag: any = {
               platform: 'Cloudflare Worker',
@@ -929,17 +899,32 @@ export default {
               senderType: isGuestCaller ? 'guest' : 'registered'
           };
 
-          const rtPromise = (async () => {
-              if (!supabaseClient) return;
-              try {
-                  await databaseService.broadcastMessage(roomId, message as any, supabaseClient);
-              } catch (e: any) {
-                  console.warn(`[Worker] Supabase RT broadcast failed for room ${roomId}:`, e);
-              }
-          })();
+          // 6. Update Local Map & Broadcast (Only for newly inserted messages)
+          if (isInserted) {
+            if (!roomMessages.has(roomId)) {
+              roomMessages.set(roomId, []);
+            }
+            const list = roomMessages.get(roomId)!;
 
-          if (ctx?.waitUntil) {
-              ctx.waitUntil(rtPromise);
+            list.push(message);
+            if (list.length > 500) {
+              list.shift();
+            }
+
+            broadcastToRoom(roomId, 'new_message', message);
+
+            const rtPromise = (async () => {
+                if (!supabaseClient) return;
+                try {
+                    await databaseService.broadcastMessage(roomId, message as any, supabaseClient);
+                } catch (e: any) {
+                    console.warn(`[Worker] Supabase RT broadcast failed for room ${roomId}:`, e);
+                }
+            })();
+
+            if (ctx?.waitUntil) {
+                ctx.waitUntil(rtPromise);
+            }
           }
 
           return jsonResponse({
@@ -1871,6 +1856,8 @@ export default {
           };
 
           // 5. Atomic Persistence
+          // 5. Atomic Persistence
+          let isInserted = true;
           if (baseSupabaseUrl && supabaseServiceKey) {
              // Ensure conversation exists
              if (convId.startsWith('conv_')) {
@@ -1894,19 +1881,34 @@ export default {
                 senderNickname: verifiedNickname,
                 senderAvatar: verifiedAvatar,
                 content: cleanContent,
-                clientNonce: clientNonce
+                clientNonce: clientNonce,
+                mediaUrl,
+                mediaType,
+                linkPreview
              }, supabaseClient);
 
              if (!result.success) {
                 return jsonResponse({ success: false, error: result.error || 'Database DM persistence failed.' }, 500);
              }
 
+             isInserted = result.inserted;
+
              if (result.message) {
                message.id = result.message.id;
                message.timestamp = result.message.timestamp;
+               message.content = result.message.content;
+               message.senderNickname = result.message.senderNickname;
+               message.senderAvatar = result.message.senderAvatar;
              }
+          } else if (!guestSecretInfo.isDevFallback) {
+             return jsonResponse({
+               success: false,
+               error: 'Server configuration error: Database bindings missing in production.'
+             }, 503);
           }
-              // 7. Broadcast
+
+          // 6. Broadcast and Local State (Only on genuine new insertions)
+          if (isInserted) {
               try {
                   broadcastToConversation(convId, 'new_dm', message);
                   broadcastToUser(resolvedRecipientId, 'incoming_dm', { conversationId: convId, message });
@@ -1938,12 +1940,15 @@ export default {
               }
               const localList = conversationMessages.get(convId)!;
               localList.push(message);
-              return jsonResponse({ success: true, message });
-
-            } catch (err: any) {
-              return jsonResponse({ success: false, error: 'Failed to deliver message: ' + (err.message || 'Unknown error') }, 400);
-            }
+              if (localList.length > 500) localList.shift();
           }
+
+          return jsonResponse({ success: true, message });
+
+        } catch (err: any) {
+          return jsonResponse({ success: false, error: 'Failed to deliver message: ' + (err.message || 'Unknown error') }, 400);
+        }
+      }
         }
 
     // POST /api/chat/conversations/:id/typing

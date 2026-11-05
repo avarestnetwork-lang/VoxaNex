@@ -281,9 +281,12 @@ export const databaseService = {
     senderAvatar: string;
     content: string;
     clientNonce?: string;
-  }, overrideClient?: any): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
+    mediaUrl?: string;
+    mediaType?: 'gif' | 'image';
+    linkPreview?: any;
+  }, overrideClient?: any): Promise<{ success: boolean; inserted: boolean; message?: ChatMessage; error?: string }> {
     const supabase = overrideClient || getSupabaseClient();
-    if (!supabase) return { success: false, error: 'Supabase client not configured' };
+    if (!supabase) return { success: false, inserted: false, error: 'Supabase client not configured' };
 
     try {
       let realRoomId = null;
@@ -301,16 +304,21 @@ export const databaseService = {
         p_sender_nickname: params.senderNickname,
         p_sender_avatar: params.senderAvatar,
         p_content: params.content,
-        p_client_nonce: params.clientNonce || null
+        p_client_nonce: params.clientNonce || null,
+        p_media_url: params.mediaUrl || null,
+        p_media_type: params.mediaType || null,
+        p_link_preview: params.linkPreview || null
       });
 
       if (error) {
         console.error('[DatabaseService] upsert_message error:', error);
-        return { success: false, error: error.message };
+        return { success: false, inserted: false, error: error.message };
       }
 
       const row = Array.isArray(data) ? data[0] : data;
-      if (!row) return { success: false, error: 'Database did not return the persisted message.' };
+      if (!row) return { success: false, inserted: false, error: 'Database did not return the persisted message.' };
+
+      const wasInserted = row.inserted === true || row.inserted === 'true';
 
       const message: ChatMessage = {
         id: row.id,
@@ -320,20 +328,26 @@ export const databaseService = {
         senderNickname: row.sender_nickname,
         senderAvatar: row.sender_avatar,
         content: row.content,
+        mediaUrl: row.media_url || params.mediaUrl,
+        mediaType: row.media_type || params.mediaType,
+        linkPreview: row.link_preview || params.linkPreview,
         timestamp: row.created_at,
         clientNonce: row.client_nonce,
+        isSystem: row.is_system,
         status: 'delivered'
       };
 
-      return { success: true, message };
+      return { success: true, inserted: wasInserted, message };
     } catch (err: any) {
       console.error('[DatabaseService] atomicMessage exception:', err);
-      return { success: false, error: err.message || 'Internal database error' };
+      return { success: false, inserted: false, error: err.message || 'Internal database error' };
     }
   },
 
   /**
-   * Send a message to a public room, persisting to Supabase and broadcasting
+   * Send a message to a public room, persisting to Supabase and broadcasting.
+   * Fails closed: if persistence fails or client is unavailable, never creates an
+   * unpersisted in-memory message and never broadcasts.
    */
   async sendRoomMessage(params: {
     roomId: string;
@@ -348,42 +362,35 @@ export const databaseService = {
     clientNonce?: string;
   }): Promise<ChatMessage | null> {
     const supabase = getSupabaseClient();
-    const msgId = params.id || crypto.randomUUID();
-    
-    if (supabase) {
-      const result = await this.atomicMessage({
-        id: msgId,
-        roomId: params.roomId,
-        senderUserId: params.senderUserId,
-        senderGuestId: params.senderGuestId,
-        senderNickname: params.senderNickname,
-        senderAvatar: params.senderAvatar,
-        content: params.content,
-        clientNonce: params.clientNonce
-      }, supabase);
-
-      if (result.success && result.message) {
-        await this.broadcastMessage(params.roomId, result.message);
-        return result.message;
-      }
+    if (!supabase) {
+      console.error('[DatabaseService] sendRoomMessage failed: Supabase client unavailable.');
+      return null;
     }
 
-    const newMsg: ChatMessage = {
+    const msgId = params.id || crypto.randomUUID();
+    const result = await this.atomicMessage({
       id: msgId,
       roomId: params.roomId,
-      senderId: params.senderUserId || params.senderGuestId || 'usr',
+      senderUserId: params.senderUserId,
+      senderGuestId: params.senderGuestId,
       senderNickname: params.senderNickname,
       senderAvatar: params.senderAvatar,
       content: params.content,
-      mediaUrl: params.mediaUrl,
-      mediaType: params.mediaType,
       clientNonce: params.clientNonce,
-      timestamp: new Date().toISOString(),
-      status: 'delivered',
-    };
-    
-    await this.broadcastMessage(params.roomId, newMsg);
-    return newMsg;
+      mediaUrl: params.mediaUrl,
+      mediaType: params.mediaType
+    }, supabase);
+
+    if (result.success && result.message) {
+      // Only broadcast on genuine fresh insertions, suppressing duplicate broadcasts
+      if (result.inserted) {
+        await this.broadcastMessage(params.roomId, result.message);
+      }
+      return result.message;
+    }
+
+    console.error('[DatabaseService] sendRoomMessage persistence failed:', result.error);
+    return null;
   },
 
   /**
