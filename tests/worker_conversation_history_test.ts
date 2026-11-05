@@ -154,8 +154,12 @@ async function runWorkerHistoryTests() {
         return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       
-      // Default: User is a participant
-      return new Response(JSON.stringify([{ id: 'part_1' }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify([
+        { id: 'part_1', guest_id: idA, user_id: null },
+        { id: 'part_2', guest_id: idB, user_id: null },
+        { id: 'part_3', user_id: regMember1Id, guest_id: null },
+        { id: 'part_4', user_id: regMember2Id, guest_id: null },
+      ]), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
     // 5. Default Pass-through/Success

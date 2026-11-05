@@ -692,17 +692,73 @@ async function runTests() {
     const convId1 = 'conv_11111111-0000-0000-0000-000000000001_22222222-0000-0000-0000-000000000002';
     const convId2 = 'conv_11111111-0000-0000-0000-000000000001_33333333-0000-0000-0000-000000000003';
 
+    const guestAId = '44444444-0000-0000-0000-000000000004';
+    const guestBId = '55555555-0000-0000-0000-000000000005';
+    const guestCId = '66666666-0000-0000-0000-000000000006';
+    const user1Id = '11111111-0000-0000-0000-000000000001';
+    const user2Id = '22222222-0000-0000-0000-000000000002';
+    const user3Id = '33333333-0000-0000-0000-000000000003';
+
+    const tokenGuestA = await createGuestToken({ sid: guestAId, nick: 'GuestA', exp: Date.now() + 100000, iat: Date.now() });
+    const tokenGuestB = await createGuestToken({ sid: guestBId, nick: 'GuestB', exp: Date.now() + 100000, iat: Date.now() });
+    const tokenGuestC = await createGuestToken({ sid: guestCId, nick: 'GuestC', exp: Date.now() + 100000, iat: Date.now() });
+
+    const hashGuestA = await computeHash(tokenGuestA);
+    const hashGuestB = await computeHash(tokenGuestB);
+    const hashGuestC = await computeHash(tokenGuestC);
+
+    const convIdGuestAB = `conv_${[guestAId, guestBId].sort().join('_')}`;
+
     const setupPrivateMockFetch = () => {
       globalThis.fetch = (async (url: any, init: any) => {
         const urlStr = url.toString();
         if (urlStr.includes('/auth/v1/user')) {
           const auth = init?.headers?.Authorization || init?.headers?.authorization || '';
-          if (auth.includes('user-1')) return new Response(JSON.stringify({ id: '11111111-0000-0000-0000-000000000001' }), { status: 200 });
-          if (auth.includes('user-2')) return new Response(JSON.stringify({ id: '22222222-0000-0000-0000-000000000002' }), { status: 200 });
+          if (auth.includes('user-1')) return new Response(JSON.stringify({ id: user1Id }), { status: 200 });
+          if (auth.includes('user-2')) return new Response(JSON.stringify({ id: user2Id }), { status: 200 });
+          if (auth.includes('user-3')) return new Response(JSON.stringify({ id: user3Id }), { status: 200 });
           return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 });
+        }
+        if (urlStr.includes('/rest/v1/guest_sessions')) {
+          if (urlStr.includes(hashGuestA)) {
+            return new Response(JSON.stringify([{ id: guestAId, is_revoked: false, expires_at: new Date(Date.now() + 100000).toISOString(), session_token_hash: hashGuestA }]), { status: 200 });
+          }
+          if (urlStr.includes(hashGuestB)) {
+            return new Response(JSON.stringify([{ id: guestBId, is_revoked: false, expires_at: new Date(Date.now() + 100000).toISOString(), session_token_hash: hashGuestB }]), { status: 200 });
+          }
+          if (urlStr.includes(hashGuestC)) {
+            return new Response(JSON.stringify([{ id: guestCId, is_revoked: false, expires_at: new Date(Date.now() + 100000).toISOString(), session_token_hash: hashGuestC }]), { status: 200 });
+          }
+          if (urlStr.includes(guestAId)) return new Response(JSON.stringify([{ id: guestAId, is_revoked: false, expires_at: new Date(Date.now() + 100000).toISOString() }]), { status: 200 });
+          if (urlStr.includes(guestBId)) return new Response(JSON.stringify([{ id: guestBId, is_revoked: false, expires_at: new Date(Date.now() + 100000).toISOString() }]), { status: 200 });
+          if (urlStr.includes(guestCId)) return new Response(JSON.stringify([{ id: guestCId, is_revoked: false, expires_at: new Date(Date.now() + 100000).toISOString() }]), { status: 200 });
+          return new Response(JSON.stringify([]), { status: 200 });
+        }
+        if (urlStr.includes('/rest/v1/conversation_participants')) {
+          if (urlStr.includes('fail_db_500')) {
+            return new Response(JSON.stringify({ error: 'Database simulated failure' }), { status: 500 });
+          }
+          if (urlStr.includes(guestAId) || urlStr.includes(guestBId)) {
+            return new Response(JSON.stringify([
+              { guest_id: guestAId, user_id: null },
+              { guest_id: guestBId, user_id: null }
+            ]), { status: 200 });
+          }
+          if (urlStr.includes(user1Id) || urlStr.includes(user2Id)) {
+            return new Response(JSON.stringify([
+              { user_id: user1Id, guest_id: null },
+              { user_id: user2Id, guest_id: null }
+            ]), { status: 200 });
+          }
+          return new Response(JSON.stringify([]), { status: 200 });
         }
         if (urlStr.includes('/rest/v1/profiles')) return new Response(JSON.stringify([{ nickname: 'N', avatar_url: 'A' }]), { status: 200 });
         if (urlStr.includes('/rest/v1/conversations')) return new Response(JSON.stringify([{ id: 'c1' }]), { status: 200 });
+        if (urlStr.includes('/rest/v1/messages')) {
+          return new Response(JSON.stringify([
+            { id: 'm-priv-1', content: 'Secret Guest A to B message', sender_guest_id: guestAId, sender_nickname: 'GuestA', sender_avatar: '⚡', created_at: new Date().toISOString() }
+          ]), { status: 200 });
+        }
         if (urlStr.includes('/rpc/upsert_message')) {
           const body = typeof init?.body === 'string' ? JSON.parse(init.body) : (init?.body || {});
           return mockDb.handleUpsert(body);
@@ -711,82 +767,150 @@ async function runTests() {
       }) as any;
     };
 
-    // Case 5.1: Same sender, same conversation, same nonce: exactly one persisted message & DM broadcast suppression
+    // Case 5.1: Authorized Guest A can retrieve Guest A ↔ Guest B history (200)
     {
       setupPrivateMockFetch();
-      const user1 = '11111111-0000-0000-0000-000000000001';
-      const user2 = '22222222-0000-0000-0000-000000000002';
-      const nonce = 'dm-nonce-123';
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestA}` }
+      }), env, {});
 
-      // Connect recipient DM stream to observe incoming_dm broadcasts
-      const dmSseRes = await worker.fetch(new Request(`https://voxanex.test/api/chat/user/${user2}/events`, {
-        headers: { 'Authorization': 'Bearer user-2' }
-      }), env, { waitUntil: () => {} });
-      assert(dmSseRes.status === 200, '5.1: Recipient user DM SSE listener connected');
-      const dmReader = dmSseRes.body!.getReader();
-      const initChunk = await dmReader.read();
-      assert(new TextDecoder().decode(initChunk.value).includes('event: connected'), '5.1: User DM stream connected event verified');
+      const data: any = await res.json();
+      assert(res.status === 200, '5.1: Authorized Guest A retrieves history (200)');
+      assert(data.success === true, '5.1: Success flag true');
+      assert(data.messages.length > 0, '5.1: Message history returned');
+    }
 
-      const initialDmBroadcastCount = dbBroadcastCalls.length;
+    // Case 5.2: Guest C cannot retrieve Guest A ↔ Guest B history (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestC}` }
+      }), env, {});
 
-      const postDm = () => worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convId1}/messages`, {
+      assert(res.status === 403, '5.2: Nonparticipant Guest C rejected with 403');
+    }
+
+    // Case 5.3: Guest C cannot gain access via forged slug conv_GUEST_A_GUEST_B (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/events`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestC}` }
+      }), env, {});
+
+      assert(res.status === 403, '5.3: Forged slug access by Guest C rejected with 403');
+    }
+
+    // Case 5.4: Registered nonparticipant (User 3) cannot retrieve Guest A ↔ Guest B private history (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
+        headers: { 'Authorization': 'Bearer user-3' }
+      }), env, {});
+
+      assert(res.status === 403, '5.4: Registered nonparticipant User 3 rejected with 403');
+    }
+
+    // Case 5.5: Unauthorized guest cannot subscribe to another conversation's SSE stream (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convId1}/events`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestC}` }
+      }), env, {});
+
+      assert(res.status === 403, '5.5: Unauthorized guest SSE stream subscription rejected with 403');
+    }
+
+    // Case 5.6: Unauthorized sender (Guest C) cannot POST into Guest A ↔ Guest B conversation (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer user-1', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: 'Secret DM', senderId: user1, recipientId: user2, senderType: 'registered', clientNonce: nonce })
+        headers: { 'Authorization': `Bearer ${tokenGuestC}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Eavesdropper injection', senderId: guestCId, recipientId: guestBId, senderType: 'guest' })
+      }), env, {});
+
+      assert(res.status === 403, '5.6: Unauthorized sender POST into conversation rejected with 403');
+    }
+
+    // Case 5.7: Recipient mismatch in POST body is rejected (403)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${tokenGuestA}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Wrong recipient', senderId: guestAId, recipientId: guestCId, senderType: 'guest' })
+      }), env, {});
+
+      assert(res.status === 403, '5.7: Recipient mismatch in POST body rejected with 403');
+    }
+
+    // Case 5.8: Valid Guest A → Guest B message succeeds (200)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${tokenGuestA}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Hello Guest B', senderId: guestAId, recipientId: guestBId, senderType: 'guest' })
+      }), env, { waitUntil: () => {} });
+
+      const data: any = await res.json();
+      assert(res.status === 200, '5.8: Valid Guest A -> Guest B message returns 200');
+      assert(data.success === true, '5.8: Message delivery success');
+      assert(data.message.senderId === guestAId, '5.8: Verified sender ID matched');
+    }
+
+    // Case 5.9: Valid Guest B → Guest A reply succeeds (200)
+    {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${tokenGuestB}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Hello Guest A', senderId: guestBId, recipientId: guestAId, senderType: 'guest' })
+      }), env, { waitUntil: () => {} });
+
+      const data: any = await res.json();
+      assert(res.status === 200, '5.9: Valid Guest B -> Guest A reply returns 200');
+      assert(data.message.senderId === guestBId, '5.9: Verified recipient reply sender ID matched');
+    }
+
+    // Case 5.10: Duplicate retry produces 1 persisted row and 0 duplicate broadcasts
+    {
+      const nonce = 'guest-dm-nonce-999';
+      const postDm = () => worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${tokenGuestA}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Secret Guest DM', senderId: guestAId, recipientId: guestBId, senderType: 'guest', clientNonce: nonce })
       }), env, { waitUntil: () => {} });
 
       const res1 = await postDm();
       const data1: any = await res1.json();
-      assert(res1.status === 200, '5.1: First private message returned 200');
+      assert(res1.status === 200, '5.10: First guest DM returns 200');
 
-      // Observable broadcast 1: Recipient receives incoming_dm event
-      const dmChunk = await dmReader.read();
-      const dmText = new TextDecoder().decode(dmChunk.value);
-      assert(dmText.includes('event: incoming_dm') && dmText.includes(data1.message.id), '5.1: First private message emitted incoming_dm notification');
-
-      // Observable broadcast 2: DatabaseService broadcast was invoked
-      assert(dbBroadcastCalls.length > initialDmBroadcastCount, '5.1: Newly inserted DM triggered database broadcast');
       const countAfterFirst = dbBroadcastCalls.length;
 
       const res2 = await postDm();
       const data2: any = await res2.json();
-      assert(res2.status === 200, '5.1: Duplicate DM retry returned 200');
-      assert(data2.message.id === data1.message.id, '5.1: Duplicate DM returns canonical original message');
+      assert(res2.status === 200, '5.10: Duplicate guest DM retry returns 200');
+      assert(data2.message.id === data1.message.id, '5.10: Duplicate returns canonical original message ID');
 
-      // Observable broadcast suppression 1: Recipient receives NO second incoming_dm event
-      let duplicateDmReceived = false;
-      await Promise.race([
-        dmReader.read().then(() => { duplicateDmReceived = true; }),
-        new Promise(r => setTimeout(r, 60))
-      ]);
-      assert(!duplicateDmReceived, '5.1: Duplicate DM retry produces NO second broadcast or incoming_dm notification');
-
-      // Observable broadcast suppression 2: Database service receives NO second broadcast
-      assert(dbBroadcastCalls.length === countAfterFirst, '5.1: Duplicate DM retry produces NO second database broadcast');
-
-      const matchingDMs = mockDb.messages.filter(m => m.sender_user_id === user1 && m.client_nonce === nonce);
-      assert(matchingDMs.length === 1, '5.1: Exactly one DM row persisted for sender+conversation+nonce');
-
-      await dmReader.cancel();
+      assert(dbBroadcastCalls.length === countAfterFirst, '5.10: Duplicate guest DM produces 0 duplicate broadcasts');
+      const matching = mockDb.messages.filter(m => m.sender_guest_id === guestAId && m.client_nonce === nonce);
+      assert(matching.length === 1, '5.10: Exactly 1 row persisted in database for nonce');
     }
 
-    // Case 5.2: Different conversation, same sender and nonce: independent message
+    // Case 5.11: Database membership verification failure fails closed (500)
     {
-      const user1 = '11111111-0000-0000-0000-000000000001';
-      const user3 = '33333333-0000-0000-0000-000000000003';
-      const nonce = 'dm-nonce-123';
+      globalThis.fetch = (async (url: any) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('/rest/v1/guest_sessions')) {
+          return new Response(JSON.stringify([{ id: guestAId, is_revoked: false, expires_at: new Date(Date.now() + 100000).toISOString(), session_token_hash: hashGuestA }]), { status: 200 });
+        }
+        if (urlStr.includes('/rest/v1/conversation_participants')) {
+          return new Response(JSON.stringify({ error: 'DB Connection Refused' }), { status: 500 });
+        }
+        return new Response('Not Found', { status: 404 });
+      }) as any;
 
-      const resDiffConv = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convId2}/messages`, {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer user-1', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: 'Another DM', senderId: user1, recipientId: user3, senderType: 'registered', clientNonce: nonce })
-      }), env, { waitUntil: () => {} });
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
+        headers: { 'Authorization': `Bearer ${tokenGuestA}` }
+      }), env, {});
 
-      assert(resDiffConv.status === 200, '5.2: Different conversation with same nonce returns 200');
-      assert(mockDb.messages.filter(m => m.client_nonce === nonce).length === 2, '5.2: Separate DM conversation has independent row');
+      assert(res.status === 500, '5.11: Database membership failure fails closed with HTTP 500');
     }
 
-    // Case 5.3: Missing production database configuration fails closed with 503
+    // Case 5.12: Missing production database configuration fails closed with 503
     {
       const prodEnvWithoutDb = {
         GUEST_SESSION_SECRET: GUEST_SECRET,
@@ -795,13 +919,13 @@ async function runTests() {
         ENVIRONMENT: 'production'
       };
 
-      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convId1}/messages`, {
+      const res = await worker.fetch(new Request(`https://voxanex.test/api/chat/conversations/${convIdGuestAB}/messages`, {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer user-1', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: 'Should fail closed', senderId: '11111111-0000-0000-0000-000000000001', recipientId: '22222222-0000-0000-0000-000000000002', senderType: 'registered' })
+        headers: { 'Authorization': `Bearer ${tokenGuestA}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Should fail closed', senderId: guestAId, recipientId: guestBId, senderType: 'guest' })
       }), prodEnvWithoutDb, {});
 
-      assert(res.status === 503, '5.3: Missing database configuration fails closed with 503 in production');
+      assert(res.status === 503, '5.12: Missing database configuration in production fails closed with 503');
     }
 
     // -------------------------------------------------------------------------

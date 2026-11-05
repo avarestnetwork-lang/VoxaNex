@@ -114,7 +114,7 @@ async function verifyGuestToken(
   token: string | undefined,
   secretInfo: { secret: string | null; isDevFallback?: boolean },
   dbEnv?: { supabaseUrl?: string; supabaseServiceKey?: string }
-): Promise<{ valid: boolean; session?: GuestSession; reason?: string }> {
+): Promise<{ valid: boolean; session?: GuestSession; reason?: string; isConfigError?: boolean }> {
   if (!secretInfo.secret) {
     return { valid: false, reason: 'Server configuration error: GUEST_SESSION_SECRET is missing.' };
   }
@@ -189,6 +189,9 @@ async function verifyGuestToken(
 
     // Mandatory durable revocation & existence verification against public.guest_sessions
     if (!dbEnv?.supabaseUrl || !dbEnv?.supabaseServiceKey) {
+      if (!secretInfo.isDevFallback) {
+        return { valid: false, isConfigError: true, reason: 'Server configuration error: Database bindings missing in production.' };
+      }
       return { valid: false, reason: 'Database configuration missing for guest session verification.' };
     }
 
@@ -367,11 +370,14 @@ async function authenticateRequest(
 
     const authCheck = await verifyGuestToken(finalGuestToken, guestSecretInfo, dbEnv);
     if (!authCheck.valid || !authCheck.session) {
+      const status = (authCheck as any).isConfigError ? 503 : 401;
       return {
         errorResponse: jsonResponse({
           success: false,
-          error: `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}`,
-        }, 401)
+          error: (authCheck as any).isConfigError
+            ? authCheck.reason
+            : `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}`,
+        }, status)
       };
     }
     return { verifiedUserId: authCheck.session.id, isGuestCaller: true, guestSession: authCheck.session };
@@ -1378,10 +1384,224 @@ export default {
       }
     }
 
+async function authorizeConversationAccess(
+  convIdParam: string,
+  verifiedUserId: string,
+  isGuestCaller: boolean,
+  dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string },
+  guestSecretInfo: { isDevFallback: boolean }
+): Promise<
+  | { authorized: true; dbConvId: string; convSlug: string; recipientId: string }
+  | { authorized: false; errorResponse: Response }
+> {
+  const uuidFullRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let convSlug: string = '';
+  let dbConvId: string = '';
+  let recipientId: string = '';
+
+  if (convIdParam.startsWith('conv_')) {
+    const idWithoutPrefix = convIdParam.slice('conv_'.length);
+    const parts = idWithoutPrefix.split('_');
+
+    if (parts.length !== 2) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Invalid conversation slug format.' }, 400),
+      };
+    }
+
+    const [id1, id2] = parts;
+    if (!uuidFullRegex.test(id1) || !uuidFullRegex.test(id2)) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Invalid participant identifier in conversation slug.' }, 400),
+      };
+    }
+
+    if (id1 === id2) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Invalid conversation slug: Duplicate participant identifiers.' }, 400),
+      };
+    }
+
+    if (id1 !== verifiedUserId && id2 !== verifiedUserId) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Authenticated caller is not a participant in this conversation slug.' }, 403),
+      };
+    }
+
+    recipientId = id1 === verifiedUserId ? id2 : id1;
+    convSlug = `conv_${[id1, id2].sort().join('_')}`;
+    dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, recipientId);
+  } else if (uuidFullRegex.test(convIdParam)) {
+    dbConvId = convIdParam;
+  } else {
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({ success: false, error: 'Invalid conversation identifier format.' }, 400),
+    };
+  }
+
+  // Database verification
+  if (dbEnv.supabaseUrl && dbEnv.supabaseServiceKey) {
+    try {
+      const partsUrl = `${dbEnv.supabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(dbConvId)}&select=user_id,guest_id`;
+      const partsRes = await fetch(partsUrl, {
+        headers: {
+          'apikey': dbEnv.supabaseServiceKey,
+          'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+        },
+      });
+
+      if (!partsRes.ok) {
+        console.error(`[Worker] Participant lookup HTTP error ${partsRes.status}`);
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: `Database error verifying membership (HTTP ${partsRes.status}).` }, 500),
+        };
+      }
+
+      const rows: any = await partsRes.json().catch(() => null);
+      if (!Array.isArray(rows)) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Database error parsing participant records.' }, 500),
+        };
+      }
+
+      let callerPresent = false;
+      let dbRecipientId: string | null = null;
+
+      for (const row of rows) {
+        const rowId = row.user_id || row.guest_id;
+        if (rowId === verifiedUserId) {
+          callerPresent = true;
+        } else if (rowId) {
+          dbRecipientId = rowId;
+        }
+      }
+
+      if (callerPresent) {
+        if (!recipientId && dbRecipientId) {
+          recipientId = dbRecipientId;
+        }
+        if (!convSlug && recipientId) {
+          convSlug = `conv_${[verifiedUserId, recipientId].sort().join('_')}`;
+        }
+        return { authorized: true, dbConvId, convSlug, recipientId };
+      }
+
+      // If participants exist for this conversation but caller is not among them: forbidden!
+      if (rows.length > 0 && !callerPresent) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Authenticated caller is not a participant in this conversation.' }, 403),
+        };
+      }
+
+      // If rows.length === 0, check partner and lazily initialize conversation & participants
+      if (recipientId) {
+        let partnerValid = false;
+        const gRes = await fetch(
+          `${dbEnv.supabaseUrl}/rest/v1/guest_sessions?id=eq.${encodeURIComponent(recipientId)}&select=id,is_revoked,expires_at`,
+          { headers: { apikey: dbEnv.supabaseServiceKey, Authorization: `Bearer ${dbEnv.supabaseServiceKey}` } }
+        );
+        if (gRes.ok) {
+          const gRows: any = await gRes.json().catch(() => []);
+          if (Array.isArray(gRows) && gRows.length > 0) {
+            const g = gRows[0];
+            const exp = g.expires_at ? new Date(g.expires_at).getTime() : NaN;
+            if (!g.is_revoked && Number.isFinite(exp) && Date.now() < exp) {
+              partnerValid = true;
+            }
+          }
+        }
+        if (!partnerValid) {
+          const pRes = await fetch(
+            `${dbEnv.supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(recipientId)}&select=id`,
+            { headers: { apikey: dbEnv.supabaseServiceKey, Authorization: `Bearer ${dbEnv.supabaseServiceKey}` } }
+          );
+          if (pRes.ok) {
+            const pRows: any = await pRes.json().catch(() => []);
+            if (Array.isArray(pRows) && pRows.length > 0) {
+              partnerValid = true;
+            }
+          }
+        }
+
+        if (partnerValid) {
+          await fetch(`${dbEnv.supabaseUrl}/rest/v1/conversations`, {
+            method: 'POST',
+            headers: {
+              apikey: dbEnv.supabaseServiceKey,
+              Authorization: `Bearer ${dbEnv.supabaseServiceKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'resolution=merge-duplicates',
+            },
+            body: JSON.stringify({ id: dbConvId, type: 'direct' }),
+          }).catch(() => {});
+
+          const callerPayload = isGuestCaller
+            ? { conversation_id: dbConvId, guest_id: verifiedUserId }
+            : { conversation_id: dbConvId, user_id: verifiedUserId };
+
+          await fetch(`${dbEnv.supabaseUrl}/rest/v1/conversation_participants`, {
+            method: 'POST',
+            headers: {
+              apikey: dbEnv.supabaseServiceKey,
+              Authorization: `Bearer ${dbEnv.supabaseServiceKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'resolution=merge-duplicates',
+            },
+            body: JSON.stringify(callerPayload),
+          }).catch(() => {});
+
+          const recheckUrl = `${dbEnv.supabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(dbConvId)}&${isGuestCaller ? 'guest_id' : 'user_id'}=eq.${encodeURIComponent(verifiedUserId)}&select=id`;
+          const recheckRes = await fetch(recheckUrl, {
+            headers: { apikey: dbEnv.supabaseServiceKey, Authorization: `Bearer ${dbEnv.supabaseServiceKey}` },
+          });
+          if (recheckRes.ok) {
+            const recheckRows: any = await recheckRes.json().catch(() => []);
+            if (Array.isArray(recheckRows) && recheckRows.length > 0) {
+              return { authorized: true, dbConvId, convSlug, recipientId };
+            }
+          }
+        }
+      }
+
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Not a member of this conversation.' }, 403),
+      };
+    } catch (err) {
+      console.error('[Worker] DB authorization exception:', err);
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Database authorization error.' }, 500),
+      };
+    }
+  } else if (!guestSecretInfo.isDevFallback) {
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({ success: false, error: 'Server configuration error: Database bindings missing in production.' }, 503),
+    };
+  } else {
+    if (convSlug && (convSlug.includes(verifiedUserId) || dbConvId.includes(verifiedUserId))) {
+      return { authorized: true, dbConvId, convSlug, recipientId };
+    }
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Not a member of this conversation.' }, 403),
+    };
+  }
+}
+
     // GET /api/chat/conversations/:id/events: SSE Stream for conversation
     const convEventsMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/events\/?$/);
     if (convEventsMatch && request.method === 'GET') {
-      const convId = decodeURIComponent(convEventsMatch[1]);
+      const convIdParam = decodeURIComponent(convEventsMatch[1]);
 
       const authResult = await authenticateRequest(
         request,
@@ -1398,104 +1618,20 @@ export default {
       const verifiedUserId = authResult.verifiedUserId;
       const isGuestCaller = authResult.isGuestCaller;
 
-      // Authorize conversation membership strictly using verified identity
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      let dbConvId: string | null = null;
+      const authAccess = await authorizeConversationAccess(
+        convIdParam,
+        verifiedUserId,
+        isGuestCaller,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+        guestSecretInfo
+      );
 
-      if (convId.startsWith('conv_')) {
-        const idWithoutPrefix = convId.slice('conv_'.length);
-        const parts = idWithoutPrefix.split('_');
-
-        if (parts.length !== 2) {
-          return jsonResponse({
-            success: false,
-            error: 'Invalid conversation slug format.',
-          }, 400);
-        }
-
-        const [id1, id2] = parts;
-
-        if (!uuidRegex.test(id1) || !uuidRegex.test(id2)) {
-          return jsonResponse({
-            success: false,
-            error: 'Invalid participant identifier in conversation slug.',
-          }, 400);
-        }
-
-        if (id1 === id2) {
-          return jsonResponse({
-            success: false,
-            error: 'Invalid conversation slug: Duplicate participant identifiers.',
-          }, 400);
-        }
-
-        if (id1 !== verifiedUserId && id2 !== verifiedUserId) {
-          return jsonResponse({
-            success: false,
-            error: 'Unauthorized: Authenticated caller is not a participant in this conversation slug.',
-          }, 403);
-        }
-
-        const partnerId = (id1 === verifiedUserId) ? id2 : id1;
-        dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, partnerId);
-      } else if (uuidRegex.test(convId)) {
-        dbConvId = convId;
-      } else {
-        return jsonResponse({
-          success: false,
-          error: 'Invalid conversation identifier format.',
-        }, 400);
+      if (!authAccess.authorized) {
+        return authAccess.errorResponse;
       }
 
-      if (!dbConvId || !uuidRegex.test(dbConvId)) {
-        return jsonResponse({
-          success: false,
-          error: 'Invalid or unresolved conversation identifier.',
-        }, 400);
-      }
-
-      let isMember = false;
-
-        if (baseSupabaseUrl && supabaseServiceKey) {
-          try {
-            const memberFilter = isGuestCaller
-              ? `guest_id=eq.${encodeURIComponent(verifiedUserId)}`
-              : `user_id=eq.${encodeURIComponent(verifiedUserId)}`;
-
-            if (isGuestCaller) {
-                // Compatibility shim for guest slugs
-                if (convId.includes(verifiedUserId)) {
-                    isMember = true;
-                }
-            } else {
-                const participantUrl = `${baseSupabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(dbConvId)}&${memberFilter}&select=id`;
-                const partRes = await fetch(participantUrl, {
-                  headers: {
-                    'apikey': supabaseServiceKey,
-                    'Authorization': `Bearer ${supabaseServiceKey}`,
-                  },
-                });
-
-                if (partRes.ok) {
-                  const partData: any = await partRes.json();
-                  if (Array.isArray(partData) && partData.length > 0) isMember = true;
-                }
-            }
-          } catch (partErr) {
-            console.error('[Worker] Participant verification exception for SSE:', partErr);
-          }
-        } else if (guestSecretInfo.isDevFallback) {
-          if (convId.includes(verifiedUserId) || dbConvId?.includes(verifiedUserId)) {
-            isMember = true;
-          }
-        }
-
-        if (!isMember) {
-          return jsonResponse({
-            success: false,
-            error: 'Unauthorized: Not a member of this conversation.',
-          }, 403);
-        }
+      const { dbConvId, convSlug } = authAccess;
+      const convId = convSlug || convIdParam;
 
       let intervalId: any = null;
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
@@ -1536,7 +1672,7 @@ export default {
             }
           }, 15000);
         },
-        cancel(reason) {
+        cancel() {
           if (intervalId) clearInterval(intervalId);
           if (streamController) {
             const controllers = conversationStreams.get(convId);
@@ -1573,8 +1709,6 @@ export default {
 
       if (request.method === 'GET') {
         const guestTokenParam = url.searchParams.get('guestToken') || request.headers.get('x-guest-token');
-        const bodyToken = ((await request.json().catch(() => ({}))) as any)?.guestToken; // Unlikely for GET, but for completeness
-
         const authResult = await authenticateRequest(
           request,
           url,
@@ -1582,7 +1716,7 @@ export default {
           { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
           supabaseClient,
           env,
-          guestTokenParam || bodyToken
+          guestTokenParam || undefined
         );
 
         if ('errorResponse' in authResult) {
@@ -1599,91 +1733,23 @@ export default {
           }, 403);
         }
 
-        // Authorize conversation membership strictly using verified identity against database
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i; // Minimal check, better is below
-        const uuidFullRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        let dbConvId: string | null = null;
+        const authAccess = await authorizeConversationAccess(
+          convId,
+          verifiedUserId,
+          isGuestCaller,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+          guestSecretInfo
+        );
 
-        if (convId.startsWith('conv_')) {
-          const idWithoutPrefix = convId.slice('conv_'.length);
-          const parts = idWithoutPrefix.split('_');
-
-          if (parts.length !== 2) {
-            return jsonResponse({ success: false, error: 'Invalid conversation slug format.' }, 400);
-          }
-
-          const [id1, id2] = parts;
-          if (!uuidFullRegex.test(id1) || !uuidFullRegex.test(id2)) {
-            return jsonResponse({ success: false, error: 'Invalid participant identifier in conversation slug.' }, 400);
-          }
-
-          if (id1 !== verifiedUserId && id2 !== verifiedUserId) {
-            return jsonResponse({
-              success: false,
-              error: 'Unauthorized: Authenticated caller is not a participant in this conversation slug.',
-            }, 403);
-          }
-
-          const partnerId = (id1 === verifiedUserId) ? id2 : id1;
-          dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, partnerId);
-        } else if (uuidFullRegex.test(convId)) {
-          dbConvId = convId;
-        } else {
-          return jsonResponse({ success: false, error: 'Invalid conversation identifier format.' }, 400);
+        if (!authAccess.authorized) {
+          return authAccess.errorResponse;
         }
 
-        let isMember = false;
+        const { dbConvId, convSlug } = authAccess;
 
+        // Fetch history using server-side Supabase service-role key
         if (baseSupabaseUrl && supabaseServiceKey) {
           try {
-            const memberFilter = isGuestCaller
-              ? `sender_guest_id=eq.${encodeURIComponent(verifiedUserId)}`
-              : `user_id=eq.${encodeURIComponent(verifiedUserId)}`;
-            
-            // Re-using conversation_participants check
-            const participantUrl = `${baseSupabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(dbConvId)}&user_id=eq.${encodeURIComponent(verifiedUserId)}&select=id`;
-            
-            // Note: For guest users, they might not be in conversation_participants table yet (since they use slug-based auth)
-            // But we should try to satisfy the prompt's "A user must never retrieve messages they are not authorized to access"
-            
-            if (isGuestCaller) {
-                // If it's a guest and the convId SLUG contains their verified guest session ID, they are authorized.
-                // This matches the current VoxaNex guest-DM model.
-                if (convId.includes(verifiedUserId)) {
-                    isMember = true;
-                }
-            } else {
-                const partRes = await fetch(participantUrl, {
-                  headers: {
-                    'apikey': supabaseServiceKey,
-                    'Authorization': `Bearer ${supabaseServiceKey}`,
-                  },
-                });
-                if (partRes.ok) {
-                   const partData: any = await partRes.json();
-                   if (Array.isArray(partData) && partData.length > 0) isMember = true;
-                }
-            }
-          } catch (partErr) {
-            console.error('[Worker] Participant verification exception:', partErr);
-          }
-        } else if (guestSecretInfo.isDevFallback) {
-          if (convId.includes(verifiedUserId) || dbConvId?.includes(verifiedUserId)) {
-            isMember = true;
-          }
-        }
-
-        if (!isMember) {
-          return jsonResponse({
-            success: false,
-            error: 'Unauthorized: Not a member of this conversation.',
-          }, 403);
-        }
-
-        // Fetch history using server-side Supabase service-role key after identity and membership are proven
-        if (baseSupabaseUrl && supabaseServiceKey) {
-          try {
-            // Strictly query messages using ONLY the canonical conversation UUID
             const convMessagesRestUrl = `${baseSupabaseUrl}/rest/v1/messages?conversation_id=eq.${encodeURIComponent(dbConvId)}&order=created_at.asc`;
             const headers: Record<string, string> = {
               'apikey': supabaseServiceKey,
@@ -1718,7 +1784,7 @@ export default {
 
             const messages = data.map((m: any) => ({
               id: m.id,
-              conversationId: convId,
+              conversationId: convSlug || convId,
               senderId: m.sender_user_id || m.sender_guest_id || 'anonymous',
               senderNickname: m.sender_nickname,
               senderAvatar: m.sender_avatar,
@@ -1757,9 +1823,7 @@ export default {
           const body: any = await request.json().catch(() => ({}));
           const {
             senderId: clientSenderId,
-            senderNickname: clientNickname,
-            senderAvatar: clientAvatar,
-            recipientId,
+            recipientId: clientRecipientId,
             content,
             mediaUrl,
             mediaType,
@@ -1806,25 +1870,29 @@ export default {
             return jsonResponse({ success: false, error: 'Message content or media is required.' }, 400);
           }
 
-          // 3. Authorize: Verify that verifiedUserId is a participant
-          let resolvedRecipientId = recipientId;
-          if (!resolvedRecipientId && convId.startsWith('conv_')) {
-            const parts = convId.replace(/^conv_/, '').split('_');
-            resolvedRecipientId = parts.find(p => p !== verifiedUserId);
+          // 4. Authorize conversation access strictly against database
+          const authAccess = await authorizeConversationAccess(
+            convId,
+            verifiedUserId,
+            isGuestCaller,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+            guestSecretInfo
+          );
+
+          if (!authAccess.authorized) {
+            return authAccess.errorResponse;
           }
 
-          if (!resolvedRecipientId) {
-            return jsonResponse({ success: false, error: 'Bad Request: Recipient identity could not be verified.' }, 400);
+          const { dbConvId, convSlug, recipientId: authorizedRecipientId } = authAccess;
+
+          // 5. Recipient mismatch check if recipientId was passed in POST body
+          if (clientRecipientId && authorizedRecipientId && clientRecipientId !== authorizedRecipientId) {
+            return jsonResponse({ success: false, error: 'Forbidden: Recipient identity mismatch.' }, 403);
           }
 
-          // Resolve conversation ID
-          let dbConvId = convId;
-          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-          if (convId.startsWith('conv_') && !uuidRegex.test(convId)) {
-             dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, resolvedRecipientId);
-          }
+          const resolvedRecipientId = clientRecipientId || authorizedRecipientId;
 
-          // 4. Identity Resolution (Zero-trust)
+          // 6. Identity Resolution (Zero-trust)
           let verifiedNickname: string;
           let verifiedAvatar: string;
 
@@ -1840,7 +1908,7 @@ export default {
           const cleanContent = sanitizeContent(content || '');
           const message: HubMessage = {
             id: crypto.randomUUID(),
-            conversationId: convId,
+            conversationId: convSlug || convId,
             senderId: verifiedUserId,
             senderNickname: verifiedNickname,
             senderAvatar: verifiedAvatar,
@@ -1855,23 +1923,19 @@ export default {
             status: 'delivered',
           };
 
-          // 5. Atomic Persistence
-          // 5. Atomic Persistence
+          // 7. Atomic Persistence
           let isInserted = true;
           if (baseSupabaseUrl && supabaseServiceKey) {
-             // Ensure conversation exists
-             if (convId.startsWith('conv_')) {
-                await fetch(`${baseSupabaseUrl}/rest/v1/conversations`, {
-                  method: 'POST',
-                  headers: {
-                    'apikey': supabaseServiceKey,
-                    'Authorization': `Bearer ${supabaseServiceKey}`,
-                    'Content-Type': 'application/json',
-                    'Prefer': 'resolution=merge-duplicates'
-                  },
-                  body: JSON.stringify({ id: dbConvId, type: 'direct' })
-                }).catch(() => {});
-             }
+             await fetch(`${baseSupabaseUrl}/rest/v1/conversations`, {
+               method: 'POST',
+               headers: {
+                 'apikey': supabaseServiceKey,
+                 'Authorization': `Bearer ${supabaseServiceKey}`,
+                 'Content-Type': 'application/json',
+                 'Prefer': 'resolution=merge-duplicates'
+               },
+               body: JSON.stringify({ id: dbConvId, type: 'direct' })
+             }).catch(() => {});
 
              const result = await databaseService.atomicMessage({
                 id: message.id,
@@ -1907,11 +1971,16 @@ export default {
              }, 503);
           }
 
-          // 6. Broadcast and Local State (Only on genuine new insertions)
+          // 8. Broadcast and Local State (Only on genuine new insertions)
           if (isInserted) {
               try {
-                  broadcastToConversation(convId, 'new_dm', message);
-                  broadcastToUser(resolvedRecipientId, 'incoming_dm', { conversationId: convId, message });
+                  broadcastToConversation(convSlug || convId, 'new_dm', message);
+                  if (dbConvId && dbConvId !== (convSlug || convId)) {
+                    broadcastToConversation(dbConvId, 'new_dm', message);
+                  }
+                  if (resolvedRecipientId) {
+                    broadcastToUser(resolvedRecipientId, 'incoming_dm', { conversationId: convSlug || convId, message });
+                  }
               } catch (sseErr: any) {
                   console.warn(`[VX-DM] Local SSE broadcast error:`, sseErr);
               }
@@ -1920,8 +1989,8 @@ export default {
                   if (!supabaseClient) return;
                   try {
                     await Promise.all([
-                        databaseService.broadcastDM(convId, resolvedRecipientId, message as any, supabaseClient),
-                        databaseService.broadcastToUser(resolvedRecipientId, 'incoming_dm', { conversationId: convId, message }, supabaseClient)
+                        databaseService.broadcastDM(convSlug || convId, resolvedRecipientId, message as any, supabaseClient),
+                        resolvedRecipientId ? databaseService.broadcastToUser(resolvedRecipientId, 'incoming_dm', { conversationId: convSlug || convId, message }, supabaseClient) : Promise.resolve()
                     ]);
                   } catch (e: any) {
                     console.error(`[VX-DM] Supabase broadcast fatal error:`, e);
