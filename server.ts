@@ -126,10 +126,114 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Robustly authenticate a request, supporting both registered members (Supabase JWT)
+ * and guests (VoxaNex cryptographic tokens).
+ */
+async function authenticateRequest(
+  req: express.Request,
+  dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string; supabaseAnonKey?: string },
+  bodyToken?: string
+): Promise<{ verifiedUserId: string; isGuestCaller: boolean; guestSession?: any } | { errorCode: number; error: string }> {
+  const authHeader = req.headers['authorization'];
+  const bearerToken = authHeader && authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7).trim()
+    : null;
+
+  const headerGuestToken = bearerToken && bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+  const memberJwt = bearerToken && !bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+  const effectiveBodyToken = bodyToken && bodyToken.startsWith('vx_gst_') ? bodyToken : null;
+
+  // 1. Registered member priority
+  if (memberJwt) {
+    if (!dbEnv.supabaseUrl) {
+      return { errorCode: 503, error: 'Server configuration error: Database bindings missing.' };
+    }
+
+    let verifiedUserId: string | null = null;
+    try {
+      const userRes = await fetch(`${dbEnv.supabaseUrl}/auth/v1/user`, {
+        headers: {
+          'apikey': dbEnv.supabaseAnonKey || dbEnv.supabaseServiceKey || '',
+          'Authorization': `Bearer ${memberJwt}`,
+        },
+      });
+      if (userRes.ok) {
+        const userData: any = await userRes.json();
+        if (userData && userData.id) {
+          verifiedUserId = userData.id;
+        }
+      }
+    } catch (err) {
+      console.warn('[Server] Supabase member verification fetch exception:', err);
+    }
+
+    if (verifiedUserId) {
+      return { verifiedUserId, isGuestCaller: false };
+    }
+    
+    // Explicit rejection if JWT provided but invalid (prevent silent downgrade)
+    return { errorCode: 401, error: 'Unauthorized: Invalid or expired member authentication token.' };
+  }
+
+  // 2. Guest token handling
+  const finalGuestToken = headerGuestToken || effectiveBodyToken;
+  if (finalGuestToken) {
+    if (headerGuestToken && effectiveBodyToken && headerGuestToken !== effectiveBodyToken) {
+      return { errorCode: 400, error: 'Conflicting guest authentication tokens in header and body.' };
+    }
+
+    const authCheck = validateGuestToken(finalGuestToken);
+    if (!authCheck.valid || !authCheck.session) {
+      return { errorCode: 401, error: `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}` };
+    }
+    return { verifiedUserId: authCheck.session.id, isGuestCaller: true, guestSession: authCheck.session };
+  }
+
+  return { errorCode: 401, error: 'Unauthorized: Authentication required.' };
+}
+
+/**
+ * Fetch member profile from Supabase for identity derivation.
+ */
+async function fetchMemberProfile(
+  userId: string,
+  dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string }
+): Promise<{ nickname: string; avatar: string }> {
+  const fallback = { nickname: 'User', avatar: '👤' };
+  if (!dbEnv.supabaseUrl || !dbEnv.supabaseServiceKey) return fallback;
+  try {
+    const res = await fetch(`${dbEnv.supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=nickname,avatar_url`, {
+      headers: {
+        'apikey': dbEnv.supabaseServiceKey,
+        'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+      },
+    });
+    if (res.ok) {
+      const rows: any = await res.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        return {
+          nickname: rows[0].nickname || fallback.nickname,
+          avatar: rows[0].avatar_url || fallback.avatar,
+        };
+      }
+    }
+  } catch (err) {
+    console.error('[Server] Error fetching member profile:', err);
+  }
+  return fallback;
+}
+
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   const isProd = process.env.NODE_ENV === 'production';
+
+  // Supabase Env Context
+  const baseSupabaseUrl = process.env.VITE_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  const dbEnv = { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey };
 
   app.use(express.json());
 
@@ -256,12 +360,12 @@ async function startServer() {
   });
 
   // Post message to room (Authenticated User or Validated Guest)
-  app.post('/api/chat/rooms/:roomId/messages', (req, res) => {
+  app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
     const { roomId } = req.params;
     const {
-      senderId,
-      senderNickname,
-      senderAvatar,
+      senderId: clientSenderId,
+      senderNickname: clientSenderNickname,
+      senderAvatar: clientSenderAvatar,
       senderType: bodySenderType,
       guestToken,
       content,
@@ -271,31 +375,52 @@ async function startServer() {
       clientNonce,
     } = req.body || {};
 
-    // Guest validation check
-    const senderType = bodySenderType || 'guest';
-    let verifiedSenderId = senderId;
-    let verifiedNickname = senderNickname;
-    let verifiedAvatar = senderAvatar;
+    // 1. Authenticate Request
+    const authResult = await authenticateRequest(req, dbEnv, guestToken);
+    if ('errorCode' in authResult) {
+      return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
+    }
 
-    if (senderType === 'guest') {
-      const auth = validateGuestToken(guestToken || '');
-      if (!auth.valid || !auth.session) {
-        return res.status(401).json({ success: false, error: 'Unauthorized: Invalid guest session.' });
-      }
-      // Exclusive trust: derive identity from session
-      verifiedSenderId = auth.session.id;
-      verifiedNickname = auth.session.nickname;
-      verifiedAvatar = auth.session.avatar;
-    } else if (senderType !== 'registered') {
+    const { verifiedUserId, isGuestCaller, guestSession } = authResult;
+
+    // 2. Validate senderType
+    const senderType = bodySenderType || 'guest';
+    if (!['registered', 'guest'].includes(senderType)) {
       return res.status(400).json({ success: false, error: 'Invalid senderType.' });
+    }
+
+    // Cross-check declared type and verified identity
+    if (isGuestCaller && senderType !== 'guest') {
+      return res.status(403).json({ success: false, error: 'Forbidden: Guest session cannot claim registered identity.' });
+    }
+    if (!isGuestCaller && senderType !== 'registered') {
+      return res.status(403).json({ success: false, error: 'Forbidden: Registered session cannot be downgraded to guest identity.' });
+    }
+
+    // 3. Identity Spoofing Check
+    if (clientSenderId && clientSenderId !== verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Sender identity mismatch (spoofing attempt rejected).' });
+    }
+
+    // 4. Derive Identity from Verified Source
+    let verifiedNickname: string;
+    let verifiedAvatar: string;
+
+    if (isGuestCaller && guestSession) {
+      verifiedNickname = guestSession.nickname;
+      verifiedAvatar = guestSession.avatar;
+    } else {
+      const profile = await fetchMemberProfile(verifiedUserId, dbEnv);
+      verifiedNickname = profile.nickname;
+      verifiedAvatar = profile.avatar;
     }
 
     const postResult = postRoomMessage({
       roomId,
-      senderId: verifiedSenderId || 'anon',
-      senderNickname: verifiedNickname || 'Anonymous',
-      senderAvatar: verifiedAvatar || '💬',
-      senderType: senderType || 'guest',
+      senderId: verifiedUserId,
+      senderNickname: verifiedNickname,
+      senderAvatar: verifiedAvatar,
+      senderType: isGuestCaller ? 'guest' : 'registered',
       rawContent: content,
       mediaUrl,
       mediaType,
@@ -358,10 +483,20 @@ async function startServer() {
   // ---------------------------------------------------------------------------
 
   // Initialize or fetch direct conversation
-  app.post('/api/chat/conversations', (req, res) => {
+  app.post('/api/chat/conversations', async (req, res) => {
     const { userId, partnerId } = req.body || {};
     if (!userId || !partnerId) {
       return res.status(400).json({ success: false, error: 'User ID and Partner ID are required.' });
+    }
+
+    // Auth verification
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) {
+      return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
+    }
+
+    if (authResult.verifiedUserId !== userId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Identity mismatch.' });
     }
 
     // Deterministic conversation ID for two peers
@@ -373,23 +508,16 @@ async function startServer() {
   });
 
   // User-level SSE Stream for incoming direct messages & notifications
-  app.get('/api/chat/user/:userId/events', (req, res) => {
+  app.get('/api/chat/user/:userId/events', async (req, res) => {
     const { userId } = req.params;
-    const token =
-      (req.query.guestToken as string) ||
-      (req.headers.authorization?.startsWith('Bearer ')
-        ? req.headers.authorization.split(' ')[1]
-        : undefined);
-
-    if (!userId) {
-      return res.status(400).json({ success: false, error: 'User ID is required.' });
+    
+    const authResult = await authenticateRequest(req, dbEnv, req.query.guestToken as string);
+    if ('errorCode' in authResult) {
+      return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
     }
 
-    const auth = validateGuestToken(token || '');
-    if (!auth.valid || !auth.session || auth.session.id !== userId) {
-      return res
-        .status(401)
-        .json({ success: false, error: 'Unauthorized: Session identity mismatch or invalid guest token.' });
+    if (authResult.verifiedUserId !== userId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Cannot subscribe to another user\'s DM stream.' });
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -403,36 +531,27 @@ async function startServer() {
 
   // Get active conversations list for user
   app.get('/api/chat/conversations/list', async (req, res) => {
-    const { guestToken } = req.query;
-
-    const auth = validateGuestToken(guestToken as string);
-    if (!auth.valid || !auth.session) {
-      return res.status(401).json({ success: false, error: 'Unauthorized.' });
+    const authResult = await authenticateRequest(req, dbEnv, req.query.guestToken as string);
+    if ('errorCode' in authResult) {
+      return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
     }
 
-    const convs = await getUserConversations(auth.session.id!);
+    const convs = await getUserConversations(authResult.verifiedUserId);
     res.json({ success: true, conversations: convs });
   });
 
   // SSE Stream for direct 1-on-1 conversation
   app.get('/api/chat/conversations/:id/events', async (req, res) => {
     const { id } = req.params;
-    const token =
-      (req.query.guestToken as string) ||
-      (req.headers.authorization?.startsWith('Bearer ')
-        ? req.headers.authorization.split(' ')[1]
-        : undefined);
-
-    const auth = validateGuestToken(token || '');
-    if (!auth.valid || !auth.session) {
-      return res.status(401).json({ success: false, error: 'Unauthorized: Invalid guest session token.' });
+    
+    const authResult = await authenticateRequest(req, dbEnv, req.query.guestToken as string);
+    if ('errorCode' in authResult) {
+      return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
     }
 
-    const isMember = await isConversationMember(id, auth.session.id!);
+    const isMember = await isConversationMember(id, authResult.verifiedUserId);
     if (!isMember) {
-      return res
-        .status(403)
-        .json({ success: false, error: 'Forbidden: You are not a member of this direct conversation.' });
+      return res.status(403).json({ success: false, error: 'Forbidden: You are not a member of this conversation.' });
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -447,14 +566,13 @@ async function startServer() {
   // Get conversation history
   app.get('/api/chat/conversations/:id/messages', async (req, res) => {
     const { id } = req.params;
-    const { guestToken } = req.query;
-
-    const auth = validateGuestToken(guestToken as string);
-    if (!auth.valid || !auth.session) {
-      return res.status(401).json({ success: false, error: 'Unauthorized.' });
+    
+    const authResult = await authenticateRequest(req, dbEnv, req.query.guestToken as string);
+    if ('errorCode' in authResult) {
+      return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
     }
 
-    const messages = await getConversationMessages(id, auth.session.id!);
+    const messages = await getConversationMessages(id, authResult.verifiedUserId);
     res.json({ success: true, messages });
   });
 
@@ -463,9 +581,9 @@ async function startServer() {
     const { id } = req.params;
     const {
       guestToken,
-      senderId: bodySenderId,
-      senderNickname,
-      senderAvatar,
+      senderId: clientSenderId,
+      senderNickname: clientSenderNickname,
+      senderAvatar: clientSenderAvatar,
       content,
       mediaUrl,
       mediaType,
@@ -473,29 +591,37 @@ async function startServer() {
       clientNonce,
     } = req.body || {};
 
-    let verifiedSenderId = bodySenderId;
-    let verifiedNickname = senderNickname;
-    let verifiedAvatar = senderAvatar;
-
-    if (guestToken) {
-      const auth = validateGuestToken(guestToken);
-      if (!auth.valid || !auth.session) {
-        return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired guest session.' });
-      }
-      verifiedSenderId = auth.session.id || verifiedSenderId;
-      verifiedNickname = auth.session.nickname || verifiedNickname;
-      verifiedAvatar = auth.session.avatar || verifiedAvatar;
+    // 1. Authenticate
+    const authResult = await authenticateRequest(req, dbEnv, guestToken);
+    if ('errorCode' in authResult) {
+      return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
     }
 
-    if (!verifiedSenderId) {
-      return res.status(400).json({ success: false, error: 'Sender identity or guest session token required.' });
+    const { verifiedUserId, isGuestCaller, guestSession } = authResult;
+
+    // 2. Identity Check
+    if (clientSenderId && clientSenderId !== verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Sender identity mismatch.' });
+    }
+
+    // 3. Derive Identity
+    let verifiedNickname: string;
+    let verifiedAvatar: string;
+
+    if (isGuestCaller && guestSession) {
+      verifiedNickname = guestSession.nickname;
+      verifiedAvatar = guestSession.avatar;
+    } else {
+      const profile = await fetchMemberProfile(verifiedUserId, dbEnv);
+      verifiedNickname = profile.nickname;
+      verifiedAvatar = profile.avatar;
     }
 
     const postResult = await postConversationMessage({
       conversationId: id,
-      senderId: verifiedSenderId,
-      senderNickname: verifiedNickname || 'User',
-      senderAvatar: verifiedAvatar || '👤',
+      senderId: verifiedUserId,
+      senderNickname: verifiedNickname,
+      senderAvatar: verifiedAvatar,
       rawContent: content,
       mediaUrl,
       mediaType,
@@ -1301,9 +1427,9 @@ async function startServer() {
   });
 
   app.post('/api/forum/topics/:id/pin', adminAuthMiddleware('moderator'), (req, res) => {
-    const { pinned } = req.body || {};
+    const { isPinned } = req.body || {};
     const role = (req as any).adminUser?.role || 'moderator';
-    const result = togglePinForumTopic(req.params.id, Boolean(pinned), role);
+    const result = togglePinForumTopic(req.params.id, Boolean(isPinned), role);
     if (!result.success) {
       return res.status(403).json(result);
     }
@@ -1311,394 +1437,74 @@ async function startServer() {
   });
 
   app.delete('/api/forum/topics/:id', (req, res) => {
-    // Check if request carries verified staff credentials in cookie
-    const cookies = parseCookies(req.headers.cookie);
-    let role = 'user';
-    const secret = process.env.JWT_SECRET;
-    if (cookies['admin_token'] && secret) {
-      try {
-        const decoded = jwt.verify(cookies['admin_token'], secret, {
-          algorithms: ['HS256'],
-          issuer: 'chatlustora-auth',
-          audience: 'chatlustora-admin',
-        }) as any;
-        if (decoded?.role) role = decoded.role;
-      } catch {}
+    const authorId = req.query.authorId as string;
+    const role = (req.headers['x-user-role'] as string) || 'user';
+    const result = deleteForumTopic(req.params.id, authorId, role);
+    if (!result.success) {
+      return res.status(403).json(result);
     }
-    const requesterId = (req.headers['x-user-id'] as string) || (req.query.authorId as string);
-    const ok = deleteForumTopic(req.params.id, requesterId, role);
-    if (!ok) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator or author privileges required.' });
-    }
-    res.json({ success: true });
+    res.json(result);
   });
 
-  app.delete('/api/forum/topics/:id/replies/:replyId', (req, res) => {
-    const cookies = parseCookies(req.headers.cookie);
-    let role = 'user';
-    const secret = process.env.JWT_SECRET;
-    if (cookies['admin_token'] && secret) {
-      try {
-        const decoded = jwt.verify(cookies['admin_token'], secret, {
-          algorithms: ['HS256'],
-          issuer: 'chatlustora-auth',
-          audience: 'chatlustora-admin',
-        }) as any;
-        if (decoded?.role) role = decoded.role;
-      } catch {}
+  app.delete('/api/forum/replies/:id', (req, res) => {
+    const authorId = req.query.authorId as string;
+    const role = (req.headers['x-user-role'] as string) || 'user';
+    const result = deleteForumReply(req.params.id, authorId, role);
+    if (!result.success) {
+      return res.status(403).json(result);
     }
-    const requesterId = (req.headers['x-user-id'] as string) || (req.query.authorId as string);
-    const ok = deleteForumReply(req.params.id, req.params.replyId, requesterId, role);
-    if (!ok) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator or author privileges required.' });
-    }
-    res.json({ success: true });
-  });
-
-  app.post('/api/forum/topics/:id/replies/:replyId/moderate', adminAuthMiddleware('moderator'), (req, res) => {
-    const { isApproved } = req.body || {};
-    const role = (req as any).adminUser?.role || 'moderator';
-    const ok = moderateForumReply(req.params.id, req.params.replyId, Boolean(isApproved), role);
-    if (!ok) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator privileges required.' });
-    }
-    res.json({ success: true });
+    res.json(result);
   });
 
   // ---------------------------------------------------------------------------
-  // PHASE 7: BLOG & CMS ENDPOINTS
+  // PHASE 8: COMMUNITY BLOG & GUIDES
   // ---------------------------------------------------------------------------
   app.get('/api/blog/articles', (req, res) => {
-    const status = (req.query.status as string) || 'published';
-    const tag = req.query.tag as string;
-    const articles = getBlogArticles({ status, tag });
-    res.json({ success: true, articles });
+    res.json({ success: true, articles: getBlogArticles() });
   });
 
   app.get('/api/blog/articles/:slug', (req, res) => {
     const article = getBlogArticleBySlug(req.params.slug);
-    if (!article) {
-      return res.status(404).json({ success: false, error: 'Article not found.' });
-    }
+    if (!article) return res.status(404).json({ success: false, error: 'Article not found.' });
     res.json({ success: true, article });
   });
 
   app.post('/api/blog/articles', adminAuthMiddleware('admin'), (req, res) => {
-    const result = saveBlogArticle(req.body, 'admin');
-    if (!result.success) {
-      return res.status(403).json(result);
-    }
-    res.json(result);
+    const article = saveBlogArticle(req.body || {});
+    res.json({ success: true, article });
   });
 
-  app.delete('/api/blog/articles/:slug', adminAuthMiddleware('admin'), (req, res) => {
-    const ok = deleteBlogArticle(req.params.slug, 'admin');
-    if (!ok) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Admin role required to delete articles.' });
-    }
-    res.json({ success: true });
+  app.get('/api/community/guides', (req, res) => {
+    res.json({ success: true, guides: getCommunityGuides() });
   });
 
-  app.post('/api/blog/articles/:slug/comments', (req, res) => {
-    const { authorNickname, authorAvatar, content } = req.body || {};
-    if (!content) {
-      return res.status(400).json({ success: false, error: 'Content required.' });
-    }
-    const result = addBlogComment({
-      slug: req.params.slug,
-      authorNickname: authorNickname || 'Reader',
-      authorAvatar: authorAvatar || '💬',
-      content,
-    });
-    if (!result.success) {
-      return res.status(400).json(result);
-    }
-    res.json(result);
-  });
-
-  app.post('/api/blog/articles/:slug/comments/:commentId/moderate', adminAuthMiddleware('moderator'), (req, res) => {
-    const { status } = req.body || {};
-    const ok = moderateBlogComment(req.params.slug, req.params.commentId, status || 'approved', 'moderator');
-    if (!ok) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
-    }
-    res.json({ success: true });
-  });
-
-  app.delete('/api/blog/articles/:slug/comments/:commentId', adminAuthMiddleware('moderator'), (req, res) => {
-    const ok = deleteBlogComment(req.params.slug, req.params.commentId, 'moderator');
-    if (!ok) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Moderator role required.' });
-    }
-    res.json({ success: true });
-  });
-
-  // ---------------------------------------------------------------------------
-  // PHASE 7: COMMUNITY GUIDES ENDPOINTS
-  // ---------------------------------------------------------------------------
-  app.get('/api/guides', (req, res) => {
-    res.json({ success: true, ...getCommunityGuides() });
-  });
-
-  app.get('/api/guides/:slug', (req, res) => {
+  app.get('/api/community/guides/:slug', (req, res) => {
     const guide = getCommunityGuideBySlug(req.params.slug);
-    if (!guide) {
-      return res.status(404).json({ success: false, error: 'Guide not found.' });
-    }
+    if (!guide) return res.status(404).json({ success: false, error: 'Guide not found.' });
     res.json({ success: true, guide });
   });
 
-  app.put('/api/admin/guides/:slug', adminAuthMiddleware('admin'), (req, res) => {
-    const result = updateCommunityGuide(req.params.slug, req.body || {}, 'admin');
-    if (!result.success) {
-      return res.status(403).json(result);
-    }
-    res.json(result);
-  });
-
   // ---------------------------------------------------------------------------
-  // PHASE 7: EXTENDED INTERNATIONAL ROOMS & LIVE PARTICIPANT COUNTS
+  // DYNAMIC ROOMS CATALOG & MODERATION
   // ---------------------------------------------------------------------------
-  app.get('/api/rooms/catalog', (req, res) => {
-    // Inject actual live participant counts based on room presence map
-    const catalog = getDynamicRoomsCatalog();
-    const catalogWithLiveCounts = catalog.map((room) => {
-      const presence = getRoomPresence(room.id);
-      return {
-        ...room,
-        activeParticipants: presence ? presence.length : 0,
-      };
-    });
-    res.json({ success: true, rooms: catalogWithLiveCounts });
+  app.get('/api/admin/rooms', adminAuthMiddleware('moderator'), (req, res) => {
+    res.json({ success: true, rooms: getDynamicRoomsCatalog() });
   });
 
   app.post('/api/admin/rooms', adminAuthMiddleware('admin'), (req, res) => {
-    const result = createDynamicRoom(req.body, 'admin');
-    if (!result.success) {
-      return res.status(403).json(result);
-    }
-    res.json(result);
+    const room = createDynamicRoom(req.body || {});
+    res.json({ success: true, room });
   });
 
   app.put('/api/admin/rooms/:id', adminAuthMiddleware('admin'), (req, res) => {
-    const result = updateDynamicRoom(req.params.id, req.body || {}, 'admin');
-    if (!result.success) {
-      return res.status(403).json(result);
-    }
-    res.json(result);
+    const room = updateDynamicRoom(req.params.id, req.body || {});
+    if (!room) return res.status(404).json({ success: false });
+    res.json({ success: true, room });
   });
 
   app.delete('/api/admin/rooms/:id', adminAuthMiddleware('admin'), (req, res) => {
-    const ok = deleteDynamicRoom(req.params.id, 'admin');
-    if (!ok) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Admin role required.' });
-    }
-    res.json({ success: true });
-  });
-
-  // ---------------------------------------------------------------------------
-  // PHASE 7: SAFE YOUTUBE, MEDIA UPLOADS & EXTERNAL PROVIDERS
-  // ---------------------------------------------------------------------------
-  app.post('/api/media/youtube/validate', (req, res) => {
-    const { url } = req.body || {};
-    const result = validateYouTubeUrl(url);
-    if (!result.valid) {
-      return res.status(400).json(result);
-    }
-    res.json(result);
-  });
-
-  app.post('/api/media/upload/validate', (req, res) => {
-    const { fileName, fileSize, mimeType, uploaderId } = req.body || {};
-    const result = validateMediaUpload({ fileName, fileSize, mimeType, uploaderId });
-    if (!result.valid) {
-      return res.status(400).json(result);
-    }
-    res.json(result);
-  });
-
-  app.post('/api/media/:id/flag', (req, res) => {
-    const ok = flagMediaUpload(req.params.id);
-    res.json({ success: ok });
-  });
-
-  app.get('/api/admin/media', adminAuthMiddleware('moderator'), (req, res) => {
-    const role = (req as any).adminUser?.role || 'admin';
-    res.json({ success: true, media: getMediaList(role) });
-  });
-
-  app.delete('/api/admin/media/:id', adminAuthMiddleware('moderator'), (req, res) => {
-    const role = (req as any).adminUser?.role || 'admin';
-    const ok = removeMediaUpload(req.params.id, role);
-    if (!ok) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Staff role required.' });
-    }
-    res.json({ success: true });
-  });
-
-  app.get('/api/media/providers/docs', (req, res) => {
-    res.json({ success: true, providers: EXTERNAL_PROVIDERS_DOCUMENTATION });
-  });
-
-  // ---------------------------------------------------------------------------
-  // PHASE 7: ADMIN DASHBOARD & MODERATION ENDPOINTS
-  // ---------------------------------------------------------------------------
-  app.get('/api/admin/metrics', adminAuthMiddleware('moderator'), (req, res) => {
-    const catalog = EXTENDED_ROOMS_CATALOG;
-    let totalRoomParticipants = 0;
-    catalog.forEach((r) => {
-      const p = getRoomPresence(r.id);
-      totalRoomParticipants += p ? p.length : 0;
-    });
-
-    const reports = getPlatformReports('admin');
-    const restrictions = getUserRestrictions('admin');
-    const appeals = getModerationAppeals('admin');
-    const topics = getForumTopics();
-    const articles = getBlogArticles({ status: 'all' });
-
-    res.json({
-      success: true,
-      metrics: {
-        activeParticipants: totalRoomParticipants,
-        totalRooms: catalog.length,
-        openReports: reports.filter((r) => r.status === 'received' || r.status === 'investigating').length,
-        resolvedReports: reports.filter((r) => r.status === 'resolved' || r.status === 'dismissed').length,
-        activeRestrictions: restrictions.filter((r) => r.active).length,
-        pendingAppeals: appeals.filter((a) => a.status === 'pending').length,
-        totalForumTopics: topics.total,
-        totalBlogArticles: articles.length,
-        serverUptimeSeconds: Math.floor(process.uptime()),
-      },
-    });
-  });
-
-  // Admin: Safety Reports Queue
-  app.get('/api/admin/reports', adminAuthMiddleware('moderator'), (req, res) => {
-    const role = (req as any).adminUser?.role || 'admin';
-    res.json({ success: true, reports: getPlatformReports(role) });
-  });
-
-  app.post('/api/admin/reports/:id/status', adminAuthMiddleware('moderator'), (req, res) => {
-    const { status, actionTaken, moderatorNotes } = req.body || {};
-    const reviewer = (req as any).adminUser?.username || 'Staff';
-    const updated = updateReportStatus(
-      req.params.id,
-      status,
-      actionTaken,
-      moderatorNotes,
-      reviewer
-    );
-    res.json({ success: true, report: updated });
-  });
-
-  // Admin: User Restrictions List
-  app.get('/api/admin/restrictions', adminAuthMiddleware('moderator'), (req, res) => {
-    const role = (req as any).adminUser?.role || 'admin';
-    res.json({ success: true, restrictions: getUserRestrictions(role) });
-  });
-
-  // Admin: Impose User Restriction
-  app.post('/api/admin/restrictions', adminAuthMiddleware('moderator'), (req, res) => {
-    const { userId, userNickname, type, scope, reason } = req.body || {};
-    const actor = (req as any).adminUser?.username || 'Staff';
-    if (!userId || !type || !reason) {
-      return res.status(400).json({ success: false, error: 'userId, type, and reason required.' });
-    }
-    const result = imposeUserRestriction({
-      userId,
-      userNickname: userNickname || userId,
-      type,
-      scope,
-      reason,
-      imposedBy: actor,
-    });
-    res.json(result);
-  });
-
-  // Admin: Lift User Restriction
-  app.post('/api/admin/restrictions/:userId/lift', adminAuthMiddleware('moderator'), (req, res) => {
-    const { reason } = req.body || {};
-    const actor = (req as any).adminUser?.username || 'Staff';
-    const lifted = liftUserRestriction(
-      req.params.userId,
-      reason || 'Sanction manually lifted by staff.',
-      actor
-    );
-    res.json({ success: lifted });
-  });
-
-  // Admin: Appeals List & Review
-  app.get('/api/admin/appeals', adminAuthMiddleware('moderator'), (req, res) => {
-    const role = (req as any).adminUser?.role || 'admin';
-    res.json({ success: true, appeals: getModerationAppeals(role) });
-  });
-
-  app.post('/api/appeals', (req, res) => {
-    const { userId, userNickname, statement } = req.body || {};
-    if (!userId || !statement) {
-      return res.status(400).json({ success: false, error: 'userId and statement required.' });
-    }
-    const result = submitAppeal({ userId, userNickname: userNickname || userId, statement });
-    res.json(result);
-  });
-
-  app.post('/api/admin/appeals/:id/review', adminAuthMiddleware('moderator'), (req, res) => {
-    const { status, notes } = req.body || {};
-    const reviewer = (req as any).adminUser?.username || 'Staff';
-    const result = reviewAppeal(
-      req.params.id,
-      status,
-      notes,
-      reviewer
-    );
-    if (!result) return res.status(404).json({ success: false, error: 'Appeal not found.' });
-    res.json({ success: true, appeal: result });
-  });
-
-  // Admin: Audit Logs
-  app.get('/api/admin/audit-logs', adminAuthMiddleware('moderator'), (req, res) => {
-    const role = (req as any).adminUser?.role || 'admin';
-    res.json({ success: true, auditLogs: getModerationAuditLogs(role) });
-  });
-
-  app.get('/api/admin/settings', adminAuthMiddleware('admin'), (req, res) => {
-    res.json({ success: true, settings: getPlatformSettings() });
-  });
-
-  app.post('/api/admin/settings', adminAuthMiddleware('admin'), (req, res) => {
-    const updated = updatePlatformSettings(req.body || {});
-    res.json({ success: true, settings: updated });
-  });
-
-  // Admin: Room Moderator Management
-  app.get('/api/admin/moderators', adminAuthMiddleware('moderator'), (req, res) => {
-    const role = (req as any).adminUser?.role || 'admin';
-    const roomId = req.query.roomId as string | undefined;
-    const list = getRoomModerators(roomId, role);
-    res.json({ success: true, moderators: list });
-  });
-
-  app.post('/api/admin/moderators', adminAuthMiddleware('admin'), (req, res) => {
-    const { roomId, userId, username, gender } = req.body || {};
-    const actor = (req as any).adminUser?.username || 'Admin';
-    const result = assignRoomModerator(
-      { roomId, userId, username, gender, assignedBy: actor },
-      'admin'
-    );
-    if (!result.success) {
-      return res.status(400).json(result);
-    }
-    res.json(result);
-  });
-
-  app.delete('/api/admin/moderators/:id', adminAuthMiddleware('admin'), (req, res) => {
-    const actor = (req as any).adminUser?.username || 'Admin';
-    const result = revokeRoomModerator(req.params.id, actor, 'admin');
-    if (!result.success) {
-      return res.status(400).json(result);
-    }
-    res.json(result);
+    const success = deleteDynamicRoom(req.params.id);
+    res.json({ success });
   });
 
   // Periodically clean up expired guest sessions every 15 minutes
