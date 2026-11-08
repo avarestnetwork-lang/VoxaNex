@@ -45,7 +45,10 @@ async function runWorkerHistoryTests() {
   
   const mockServiceKey = 'sb_secret_service_role_key_staging_test_2026';
   const mockAnonKey = 'sb_public_anon_key_staging_test_2026';
-  const guestSecret = process.env.GUEST_SESSION_SECRET || 'voxanex_default_secure_entropy_salt_2026';
+  process.env.GUEST_SESSION_SECRET = process.env.GUEST_SESSION_SECRET && process.env.GUEST_SESSION_SECRET !== 'voxanex_default_secure_entropy_salt_2026'
+    ? process.env.GUEST_SESSION_SECRET
+    : 'test_secret_for_audit_only';
+  const guestSecret = process.env.GUEST_SESSION_SECRET;
 
   const guestA = createGuestSession({ nickname: 'GuestAlice', avatar: '⚡', languagePref: 'en', is18Verified: false, ipAddress: '127.0.0.1' });
   const guestB = createGuestSession({ nickname: 'GuestBob', avatar: '🌸', languagePref: 'en', is18Verified: false, ipAddress: '127.0.0.2' });

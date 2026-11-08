@@ -2115,7 +2115,7 @@ async function authorizeConversationAccess(
               if (localList.length > 500) localList.shift();
           }
 
-          return jsonResponse({ success: true, message });
+          return jsonResponse({ success: true, message, isInserted });
 
         } catch (err: any) {
           return jsonResponse({ success: false, error: 'Failed to deliver message: ' + (err.message || 'Unknown error') }, 400);
@@ -2126,20 +2126,71 @@ async function authorizeConversationAccess(
     // POST /api/chat/conversations/:id/typing
     const convTypingMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/typing$/);
     if (convTypingMatch && request.method === 'POST') {
-      const convId = decodeURIComponent(convTypingMatch[1]);
+      const convIdParam = decodeURIComponent(convTypingMatch[1]);
       try {
-        const body: any = await request.json();
-        const { memberId, nickname, isTyping } = body || {};
+        const body: any = await request.json().catch(() => ({}));
+        const { memberId, isTyping, guestToken: bodyGuestToken } = body || {};
 
-        if (!conversationTyping.has(convId)) {
-          conversationTyping.set(convId, new Map());
+        // 1. Authenticate Request
+        const authResult = await authenticateRequest(
+          request,
+          url,
+          guestSecretInfo,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+          supabaseClient,
+          env,
+          bodyGuestToken
+        );
+
+        if ('errorResponse' in authResult) {
+          return authResult.errorResponse;
         }
-        const typersMap = conversationTyping.get(convId)!;
 
-        if (isTyping && memberId && nickname) {
-          typersMap.set(memberId, { nickname, expiresAt: Date.now() + 3000 });
-        } else if (memberId) {
-          typersMap.delete(memberId);
+        const { verifiedUserId, isGuestCaller, guestSession } = authResult;
+
+        // 2. Reject client identity spoofing / forgery
+        if (memberId && memberId !== verifiedUserId) {
+          return jsonResponse({
+            success: false,
+            error: 'Forbidden: Cannot report typing for another participant (identity mismatch).',
+          }, 403);
+        }
+
+        // 3. Authorize Conversation Access
+        const authAccess = await authorizeConversationAccess(
+          convIdParam,
+          verifiedUserId,
+          isGuestCaller,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+          guestSecretInfo
+        );
+
+        if (!authAccess.authorized) {
+          return authAccess.errorResponse;
+        }
+
+        // 4. Derive authoritative participant nickname
+        let verifiedNickname: string;
+        if (isGuestCaller && guestSession) {
+          verifiedNickname = guestSession.nickname || 'Guest';
+        } else {
+          const profile = await fetchMemberProfile(verifiedUserId, {
+            supabaseUrl: baseSupabaseUrl,
+            supabaseServiceKey,
+          });
+          verifiedNickname = profile.nickname || 'User';
+        }
+
+        const canonicalConvId = authAccess.convSlug || authAccess.dbConvId;
+        if (!conversationTyping.has(canonicalConvId)) {
+          conversationTyping.set(canonicalConvId, new Map());
+        }
+        const typersMap = conversationTyping.get(canonicalConvId)!;
+
+        if (isTyping) {
+          typersMap.set(verifiedUserId, { nickname: verifiedNickname, expiresAt: Date.now() + 3000 });
+        } else {
+          typersMap.delete(verifiedUserId);
         }
 
         const now = Date.now();
@@ -2148,50 +2199,154 @@ async function authorizeConversationAccess(
         }
 
         const activeTypers = Array.from(typersMap.values()).map((t) => t.nickname);
-        broadcastToConversation(convId, 'dm_typing', { typers: activeTypers });
+        const typingPayload = {
+          typers: activeTypers,
+          userId: verifiedUserId,
+          nickname: verifiedNickname,
+          isTyping: Boolean(isTyping),
+        };
+        broadcastToConversation(canonicalConvId, 'dm_typing', typingPayload);
+        if (authAccess.dbConvId && authAccess.dbConvId !== canonicalConvId) {
+          broadcastToConversation(authAccess.dbConvId, 'dm_typing', typingPayload);
+        }
 
         return jsonResponse({ success: true });
-      } catch {
-        return jsonResponse({ success: true });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Typing update failed' }, 500);
       }
     }
 
     // POST /api/chat/conversations/:id/read
     const convReadMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/read$/);
     if (convReadMatch && request.method === 'POST') {
-      const convId = decodeURIComponent(convReadMatch[1]);
+      const convIdParam = decodeURIComponent(convReadMatch[1]);
       try {
-        const body: any = await request.json();
-        const { userId, messageId } = body || {};
+        const body: any = await request.json().catch(() => ({}));
+        const { userId, messageId, guestToken: bodyGuestToken } = body || {};
 
-        if (userId && messageId) {
-          if (convId.startsWith('conv_')) {
-            const idWithoutPrefix = convId.replace(/^conv_/, '');
-            const isMember =
-              idWithoutPrefix.startsWith(userId + '_') ||
-              idWithoutPrefix.endsWith('_' + userId) ||
-              idWithoutPrefix === userId;
-            if (!isMember) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Not a member of this conversation.' }, 403);
-            }
-          }
+        // 1. Authenticate Request
+        const authResult = await authenticateRequest(
+          request,
+          url,
+          guestSecretInfo,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+          supabaseClient,
+          env,
+          bodyGuestToken
+        );
 
-          if (!conversationReadState.has(convId)) {
-            conversationReadState.set(convId, new Map());
-          }
-          const readMap = conversationReadState.get(convId)!;
-          readMap.set(userId, { readUntilId: messageId, readAt: new Date().toISOString() });
-
-          broadcastToConversation(convId, 'dm_read', {
-            userId,
-            messageId,
-            readAt: new Date().toISOString(),
-          });
+        if ('errorResponse' in authResult) {
+          return authResult.errorResponse;
         }
 
-        return jsonResponse({ success: true });
-      } catch {
-        return jsonResponse({ success: true });
+        const { verifiedUserId, isGuestCaller } = authResult;
+
+        // 2. Reject client identity spoofing / forgery
+        if (userId && userId !== verifiedUserId) {
+          return jsonResponse({
+            success: false,
+            error: 'Forbidden: Cannot report read receipt for another user (identity mismatch).',
+          }, 403);
+        }
+
+        // 3. Authorize Conversation Access
+        const authAccess = await authorizeConversationAccess(
+          convIdParam,
+          verifiedUserId,
+          isGuestCaller,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+          guestSecretInfo
+        );
+
+        if (!authAccess.authorized) {
+          return authAccess.errorResponse;
+        }
+
+        const { dbConvId, convSlug } = authAccess;
+        const canonicalConvId = convSlug || dbConvId;
+
+        // 4. Validate messageId
+        if (!messageId || typeof messageId !== 'string' || messageId.trim().length === 0) {
+          return jsonResponse({
+            success: false,
+            error: 'Message ID is required.',
+          }, 400);
+        }
+
+        // 5. Database message ownership verification (must belong to this conversation)
+        if (baseSupabaseUrl && supabaseServiceKey) {
+          try {
+            const msgQueryUrl = `${baseSupabaseUrl}/rest/v1/messages?id=eq.${encodeURIComponent(messageId.trim())}&conversation_id=eq.${encodeURIComponent(dbConvId)}&select=id,conversation_id`;
+            const msgRes = await fetch(msgQueryUrl, {
+              headers: {
+                'apikey': supabaseServiceKey,
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+            });
+
+            if (!msgRes.ok) {
+              console.error(`[Worker] Message lookup HTTP error ${msgRes.status}`);
+              return jsonResponse({
+                success: false,
+                error: `Database error verifying message (HTTP ${msgRes.status}).`,
+              }, 500);
+            }
+
+            const msgRows: any = await msgRes.json();
+            if (!Array.isArray(msgRows) || msgRows.length !== 1) {
+              return jsonResponse({
+                success: false,
+                error: 'Bad Request: Message does not belong to this conversation.',
+              }, 400);
+            }
+          } catch (err: any) {
+            console.error('[Worker] DB message verification exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Database error verifying message.',
+            }, 500);
+          }
+        } else if (!guestSecretInfo.isDevFallback) {
+          return jsonResponse({
+            success: false,
+            error: 'Server configuration error: Database bindings missing in production.',
+          }, 503);
+        } else {
+          // Dev fallback: verify message in in-memory message history
+          const memMsgs = conversationMessages.get(dbConvId) || conversationMessages.get(canonicalConvId) || [];
+          const found = memMsgs.some((m) => m.id === messageId);
+          if (!found) {
+            return jsonResponse({
+              success: false,
+              error: 'Bad Request: Message does not belong to this conversation.',
+            }, 400);
+          }
+        }
+
+        // 6. Update in-memory read state
+        if (!conversationReadState.has(canonicalConvId)) {
+          conversationReadState.set(canonicalConvId, new Map());
+        }
+        const readMap = conversationReadState.get(canonicalConvId)!;
+        const readAt = new Date().toISOString();
+        readMap.set(verifiedUserId, { readUntilId: messageId, readAt });
+
+        // 7. Broadcast dm_read to canonical conversation identifier
+        const readPayload = {
+          userId: verifiedUserId,
+          readerId: verifiedUserId,
+          messageId,
+          readAt,
+        };
+
+        broadcastToConversation(canonicalConvId, 'dm_read', readPayload);
+        if (dbConvId && dbConvId !== canonicalConvId) {
+          broadcastToConversation(dbConvId, 'dm_read', readPayload);
+        }
+
+        return jsonResponse({ success: true, messageId, readerId: verifiedUserId });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Read receipt failed' }, 500);
       }
     }
 

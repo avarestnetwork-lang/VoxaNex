@@ -650,25 +650,31 @@ export const messagingService = {
 
   async sendConversationTyping(convId: string, memberId: string, nickname: string, isTyping: boolean) {
     try {
-      await fetch(`${API_BASE}/api/chat/conversations/${convId}/typing`, {
+      const headers = await this.getIdentityHeaders();
+      const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/typing`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ memberId, nickname, isTyping }),
       });
+      return res.ok;
     } catch {
       // non-critical
+      return false;
     }
   },
 
   async sendConversationRead(convId: string, userId: string, messageId: string) {
     try {
-      await fetch(`${API_BASE}/api/chat/conversations/${convId}/read`, {
+      const headers = await this.getIdentityHeaders();
+      const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/read`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ userId, messageId }),
       });
+      return res.ok;
     } catch {
       // non-critical
+      return false;
     }
   },
 
