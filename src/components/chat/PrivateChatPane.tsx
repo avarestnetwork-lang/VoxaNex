@@ -55,6 +55,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
   const [initError, setInitError] = useState<string | null>(null);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [partnerTyping, setPartnerTyping] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
@@ -76,6 +77,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
     async function init() {
       setLoading(true);
       setInitError(null);
+      setActiveConversationId(null);
 
       const initRes = await messagingService.getOrCreateConversation(currentUser.id, partner.id);
       if (cancel) return;
@@ -86,9 +88,10 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
         return;
       }
 
-      const activeConvId = initRes.conversationId || conversationId;
+      const verifiedConvId = initRes.conversationId || conversationId;
+      setActiveConversationId(verifiedConvId);
 
-      const res = await messagingService.fetchConversationMessages(activeConvId, currentUser.id);
+      const res = await messagingService.fetchConversationMessages(verifiedConvId, currentUser.id);
       if (cancel) return;
 
       if (res.success) {
@@ -98,14 +101,14 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
           const incoming = res.messages.filter((m) => m.senderId === partner.id);
           if (incoming.length > 0) {
             const latest = incoming[incoming.length - 1];
-            messagingService.sendConversationRead(activeConvId, currentUser.id, latest.id);
+            messagingService.sendConversationRead(verifiedConvId, currentUser.id, latest.id);
           }
         } else {
           // Welcome message placeholder - ONLY if initialization AND fetch succeeded with 0 messages
           setMessages([
             {
               id: `welcome_${Date.now()}`,
-              conversationId: activeConvId,
+              conversationId: verifiedConvId,
               senderId: partner.id,
               senderNickname: partner.nickname,
               senderAvatar: partner.avatar,
@@ -127,7 +130,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
       // Subscribe ONLY AFTER successful initialization and history fetch
       if (!cancel && res.success) {
-        unsubscribeFn = messagingService.subscribeToConversation(activeConvId, currentUser.id, {
+        unsubscribeFn = messagingService.subscribeToConversation(verifiedConvId, currentUser.id, {
           onMessage: (newMsg) => {
             setMessages((prev) => {
               if (prev.some((m) => m.id === newMsg.id)) return prev;
@@ -140,7 +143,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
             // Mark incoming message as read
             if (newMsg.senderId === partner.id) {
-              messagingService.sendConversationRead(activeConvId, currentUser.id, newMsg.id);
+              messagingService.sendConversationRead(verifiedConvId, currentUser.id, newMsg.id);
             }
 
             setTimeout(() => scrollToBottom(true), 50);
@@ -165,22 +168,27 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
     };
   }, [conversationId, partner.id, partner.nickname, partner.avatar, currentUser.id, language]);
 
+  const isComposerDisabled = loading || Boolean(initError) || !activeConversationId;
+
   // Handle typing input with debounce
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputText(e.target.value);
+    if (isComposerDisabled || !activeConversationId) return;
 
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    messagingService.sendConversationTyping(conversationId, currentUser.id, currentUser.nickname, true);
+    messagingService.sendConversationTyping(activeConversationId, currentUser.id, currentUser.nickname, true);
 
     typingTimeoutRef.current = setTimeout(() => {
-      messagingService.sendConversationTyping(conversationId, currentUser.id, currentUser.nickname, false);
+      if (activeConversationId) {
+        messagingService.sendConversationTyping(activeConversationId, currentUser.id, currentUser.nickname, false);
+      }
     }, 2500);
   };
 
   // Send DM
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (initError) return;
+    if (isComposerDisabled || !activeConversationId) return;
     const clean = inputText.trim();
     if (!clean && !attachedMedia) return;
 
@@ -189,7 +197,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
     const optimisticMsg: ChatMessage = {
       id: tempId,
-      conversationId,
+      conversationId: activeConversationId,
       senderId: currentUser.id,
       senderNickname: currentUser.nickname,
       senderAvatar: currentUser.avatar,
@@ -210,7 +218,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
     setShowGifPicker(false);
     setTimeout(() => scrollToBottom(true), 50);
 
-    const result = await messagingService.sendConversationMessage(conversationId, {
+    const result = await messagingService.sendConversationMessage(activeConversationId, {
       senderId: currentUser.id,
       senderNickname: currentUser.nickname,
       senderAvatar: currentUser.avatar,
@@ -421,7 +429,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
           <div className="flex items-center gap-1">
             <button
               type="button"
-              disabled={Boolean(initError)}
+              disabled={isComposerDisabled}
               onClick={() => {
                 setShowEmojiPicker(!showEmojiPicker);
                 setShowGifPicker(false);
@@ -432,7 +440,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             </button>
             <button
               type="button"
-              disabled={Boolean(initError)}
+              disabled={isComposerDisabled}
               onClick={() => {
                 setShowGifPicker(!showGifPicker);
                 setShowEmojiPicker(false);
@@ -445,14 +453,14 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
           <input
             type="text"
-            disabled={Boolean(initError)}
+            disabled={isComposerDisabled}
             value={inputText}
             onChange={handleInputChange}
-            placeholder={initError ? 'Conversation initialization failed' : `Message ${partner.nickname}...`}
+            placeholder={loading ? 'Initializing conversation...' : initError ? 'Conversation initialization failed' : `Message ${partner.nickname}...`}
             className="flex-1 bg-[#101729] border border-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
           />
 
-          <Button type="submit" variant="primary" size="md" disabled={Boolean(initError)} className="shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
+          <Button type="submit" variant="primary" size="md" disabled={isComposerDisabled} className="shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
             <Send className="w-4 h-4 mr-1.5" />
             <span>Send</span>
           </Button>

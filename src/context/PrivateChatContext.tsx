@@ -34,7 +34,7 @@ interface PrivateChatContextType {
   sendMessage: (conversationId: string, content: string, media?: { url: string; type: 'gif' | 'image' }) => Promise<boolean>;
   markAsRead: (conversationId: string) => void;
   totalUnreadCount: number;
-  latestToast: { id: string; title: string; message: string; avatar: string; conversationId: string } | null;
+  latestToast: { id: string; title: string; message: string; avatar: string; conversationId: string; partnerId: string } | null;
   clearToast: () => void;
 }
 
@@ -45,7 +45,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [conversations, setConversations] = useState<DirectConversation[]>([]);
   const [openWindows, setOpenWindows] = useState<FloatingChatWindow[]>([]);
   const isRestoredRef = useRef(false);
-  
+
   // Persist autoOpenPrivateChats preference
   const [autoOpenPrivateChats, setAutoOpenPrivateChats] = useState<boolean>(() => {
     try {
@@ -90,7 +90,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     localStorage.setItem(`vx_open_windows_${user.id}`, JSON.stringify(metadata));
   }, [openWindows, user.id]);
 
-  const [latestToast, setLatestToast] = useState<{ id: string; title: string; message: string; avatar: string; conversationId: string } | null>(null);
+  const [latestToast, setLatestToast] = useState<{ id: string; title: string; message: string; avatar: string; conversationId: string; partnerId: string } | null>(null);
 
   const activeSubscriptionsRef = useRef<Map<string, () => void>>(new Map());
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
@@ -455,6 +455,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       message: msg.content || '[Media Attachment]',
       avatar: partnerAvatar,
       conversationId,
+      partnerId,
     });
   }, [user.id, autoOpenPrivateChats]);
 

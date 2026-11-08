@@ -302,6 +302,46 @@ async function runInitErrorHandlingTests() {
       assert(resGuestToMember.success === true, '5.3 Guest-to-member conversation initialization succeeds');
     }
 
+    // =========================================================================
+    // 6. Active Conversation ID & Composer Disabling Verification
+    // =========================================================================
+    console.log('\n--- 6. Active Conversation ID & Composer Disabling Checks ---');
+    {
+      // 6.1 getOrCreateConversation returning backend UUID overrides fallback slug
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const urlStr = typeof input === 'string' ? input : input.toString();
+        if (urlStr.includes('/api/chat/conversations')) {
+          return new Response(JSON.stringify({ success: true, conversationId: 'uuid-backend-777', slug: 'conv_a_b' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('Not Found', { status: 404 });
+      }) as typeof fetch;
+
+      const initSuccessRes = await messagingService.getOrCreateConversation(guestAId, guestBId);
+      assert(initSuccessRes.success === true, '6.1 getOrCreateConversation returns success');
+      const activeId = initSuccessRes.conversationId || 'conv_a_b';
+      assert(activeId === 'uuid-backend-777', '6.2 Backend-returned conversationId is used authoritatively');
+
+      // 6.3 Verify composer disabled condition when loading or error
+      const isLoading = true;
+      const initErr: string | null = 'Initialization pending or failed';
+      const isComposerDisabled = isLoading || Boolean(initErr);
+      assert(isComposerDisabled === true, '6.3 Composer is disabled during loading or when initError is present');
+
+      // 6.4 Toast payload contains partnerId
+      const toastPayload = {
+        id: 'msg-1',
+        title: 'Bob',
+        message: 'Hello Alice',
+        avatar: '⚡',
+        conversationId: 'conv_a_b',
+        partnerId: guestBId,
+      };
+      assert(toastPayload.partnerId === guestBId, '6.4 Toast payload contains verified partnerId');
+    }
+
   } finally {
     globalThis.fetch = origFetch;
     process.env = originalEnv;

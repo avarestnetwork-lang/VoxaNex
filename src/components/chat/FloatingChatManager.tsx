@@ -106,7 +106,10 @@ export const FloatingChatManager: React.FC = () => {
           <div className="flex items-start gap-3">
             <span className="text-2xl select-none shrink-0">{latestToast.avatar}</span>
             <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
-              openChat({ id: latestToast.conversationId, nickname: latestToast.title, avatar: latestToast.avatar });
+              const targetPartnerId = latestToast.partnerId || (openWindows.find((w) => w.conversationId === latestToast.conversationId)?.partnerId);
+              if (targetPartnerId) {
+                openChat({ id: targetPartnerId, nickname: latestToast.title, avatar: latestToast.avatar });
+              }
               clearToast();
             }}>
               <div className="text-xs font-bold text-violet-300 truncate">{latestToast.title} sent a message</div>
