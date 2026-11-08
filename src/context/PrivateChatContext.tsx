@@ -40,48 +40,59 @@ interface PrivateChatContextType {
 
 const PrivateChatContext = createContext<PrivateChatContextType | undefined>(undefined);
 
-function consolidateWindows(windows: FloatingChatWindow[]): FloatingChatWindow[] {
+export function consolidateWindows(windows: FloatingChatWindow[]): FloatingChatWindow[] {
   const map = new Map<string, FloatingChatWindow>();
   for (const w of windows) {
+    if (!w || !w.conversationId) continue;
     const key = w.conversationId;
-    const existing = map.get(key) || map.get(w.partnerId);
+    const existing = map.get(key);
     if (existing) {
       const msgMap = new Map<string, ChatMessage>();
-      existing.messages.forEach(m => msgMap.set(m.id, m));
-      w.messages.forEach(m => msgMap.set(m.id, m));
-      const mergedMessages = Array.from(msgMap.values()).sort(
-        (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime()
-      );
-      existing.messages = mergedMessages;
-      existing.unreadCount = Math.max(existing.unreadCount, w.unreadCount);
-      existing.draft = existing.draft || w.draft;
-      existing.partnerNickname = w.partnerNickname || existing.partnerNickname;
-      existing.partnerAvatar = w.partnerAvatar || existing.partnerAvatar;
-      existing.partnerGender = w.partnerGender || existing.partnerGender;
-      existing.isOpen = existing.isOpen || w.isOpen;
-      existing.isMinimized = existing.isMinimized && w.isMinimized;
-      existing.isMaximized = existing.isMaximized || w.isMaximized;
-      if (w.displayMode === 'maximized' || existing.displayMode === 'maximized') {
-        existing.displayMode = 'maximized';
-      } else if (w.displayMode === 'floating' || existing.displayMode === 'floating') {
-        existing.displayMode = 'floating';
-      }
+      existing.messages.forEach(m => { if (m && m.id) msgMap.set(m.id, m); });
+      w.messages.forEach(m => { if (m && m.id) msgMap.set(m.id, m); });
+      const mergedMessages = Array.from(msgMap.values()).sort((a, b) => {
+        const tA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return (isNaN(tA) ? 0 : tA) - (isNaN(tB) ? 0 : tB);
+      });
+
+      const draft = (w.draft !== undefined && w.draft !== '') ? w.draft : existing.draft;
+      const unreadCount = Math.max(existing.unreadCount || 0, w.unreadCount || 0);
+      const isOpen = existing.isOpen || w.isOpen;
+      const isMinimized = existing.isMinimized && w.isMinimized;
+      const isMaximized = existing.isMaximized || w.isMaximized;
+      const displayMode = (w.displayMode === 'maximized' || existing.displayMode === 'maximized') ? 'maximized' :
+                          (w.displayMode === 'floating' || existing.displayMode === 'floating') ? 'floating' : 'closed';
+
+      map.set(key, {
+        ...existing,
+        partnerId: w.partnerId || existing.partnerId,
+        partnerNickname: w.partnerNickname || existing.partnerNickname,
+        partnerAvatar: w.partnerAvatar || existing.partnerAvatar,
+        partnerGender: w.partnerGender || existing.partnerGender,
+        messages: mergedMessages,
+        unreadCount,
+        draft,
+        isOpen,
+        isMinimized,
+        isMaximized,
+        displayMode,
+      });
     } else {
       const msgMap = new Map<string, ChatMessage>();
-      w.messages.forEach(m => msgMap.set(m.id, m));
-      const sortedMessages = Array.from(msgMap.values()).sort(
-        (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime()
-      );
-      const cloned = { ...w, messages: sortedMessages };
-      map.set(key, cloned);
-      map.set(w.partnerId, cloned);
+      w.messages.forEach(m => { if (m && m.id) msgMap.set(m.id, m); });
+      const sortedMessages = Array.from(msgMap.values()).sort((a, b) => {
+        const tA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return (isNaN(tA) ? 0 : tA) - (isNaN(tB) ? 0 : tB);
+      });
+      map.set(key, {
+        ...w,
+        messages: sortedMessages,
+      });
     }
   }
-  const uniqueMap = new Map<string, FloatingChatWindow>();
-  for (const w of map.values()) {
-    uniqueMap.set(w.conversationId, w);
-  }
-  return Array.from(uniqueMap.values());
+  return Array.from(map.values());
 }
 
 export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
