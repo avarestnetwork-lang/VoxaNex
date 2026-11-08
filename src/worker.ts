@@ -52,9 +52,11 @@ interface GuestSession {
 }
 
 function getGuestSecret(env: any): { secret: string | null; isDevFallback: boolean } {
+  // GUEST_SESSION_SECRET is the ONLY accepted Worker signing-secret binding.
+  // VITE_GUEST_SESSION_SECRET and hardcoded defaults are strictly prohibited.
   const secretValue = env?.GUEST_SESSION_SECRET;
   const isDevFallback = env?.ENVIRONMENT === 'development' || env?.DEV === true;
-  if (secretValue && typeof secretValue === 'string' && secretValue.trim().length > 0) {
+  if (typeof secretValue === 'string' && secretValue.trim().length > 0) {
     return { secret: secretValue.trim(), isDevFallback };
   }
   return { 
@@ -84,14 +86,15 @@ function fromBase64Url(base64url: string): string {
 }
 
 async function signGuestToken(payload: any, secret: string): Promise<string> {
-  if (!secret) {
+  if (!secret || typeof secret !== 'string' || secret.trim().length === 0) {
     throw new Error('GUEST_SESSION_SECRET is required to sign guest tokens.');
   }
+  const cleanSecret = secret.trim();
   const base64Payload = toBase64Url(JSON.stringify(payload));
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(secret),
+    encoder.encode(cleanSecret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
@@ -115,9 +118,10 @@ async function verifyGuestToken(
   secretInfo: { secret: string | null; isDevFallback?: boolean },
   dbEnv?: { supabaseUrl?: string; supabaseServiceKey?: string }
 ): Promise<{ valid: boolean; session?: GuestSession; reason?: string; isConfigError?: boolean }> {
-  if (!secretInfo.secret) {
+  if (!secretInfo.secret || typeof secretInfo.secret !== 'string' || secretInfo.secret.trim().length === 0) {
     return { valid: false, reason: 'Server configuration error: GUEST_SESSION_SECRET is missing.' };
   }
+  const cleanSecret = secretInfo.secret.trim();
 
   if (!token || !token.startsWith('vx_gst_')) {
     return { valid: false, reason: 'Malformed token prefix' };
@@ -147,7 +151,7 @@ async function verifyGuestToken(
   try {
     const key = await crypto.subtle.importKey(
       'raw',
-      encoder.encode(secretInfo.secret),
+      encoder.encode(cleanSecret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['verify']
