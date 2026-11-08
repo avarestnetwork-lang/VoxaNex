@@ -238,11 +238,11 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     console.log('[DIAGNOSTIC] private_popup_opened', { conversationId, partnerId: partner.id });
 
     setOpenWindows((prev) => {
-      const existingIndex = prev.findIndex((w) => w.conversationId === conversationId || w.partnerId === partner.id);
+      const existingIndex = prev.findIndex((w) => w.conversationId === conversationId);
       let updated: FloatingChatWindow[];
       if (existingIndex >= 0) {
         updated = prev.map((w, idx) =>
-          idx === existingIndex || w.conversationId === conversationId || w.partnerId === partner.id
+          idx === existingIndex || w.conversationId === conversationId
             ? {
                 ...w,
                 conversationId,
@@ -471,13 +471,13 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const partnerGender = partnerInfo?.gender;
 
     setOpenWindows((prev) => {
-      const existingIndex = prev.findIndex((w) => w.conversationId === conversationId || w.partnerId === partnerId);
+      const existingIndex = prev.findIndex((w) => w.conversationId === conversationId);
       const isFocused = existingIndex >= 0 && prev[existingIndex].isOpen && !prev[existingIndex].isMinimized;
 
       let updated: FloatingChatWindow[];
       if (existingIndex >= 0) {
         updated = prev.map((w, idx) =>
-          idx === existingIndex || w.conversationId === conversationId || w.partnerId === partnerId
+          idx === existingIndex || w.conversationId === conversationId
             ? {
                 ...w,
                 conversationId,

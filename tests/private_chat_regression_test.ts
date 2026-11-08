@@ -502,6 +502,38 @@ async function runRegressionSuite() {
     'Step 7: Expanded private chat interface rendered for convId'
   );
 
+  // --- STEP 8: Explicit Minimize / Restore ---
+  console.log('\n--- Step 8: Explicit Minimize / Restore ---');
+  clientA.minimizeChat(convId);
+  assertInvariants('Step 8.1', 1, 0);
+  assert(clientA.isPublicRoomActive === true, 'Step 8.2: Public room remains active after minimize');
+  assert(clientA.openWindows.find(w => w.conversationId === convId)?.isMinimized === true, 'Step 8.3: Window is minimized');
+
+  clientA.openChat({ id: idB, nickname: 'GuestB_Sylhet', avatar: '🌸' });
+  assert(clientA.openWindows.find(w => w.conversationId === convId)?.isMinimized === false, 'Step 8.4: Window restored from minimized');
+  assert(clientA.openWindows.find(w => w.conversationId === convId)?.messages.length === 1, 'Step 8.5: Conversation and messages remain intact');
+
+  // --- STEP 9: Receiver-side Incoming Private Message ---
+  console.log('\n--- Step 9: Receiver-side Incoming Private Message ---');
+  assert(clientB.publicRoomTabPresent === true, 'Step 9.1: Guest B public room tab present');
+  assert(clientB.floatingWindowsRendered.length === 0, 'Step 9.2: Guest B starts with 0 floating windows');
+
+  clientB.handleIncomingMessage(persistRes.message!, convId, {
+    id: idA,
+    nickname: 'GuestA_Dhaka',
+    avatar: '⚡',
+  });
+
+  assert(clientB.floatingWindowsRendered.length === 1, 'Step 9.3: Guest B received incoming DM and opened floating window');
+  assert(clientB.isPublicRoomActive === true, 'Step 9.4: Guest B public room remains active');
+
+  clientB.handleIncomingMessage(persistRes.message!, convId, {
+    id: idA,
+    nickname: 'GuestA_Dhaka',
+    avatar: '⚡',
+  });
+  assert(clientB.floatingWindowsRendered.length === 1, 'Step 9.5: Repeated incoming message does not create duplicate windows');
+
   // --- STEP 10: Advanced Deduplication, Message Merging, Chronological Ordering & Responsive Sizing Assertions ---
   console.log('\n--- Step 10: Advanced Deduplication, Message Merging & Responsive Sizing Assertions ---');
 
