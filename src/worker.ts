@@ -960,32 +960,78 @@ export default {
 
       if (request.method === 'POST') {
         try {
-          const body: any = await request.json();
-          const { id, nickname, avatar, isGuest, gender, action, status } = body || {};
+          const body: any = await request.json().catch(() => ({}));
+          const { id, action, status, guestToken: bodyGuestToken } = body || {};
 
+          // 1. Authenticate Request
+          const authResult = await authenticateRequest(
+            request,
+            url,
+            guestSecretInfo,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+            supabaseClient,
+            env,
+            bodyGuestToken
+          );
+
+          if ('errorResponse' in authResult) {
+            return authResult.errorResponse;
+          }
+
+          // 2. Reject mismatched client ID
+          if (id && id !== authResult.verifiedUserId) {
+            return jsonResponse({
+              success: false,
+              error: 'Forbidden: Identity mismatch in presence update.',
+            }, 403);
+          }
+
+          // 3. Handle leave / offline (remove only authenticated caller)
           if (action === 'leave' || status === 'offline') {
-            if (id) {
-              membersMap.delete(id);
-              const currentMembers = Array.from(membersMap.values());
-              broadcastToRoom(roomId, 'presence_update', currentMembers);
-              // Broadcast to other worker instances via Supabase
-              await databaseService.broadcastMessage(roomId, { id: 'presence_sync', roomId, content: JSON.stringify(currentMembers), senderNickname: 'system', senderAvatar: '⚡', timestamp: new Date().toISOString() } as any);
-              return jsonResponse({ success: true, members: currentMembers });
-            }
+            membersMap.delete(authResult.verifiedUserId);
+            const currentMembers = Array.from(membersMap.values());
+            broadcastToRoom(roomId, 'presence_update', currentMembers);
+            // Broadcast to other worker instances via Supabase
+            await databaseService.broadcastMessage(roomId, {
+              id: 'presence_sync',
+              roomId,
+              content: JSON.stringify(currentMembers),
+              senderNickname: 'system',
+              senderAvatar: '⚡',
+              timestamp: new Date().toISOString()
+            } as any);
+            return jsonResponse({ success: true, members: currentMembers });
           }
 
-          if (id && nickname) {
-            membersMap.set(id, {
-              id,
-              nickname,
-              avatar: avatar || '👤',
-              isGuest: Boolean(isGuest),
-              gender,
-              lastSeen: Date.now(),
+          // 4. Derive Authoritative Identity
+          let verifiedNickname: string;
+          let verifiedAvatar: string;
+          let verifiedGender: string | undefined;
+
+          if (authResult.isGuestCaller && authResult.guestSession) {
+            verifiedNickname = authResult.guestSession.nickname || 'Guest';
+            verifiedAvatar = authResult.guestSession.avatar || '⚡';
+            verifiedGender = authResult.guestSession.gender || 'prefer_not_to_say';
+          } else {
+            const profile = await fetchMemberProfile(authResult.verifiedUserId, {
+              supabaseUrl: baseSupabaseUrl,
+              supabaseServiceKey,
             });
+            verifiedNickname = profile.nickname;
+            verifiedAvatar = profile.avatar;
+            verifiedGender = undefined; // Do not invent or fabricate profile gender if unavailable
           }
 
-          // Clean up stale members > 45s
+          membersMap.set(authResult.verifiedUserId, {
+            id: authResult.verifiedUserId,
+            nickname: verifiedNickname,
+            avatar: verifiedAvatar,
+            isGuest: authResult.isGuestCaller,
+            gender: verifiedGender,
+            lastSeen: Date.now(),
+          });
+
+          // 5. Clean up stale members > 45s
           const now = Date.now();
           for (const [mid, m] of membersMap.entries()) {
             if (now - m.lastSeen > 45000) {
@@ -997,8 +1043,8 @@ export default {
           broadcastToRoom(roomId, 'presence_update', currentMembers);
 
           return jsonResponse({ success: true, members: currentMembers });
-        } catch {
-          return jsonResponse({ success: false, members: Array.from(membersMap.values()) });
+        } catch (err: any) {
+          return jsonResponse({ success: false, error: err.message || 'Presence update failed' }, 500);
         }
       }
 
@@ -1016,18 +1062,53 @@ export default {
     if (typingMatch && request.method === 'POST') {
       const roomId = decodeURIComponent(typingMatch[1]);
       try {
-        const body: any = await request.json();
-        const { memberId, nickname, isTyping } = body || {};
+        const body: any = await request.json().catch(() => ({}));
+        const { memberId, isTyping, guestToken: bodyGuestToken } = body || {};
+
+        // 1. Authenticate Request
+        const authResult = await authenticateRequest(
+          request,
+          url,
+          guestSecretInfo,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+          supabaseClient,
+          env,
+          bodyGuestToken
+        );
+
+        if ('errorResponse' in authResult) {
+          return authResult.errorResponse;
+        }
+
+        // 2. Reject mismatched member ID
+        if (memberId && memberId !== authResult.verifiedUserId) {
+          return jsonResponse({
+            success: false,
+            error: 'Forbidden: Identity mismatch in typing update.',
+          }, 403);
+        }
+
+        // 3. Derive Authoritative Nickname
+        let verifiedNickname: string;
+        if (authResult.isGuestCaller && authResult.guestSession) {
+          verifiedNickname = authResult.guestSession.nickname || 'Guest';
+        } else {
+          const profile = await fetchMemberProfile(authResult.verifiedUserId, {
+            supabaseUrl: baseSupabaseUrl,
+            supabaseServiceKey,
+          });
+          verifiedNickname = profile.nickname;
+        }
 
         if (!roomTyping.has(roomId)) {
           roomTyping.set(roomId, new Map());
         }
         const typersMap = roomTyping.get(roomId)!;
 
-        if (isTyping && memberId && nickname) {
-          typersMap.set(memberId, { nickname, expiresAt: Date.now() + 3000 });
-        } else if (memberId) {
-          typersMap.delete(memberId);
+        if (isTyping) {
+          typersMap.set(authResult.verifiedUserId, { nickname: verifiedNickname, expiresAt: Date.now() + 3000 });
+        } else {
+          typersMap.delete(authResult.verifiedUserId);
         }
 
         const now = Date.now();
@@ -1039,8 +1120,8 @@ export default {
         broadcastToRoom(roomId, 'typing_update', { typers: activeTypers });
 
         return jsonResponse({ success: true });
-      } catch {
-        return jsonResponse({ success: true });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Typing update failed' }, 500);
       }
     }
 

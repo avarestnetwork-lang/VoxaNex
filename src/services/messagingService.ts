@@ -70,7 +70,7 @@ async function getAuthToken(): Promise<string | null> {
 
 export interface CustomSSEOptions {
   url: string;
-  headers?: Record<string, string>;
+  headers?: Record<string, string> | (() => Promise<Record<string, string>> | Record<string, string>);
   onOpen?: () => void;
   onEvent: (event: string, data: string) => void;
   onError?: (err: Error) => void;
@@ -90,10 +90,11 @@ export function connectCustomSSE(options: CustomSSEOptions): () => void {
     controller = new AbortController();
 
     try {
+      const resolvedHeaders = typeof headers === 'function' ? await headers() : headers;
       const response = await fetch(url, {
         headers: {
           'Accept': 'text/event-stream',
-          ...headers,
+          ...resolvedHeaders,
         },
         signal: controller.signal,
       });
@@ -315,10 +316,7 @@ export const messagingService = {
       onStatusChange?: (status: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void;
     }
   ): () => void {
-    let eventSource: EventSource | null = null;
     let isClosed = false;
-    let retryDelay = 1000;
-    let reconnectTimeout: NodeJS.Timeout | null = null;
     let syncInterval: NodeJS.Timeout | null = null;
     let broadcastChannel: BroadcastChannel | null = null;
 
@@ -360,65 +358,59 @@ export const messagingService = {
       // ignore
     }
 
-    // 3. Server-Sent Events (SSE) stream
-    const connect = () => {
-      if (isClosed) return;
-      callbacks.onStatusChange?.('connecting');
-
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-
-      eventSource = new EventSource(`${API_BASE}/api/chat/rooms/${roomId}/events`);
-
-      eventSource.addEventListener('connected', () => {
-        retryDelay = 1000;
+    // 3. Server-Sent Events (SSE) stream via connectCustomSSE with Authorization
+    callbacks.onStatusChange?.('connecting');
+    const cleanupSSE = connectCustomSSE({
+      url: `${API_BASE}/api/chat/rooms/${roomId}/events`,
+      headers: async () => {
+        const headers: Record<string, string> = {};
+        const token = await getAuthToken();
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        return headers;
+      },
+      onOpen: () => {
         callbacks.onStatusChange?.('connected');
-      });
-
-      eventSource.addEventListener('new_message', (e) => {
-        try {
-          const msg = JSON.parse(e.data);
-          emitUniqueMessage(msg);
-        } catch (err) {
-          console.warn('Failed to parse incoming room message', err);
+      },
+      onEvent: (eventName: string, dataStr: string) => {
+        if (eventName === 'connected') {
+          callbacks.onStatusChange?.('connected');
+        } else if (eventName === 'new_message' || eventName === 'message') {
+          try {
+            const msg = JSON.parse(dataStr);
+            emitUniqueMessage(msg);
+          } catch (err) {
+            console.warn('Failed to parse incoming room message', err);
+          }
+        } else if (eventName === 'presence_update') {
+          try {
+            const members = JSON.parse(dataStr);
+            callbacks.onPresence?.(members);
+          } catch {
+            // ignore
+          }
+        } else if (eventName === 'typing_update') {
+          try {
+            const data = JSON.parse(dataStr);
+            callbacks.onTyping?.(data.typers || []);
+          } catch {
+            // ignore
+          }
         }
-      });
-
-      eventSource.addEventListener('presence_update', (e) => {
-        try {
-          const members = JSON.parse(e.data);
-          callbacks.onPresence?.(members);
-        } catch {
-          // ignore
-        }
-      });
-
-      eventSource.addEventListener('typing_update', (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          callbacks.onTyping?.(data.typers || []);
-        } catch {
-          // ignore
-        }
-      });
-
-      eventSource.onerror = () => {
-        eventSource?.close();
-        eventSource = null;
+      },
+      onError: () => {
         if (!isClosed) {
           callbacks.onStatusChange?.('reconnecting');
-          if (reconnectTimeout) clearTimeout(reconnectTimeout);
-          reconnectTimeout = setTimeout(() => {
-            retryDelay = Math.min(retryDelay * 1.5, 10000);
-            connect();
-          }, retryDelay);
         }
-      };
-    };
-
-    connect();
+      },
+      onAuthError: (status, message) => {
+        console.warn(`[VX-Room] SSE authorization error ${status}:`, message);
+        if (!isClosed) {
+          callbacks.onStatusChange?.('disconnected');
+        }
+      },
+    });
 
     // 4. Background auto-sync interval (every 3.5s) to guarantee zero-refresh delivery across Cloudflare edge isolates
     syncInterval = setInterval(async () => {
@@ -439,7 +431,6 @@ export const messagingService = {
 
     return () => {
       isClosed = true;
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (syncInterval) clearInterval(syncInterval);
       if (broadcastChannel) {
         try {
@@ -448,8 +439,7 @@ export const messagingService = {
           // ignore
         }
       }
-      eventSource?.close();
-      eventSource = null;
+      cleanupSSE();
       unsubSupabase();
       callbacks.onStatusChange?.('disconnected');
     };
@@ -460,9 +450,10 @@ export const messagingService = {
    */
   async sendTyping(roomId: string, memberId: string, nickname: string, isTyping: boolean) {
     try {
+      const headers = await this.getIdentityHeaders();
       await fetch(`${API_BASE}/api/chat/rooms/${roomId}/typing`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ memberId, nickname, isTyping }),
       });
     } catch {
@@ -478,9 +469,10 @@ export const messagingService = {
     member: { id: string; nickname: string; avatar: string; isGuest: boolean; gender?: string }
   ): Promise<RealtimePresenceMember[]> {
     try {
+      const headers = await this.getIdentityHeaders();
       const res = await fetch(`${API_BASE}/api/chat/rooms/${roomId}/presence`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(member),
       });
       if (!res.ok) {
@@ -498,9 +490,10 @@ export const messagingService = {
    */
   async leaveRoom(roomId: string, memberId: string): Promise<void> {
     try {
+      const headers = await this.getIdentityHeaders();
       await fetch(`${API_BASE}/api/chat/rooms/${roomId}/presence`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ id: memberId, action: 'leave' }),
         keepalive: true,
       });
