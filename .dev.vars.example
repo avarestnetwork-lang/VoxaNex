@@ -1,10 +1,15 @@
 # Cloudflare Worker Local Development Variables (.dev.vars)
-# Populated by Wrangler when running `wrangler dev`.
+# Used by Wrangler when running `wrangler dev`.
 #
 # MANDATORY: GUEST_SESSION_SECRET must be configured in every environment.
-# Do NOT commit `.dev.vars` containing production credentials.
+# Generate a unique 32-byte hex secret for local development using:
+#   openssl rand -hex 32
+#
+# CRITICAL: The placeholder below MUST be replaced with your generated value
+# in `.dev.vars` before running Wrangler.
+# Do NOT commit `.dev.vars` or store production secrets in this file.
 
-GUEST_SESSION_SECRET="voxanex_guest_session_secret_local_dev_min_32_chars_random_entropy"
+GUEST_SESSION_SECRET="YOUR_LOCAL_DEV_GUEST_SESSION_SECRET_GENERATE_WITH_OPENSSL"
 SUPABASE_URL="https://your-project-ref.supabase.co"
 SUPABASE_ANON_KEY="your-supabase-anon-key"
 SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
