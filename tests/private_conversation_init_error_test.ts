@@ -342,6 +342,70 @@ async function runInitErrorHandlingTests() {
       assert(toastPayload.partnerId === guestBId, '6.4 Toast payload contains verified partnerId');
     }
 
+    // =========================================================================
+    // 7. PostgREST Prefer: resolution=ignore-duplicates Verification
+    // =========================================================================
+    console.log('\n--- 7. Worker resolution=ignore-duplicates verification ---');
+    {
+      const capturedHeaders: Record<string, string>[] = [];
+
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const urlStr = typeof input === 'string' ? input : input.toString();
+        const urlObj = new URL(urlStr);
+
+        if (init?.headers) {
+          const headersObj: Record<string, string> = {};
+          if (init.headers instanceof Headers) {
+            init.headers.forEach((v, k) => { headersObj[k.toLowerCase()] = v; });
+          } else if (Array.isArray(init.headers)) {
+            init.headers.forEach(([k, v]) => { headersObj[k.toLowerCase()] = v; });
+          } else {
+            Object.entries(init.headers).forEach(([k, v]) => { headersObj[k.toLowerCase()] = v as string; });
+          }
+          capturedHeaders.push(headersObj);
+        }
+
+        if (urlObj.pathname.includes('/rest/v1/guest_sessions')) {
+          return new Response(JSON.stringify([{ id: guestAId, session_token_hash: hashA, is_revoked: false, expires_at: new Date(Date.now() + 86400000).toISOString() }]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (urlObj.pathname.includes('/rest/v1/conversations')) {
+          return new Response(JSON.stringify([{ id: 'conv-db-uuid-777' }]), { status: 201, headers: { 'Content-Type': 'application/json' } });
+        }
+
+        if (urlObj.pathname.includes('/rest/v1/conversation_participants')) {
+          return new Response(JSON.stringify([{ id: 'part-1' }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+
+        return new Response('Not Found', { status: 404 });
+      }) as typeof fetch;
+
+      const reqWorkerIgnore = new Request('https://voxanex.test/api/chat/conversations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ userId: guestAId, partnerId: guestBId }),
+      });
+
+      const resWorkerIgnore = await worker.fetch(reqWorkerIgnore, env, {} as any);
+      assert(resWorkerIgnore.status === 200, '7.1 Worker initialization returns HTTP 200');
+
+      const preferHeaders = capturedHeaders
+        .map((h) => h['prefer'])
+        .filter(Boolean);
+
+      const hasIgnoreDuplicates = preferHeaders.some((p) => p.includes('resolution=ignore-duplicates'));
+      const hasMergeDuplicates = preferHeaders.some((p) => p.includes('resolution=merge-duplicates'));
+
+      assert(hasIgnoreDuplicates === true, '7.2 Worker uses resolution=ignore-duplicates preference');
+      assert(hasMergeDuplicates === false, '7.3 Worker NO LONGER uses resolution=merge-duplicates');
+    }
+
   } finally {
     globalThis.fetch = origFetch;
     process.env = originalEnv;

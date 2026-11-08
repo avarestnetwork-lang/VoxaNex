@@ -1358,7 +1358,7 @@ export default {
                 'apikey': supabaseServiceKey,
                 'Authorization': `Bearer ${supabaseServiceKey}`,
                 'Content-Type': 'application/json',
-                'Prefer': 'resolution=merge-duplicates'
+                'Prefer': 'resolution=ignore-duplicates'
               },
               body: JSON.stringify({ id: dbConvId })
             });
@@ -1412,7 +1412,7 @@ export default {
                     'apikey': supabaseServiceKey,
                     'Authorization': `Bearer ${supabaseServiceKey}`,
                     'Content-Type': 'application/json',
-                    'Prefer': 'resolution=merge-duplicates',
+                    'Prefer': 'resolution=ignore-duplicates',
                   },
                   body: JSON.stringify(payload)
                 });
@@ -2040,7 +2040,7 @@ async function authorizeConversationAccess(
                  'apikey': supabaseServiceKey,
                  'Authorization': `Bearer ${supabaseServiceKey}`,
                  'Content-Type': 'application/json',
-                 'Prefer': 'resolution=merge-duplicates'
+                 'Prefer': 'resolution=ignore-duplicates'
                },
                body: JSON.stringify({ id: dbConvId, type: 'direct' })
              }).catch(() => {});
