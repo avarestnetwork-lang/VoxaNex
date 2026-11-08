@@ -52,13 +52,16 @@ interface GuestSession {
 }
 
 function getGuestSecret(env: any): { secret: string | null; isDevFallback: boolean } {
+  // GUEST_SESSION_SECRET is the ONLY accepted Worker signing-secret binding.
+  // VITE_GUEST_SESSION_SECRET and hardcoded defaults are strictly prohibited.
   const secretValue = env?.GUEST_SESSION_SECRET;
-  if (secretValue && typeof secretValue === 'string' && secretValue.trim().length > 0) {
-    return { secret: secretValue.trim(), isDevFallback: false };
+  const isDevFallback = env?.ENVIRONMENT === 'development' || env?.DEV === true;
+  if (typeof secretValue === 'string' && secretValue.trim().length > 0) {
+    return { secret: secretValue.trim(), isDevFallback };
   }
   return { 
     secret: null, 
-    isDevFallback: env?.ENVIRONMENT === 'development' || env?.DEV === true 
+    isDevFallback 
   };
 }
 
@@ -83,14 +86,15 @@ function fromBase64Url(base64url: string): string {
 }
 
 async function signGuestToken(payload: any, secret: string): Promise<string> {
-  if (!secret) {
+  if (!secret || typeof secret !== 'string' || secret.trim().length === 0) {
     throw new Error('GUEST_SESSION_SECRET is required to sign guest tokens.');
   }
+  const cleanSecret = secret.trim();
   const base64Payload = toBase64Url(JSON.stringify(payload));
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(secret),
+    encoder.encode(cleanSecret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
@@ -111,12 +115,13 @@ async function computeTokenHash(token: string): Promise<string> {
 
 async function verifyGuestToken(
   token: string | undefined,
-  secretInfo: { secret: string | null },
+  secretInfo: { secret: string | null; isDevFallback?: boolean },
   dbEnv?: { supabaseUrl?: string; supabaseServiceKey?: string }
-): Promise<{ valid: boolean; session?: GuestSession; reason?: string }> {
-  if (!secretInfo.secret) {
+): Promise<{ valid: boolean; session?: GuestSession; reason?: string; isConfigError?: boolean }> {
+  if (!secretInfo.secret || typeof secretInfo.secret !== 'string' || secretInfo.secret.trim().length === 0) {
     return { valid: false, reason: 'Server configuration error: GUEST_SESSION_SECRET is missing.' };
   }
+  const cleanSecret = secretInfo.secret.trim();
 
   if (!token || !token.startsWith('vx_gst_')) {
     return { valid: false, reason: 'Malformed token prefix' };
@@ -146,7 +151,7 @@ async function verifyGuestToken(
   try {
     const key = await crypto.subtle.importKey(
       'raw',
-      encoder.encode(secretInfo.secret),
+      encoder.encode(cleanSecret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['verify']
@@ -188,13 +193,16 @@ async function verifyGuestToken(
 
     // Mandatory durable revocation & existence verification against public.guest_sessions
     if (!dbEnv?.supabaseUrl || !dbEnv?.supabaseServiceKey) {
+      if (!secretInfo.isDevFallback) {
+        return { valid: false, isConfigError: true, reason: 'Server configuration error: Database bindings missing in production.' };
+      }
       return { valid: false, reason: 'Database configuration missing for guest session verification.' };
     }
 
     const tokenHash = await computeTokenHash(token);
     let canonicalRow: any = null;
     try {
-      const queryUrl = `${dbEnv.supabaseUrl}/rest/v1/guest_sessions?session_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,is_revoked,expires_at`;
+      const queryUrl = `${dbEnv.supabaseUrl}/rest/v1/guest_sessions?session_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,session_token_hash,is_revoked,expires_at`;
       const res = await fetch(queryUrl, {
         headers: {
           'apikey': dbEnv.supabaseServiceKey,
@@ -207,21 +215,40 @@ async function verifyGuestToken(
         return { valid: false, reason: `Database verification failed (HTTP ${res.status})` };
       }
 
-      const rows: any = await res.json().catch(() => []);
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return { valid: false, reason: 'Guest session not found or unregistered.' };
+      let rows: any;
+      try {
+        rows = await res.json();
+      } catch {
+        return { valid: false, reason: 'Malformed JSON response from database.' };
+      }
+
+      if (!Array.isArray(rows)) {
+        return { valid: false, reason: 'Invalid database response: expected an array.' };
+      }
+
+      if (rows.length !== 1) {
+        return { valid: false, reason: rows.length === 0 ? 'Guest session not found or unregistered.' : 'Ambiguous session: multiple records matched.' };
       }
 
       canonicalRow = rows[0];
 
+      if (!canonicalRow || typeof canonicalRow !== 'object') {
+        return { valid: false, reason: 'Invalid canonical session record.' };
+      }
+
       // Explicitly enforce row.id === p.sid
-      if (canonicalRow.id !== p.sid) {
+      if (canonicalRow.id !== p.sid || typeof canonicalRow.id !== 'string') {
         return { valid: false, reason: 'Session identity mismatch.' };
       }
 
-      if (canonicalRow.is_revoked) {
+      // Explicitly enforce session_token_hash match
+      if (canonicalRow.session_token_hash !== tokenHash) {
+        return { valid: false, reason: 'Token hash verification mismatch.' };
+      }
+
+      if (canonicalRow.is_revoked !== false) {
         guestSessions.delete(token);
-        return { valid: false, reason: 'Guest session has been revoked.' };
+        return { valid: false, reason: 'Guest session has been revoked or revocation status is invalid.' };
       }
 
       // Authoritative database expiry validation
@@ -255,6 +282,145 @@ async function verifyGuestToken(
   } catch (err: any) {
     return { valid: false, reason: 'Token verification exception: ' + (err.message || 'Malformed') };
   }
+}
+
+async function authenticateRequest(
+  request: Request,
+  url: URL,
+  guestSecretInfo: { secret: string | null; isDevFallback: boolean },
+  dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string; supabaseAnonKey?: string },
+  supabaseClient?: any,
+  env?: any,
+  bodyToken?: string
+): Promise<{ verifiedUserId: string; isGuestCaller: boolean; guestSession?: GuestSession } | { errorResponse: Response }> {
+  const authHeader = request.headers.get('Authorization');
+  const bearerToken = authHeader && authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7).trim()
+    : null;
+
+  const headerGuestToken = bearerToken && bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+  const memberJwt = bearerToken && !bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+  const effectiveBodyToken = bodyToken && bodyToken.startsWith('vx_gst_') ? bodyToken : null;
+
+  // Registered member priority
+  if (memberJwt) {
+    if (!dbEnv.supabaseUrl && !guestSecretInfo.isDevFallback) {
+      return {
+        errorResponse: jsonResponse({
+          success: false,
+          error: 'Server configuration error: Database bindings missing in production.',
+        }, 503)
+      };
+    }
+
+    let verifiedUserId: string | null = null;
+    if (dbEnv.supabaseUrl) {
+      try {
+        const userRes = await fetch(`${dbEnv.supabaseUrl}/auth/v1/user`, {
+          headers: {
+            'apikey': dbEnv.supabaseAnonKey || dbEnv.supabaseServiceKey || '',
+            'Authorization': `Bearer ${memberJwt}`,
+          },
+        });
+        if (userRes.ok) {
+          const userData: any = await userRes.json();
+          if (userData && userData.id) {
+            verifiedUserId = userData.id;
+          }
+        }
+      } catch (err) {
+        console.warn('[Worker] Supabase member verification fetch exception:', err);
+      }
+    }
+
+    if (!verifiedUserId && supabaseClient) {
+      try {
+        const { data: userData, error: userErr } = await supabaseClient.auth.getUser(memberJwt);
+        if (!userErr && userData?.user?.id) {
+          verifiedUserId = userData.user.id;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (verifiedUserId) {
+      return { verifiedUserId, isGuestCaller: false };
+    }
+    
+    // If a member JWT was provided but could not be verified, reject immediately.
+    // Do not fallback to guest authentication to prevent silent downgrades.
+    return {
+      errorResponse: jsonResponse({
+        success: false,
+        error: 'Unauthorized: Invalid or expired member authentication token.',
+      }, 401)
+    };
+  }
+
+  // Guest token handling
+  const finalGuestToken = headerGuestToken || effectiveBodyToken;
+
+  if (finalGuestToken) {
+    // If both exist, they must match
+    if (headerGuestToken && effectiveBodyToken && headerGuestToken !== effectiveBodyToken) {
+      return {
+        errorResponse: jsonResponse({
+          success: false,
+          error: 'Conflicting guest authentication tokens in header and body.',
+        }, 400)
+      };
+    }
+
+    const authCheck = await verifyGuestToken(finalGuestToken, guestSecretInfo, dbEnv);
+    if (!authCheck.valid || !authCheck.session) {
+      const status = (authCheck as any).isConfigError ? 503 : 401;
+      return {
+        errorResponse: jsonResponse({
+          success: false,
+          error: (authCheck as any).isConfigError
+            ? authCheck.reason
+            : `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}`,
+        }, status)
+      };
+    }
+    return { verifiedUserId: authCheck.session.id, isGuestCaller: true, guestSession: authCheck.session };
+  }
+
+  return {
+    errorResponse: jsonResponse({
+      success: false,
+      error: 'Unauthorized: Authentication required.',
+    }, 401)
+  };
+}
+
+async function fetchMemberProfile(
+  userId: string,
+  dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string }
+): Promise<{ nickname: string; avatar: string }> {
+  const fallback = { nickname: 'User', avatar: '👤' };
+  if (!dbEnv.supabaseUrl || !dbEnv.supabaseServiceKey) return fallback;
+  try {
+    const res = await fetch(`${dbEnv.supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=nickname,avatar_url`, {
+      headers: {
+        'apikey': dbEnv.supabaseServiceKey,
+        'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+      },
+    });
+    if (res.ok) {
+      const rows: any = await res.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        return {
+          nickname: rows[0].nickname || fallback.nickname,
+          avatar: rows[0].avatar_url || fallback.avatar,
+        };
+      }
+    }
+  } catch (err) {
+    console.error('[Worker] Error fetching member profile:', err);
+  }
+  return fallback;
 }
 
 // Global in-memory maps for Edge instance
@@ -409,6 +575,26 @@ export default {
     const userSseMatch = url.pathname.match(/^\/api\/chat\/user\/([^/]+)\/events\/?$/);
     if (userSseMatch && request.method === 'GET') {
       const userId = decodeURIComponent(userSseMatch[1]);
+
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      if (authResult.verifiedUserId !== userId) {
+        return jsonResponse({
+          success: false,
+          error: 'Unauthorized: Cannot subscribe to another user\'s direct message stream.',
+        }, 403);
+      }
+
       let intervalId: any = null;
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
@@ -467,6 +653,19 @@ export default {
     const sseMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)\/events\/?$/);
     if (sseMatch && request.method === 'GET') {
       const roomId = decodeURIComponent(sseMatch[1]);
+
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
       let intervalId: any = null;
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
@@ -578,43 +777,69 @@ export default {
       // POST: Send new message
       if (request.method === 'POST') {
         try {
-          const body: any = await request.json();
+          const body: any = await request.json().catch(() => ({}));
           const {
-            senderId,
-            senderNickname,
-            senderAvatar,
-            senderType = 'guest',
             content,
             mediaUrl,
             mediaType,
             linkPreview,
             clientNonce,
+            senderId: clientSenderId,
+            senderType: clientSenderType,
+            guestToken: bodyGuestToken,
           } = body || {};
 
-          if (!senderId || !senderNickname) {
-            return jsonResponse({ success: false, error: 'Invalid sender profile.' }, 400);
+          // 1. Authenticate Request (Deterministic precedence)
+          const authResult = await authenticateRequest(
+            request,
+            url,
+            guestSecretInfo,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+            supabaseClient,
+            env,
+            bodyGuestToken
+          );
+
+          if ('errorResponse' in authResult) {
+            return authResult.errorResponse;
+          }
+
+          const { verifiedUserId, isGuestCaller, guestSession } = authResult;
+
+          // 2. Validate senderType
+          const senderType = clientSenderType || 'guest';
+          if (!['registered', 'guest'].includes(senderType)) {
+             return jsonResponse({ success: false, error: 'Bad Request: Missing or invalid senderType.' }, 400);
+          }
+
+          // Cross-check declared type and verified identity
+          if (isGuestCaller && senderType !== 'guest') {
+             return jsonResponse({ success: false, error: 'Forbidden: Guest session cannot claim registered identity.' }, 403);
+          }
+          if (!isGuestCaller && senderType !== 'registered') {
+             return jsonResponse({ success: false, error: 'Forbidden: Registered session cannot be downgraded to guest identity.' }, 403);
+          }
+
+          // 3. Identity Spoofing Check
+          if (clientSenderId && clientSenderId !== verifiedUserId) {
+             return jsonResponse({ success: false, error: 'Forbidden: Sender identity mismatch (spoofing attempt rejected).' }, 403);
           }
 
           if (!content && !mediaUrl) {
             return jsonResponse({ success: false, error: 'Message content or media is required.' }, 400);
           }
 
-          let verifiedSenderId = senderId;
-          let verifiedNickname = senderNickname;
-          let verifiedAvatar = senderAvatar || '👤';
+          // 4. Derive Identity from Verified Source (Zero-trust fallback)
+          let verifiedNickname: string;
+          let verifiedAvatar: string;
 
-          if (senderType === 'guest') {
-            const guestToken = body?.guestToken;
-            const authCheck = await verifyGuestToken(guestToken, guestSecretInfo, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey });
-            if (!authCheck.valid || !authCheck.session) {
-              return jsonResponse({
-                success: false,
-                error: `Unauthorized: ${authCheck.reason || 'Invalid or missing guest session token.'}`,
-              }, 401);
-            }
-            verifiedSenderId = authCheck.session.id;
-            verifiedNickname = authCheck.session.nickname;
-            verifiedAvatar = authCheck.session.avatar;
+          if (isGuestCaller && guestSession) {
+            verifiedNickname = guestSession.nickname;
+            verifiedAvatar = guestSession.avatar;
+          } else {
+            const profile = await fetchMemberProfile(verifiedUserId, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey });
+            verifiedNickname = profile.nickname;
+            verifiedAvatar = profile.avatar;
           }
 
           const cleanContent = sanitizeContent(content || '');
@@ -622,10 +847,10 @@ export default {
           const message: HubMessage = {
             id: crypto.randomUUID(),
             roomId,
-            senderId: verifiedSenderId,
+            senderId: verifiedUserId,
             senderNickname: verifiedNickname,
             senderAvatar: verifiedAvatar,
-            senderType,
+            senderType: isGuestCaller ? 'guest' : 'registered',
             content: cleanContent,
             rawContent: content,
             mediaUrl,
@@ -636,71 +861,40 @@ export default {
             status: 'delivered',
           };
 
-          if (!roomMessages.has(roomId)) {
-            roomMessages.set(roomId, []);
-          }
-          const list = roomMessages.get(roomId)!;
-
-          // Deduplicate if clientNonce already exists
-          if (clientNonce && list.some((m) => m.clientNonce === clientNonce)) {
-            const existing = list.find((m) => m.clientNonce === clientNonce)!;
-            return jsonResponse({ success: true, message: existing });
-          }
-
-          list.push(message);
-          if (list.length > 500) {
-            list.shift();
-          }
-
-          // Secure server-side Supabase persistence using service-role key if configured
+          // 5. Atomic Persistence-before-Broadcast
+          let isInserted = true;
           if (baseSupabaseUrl && supabaseServiceKey) {
-            try {
-              // Resolve slug to real UUID for database persistence
-              const realRoomId = await databaseService.resolveRoomId(roomId, supabaseClient);
-              
-              if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(realRoomId)) {
-                console.error(`[Worker] Failed to resolve room slug '${roomId}' to valid UUID. Resolved: '${realRoomId}'`);
-                return jsonResponse({
-                  success: false,
-                  error: 'Database persistence failed: Invalid room identifier.'
-                }, 400);
-              }
-              
-              const dbRes = await fetch(`${baseSupabaseUrl}/rest/v1/messages`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'apikey': supabaseServiceKey,
-                  'Authorization': `Bearer ${supabaseServiceKey}`,
-                  'Prefer': 'return=minimal',
-                },
-                body: JSON.stringify({
-                  id: message.id,
-                  room_id: realRoomId,
-                  sender_guest_id: senderType === 'guest' ? verifiedSenderId : null,
-                  sender_user_id: senderType === 'registered' ? verifiedSenderId : null,
-                  sender_nickname: verifiedNickname,
-                  sender_avatar: verifiedAvatar,
-                  content: cleanContent,
-                  client_nonce: clientNonce,
-                }),
-              });
+             const result = await databaseService.atomicMessage({
+                id: message.id,
+                roomId: roomId,
+                senderUserId: isGuestCaller ? undefined : verifiedUserId,
+                senderGuestId: isGuestCaller ? verifiedUserId : undefined,
+                senderNickname: verifiedNickname,
+                senderAvatar: verifiedAvatar,
+                content: cleanContent,
+                clientNonce: clientNonce,
+                mediaUrl,
+                mediaType,
+                linkPreview
+             }, supabaseClient);
 
-              if (!dbRes.ok) {
-                const errText = await dbRes.text().catch(() => '');
-                console.error(`[Worker] Supabase message persistence failed HTTP ${dbRes.status}:`, errText);
-                return jsonResponse({
-                  success: false,
-                  error: `Database persistence failed (HTTP ${dbRes.status}). Message was not saved.`
-                }, 500);
-              }
-            } catch (dbErr: any) {
-              console.error('[Worker] Supabase persistence exception:', dbErr);
-              return jsonResponse({
-                success: false,
-                error: 'Database error: Unable to persist message.'
-              }, 500);
-            }
+             if (!result.success) {
+               return jsonResponse({
+                 success: false,
+                 error: result.error || 'Database persistence failed.'
+               }, 500);
+             }
+
+             isInserted = result.inserted;
+
+             // Use the confirmed canonical message from DB
+             if (result.message) {
+               message.id = result.message.id;
+               message.timestamp = result.message.timestamp;
+               message.content = result.message.content;
+               message.senderNickname = result.message.senderNickname;
+               message.senderAvatar = result.message.senderAvatar;
+             }
           } else if (!guestSecretInfo.isDevFallback) {
             return jsonResponse({
               success: false,
@@ -708,35 +902,40 @@ export default {
             }, 503);
           }
 
-          // Broadcast to all active SSE subscribers in this room (Isolate-local)
-          broadcastToRoom(roomId, 'new_message', message);
-
           const rtDiag: any = {
               platform: 'Cloudflare Worker',
               hasSupabaseUrl: !!env?.SUPABASE_URL,
               hasServiceRoleKey: !!env?.SUPABASE_SERVICE_ROLE_KEY,
               supabaseClientReady: !!supabaseClient,
-              senderType
+              senderType: isGuestCaller ? 'guest' : 'registered'
           };
 
-          // Broadcast to Supabase Realtime (Cross-environment / Cross-isolate)
-          const rtPromise = (async () => {
-              if (!supabaseClient) {
-                  rtDiag.rtStatus = 'no_client';
-                  return;
-              }
-              try {
-                  const status = await databaseService.broadcastMessage(roomId, message as any, supabaseClient);
-                  rtDiag.rtStatus = status;
-                  console.log(`[Worker] Supabase RT broadcast status for room ${roomId}: ${status}`);
-              } catch (e: any) {
-                  rtDiag.rtError = e.message || 'Unknown RT error';
-                  console.warn(`[Worker] Supabase RT broadcast failed for room ${roomId}:`, e);
-              }
-          })();
+          // 6. Update Local Map & Broadcast (Only for newly inserted messages)
+          if (isInserted) {
+            if (!roomMessages.has(roomId)) {
+              roomMessages.set(roomId, []);
+            }
+            const list = roomMessages.get(roomId)!;
 
-          if (ctx?.waitUntil) {
-              ctx.waitUntil(rtPromise);
+            list.push(message);
+            if (list.length > 500) {
+              list.shift();
+            }
+
+            broadcastToRoom(roomId, 'new_message', message);
+
+            const rtPromise = (async () => {
+                if (!supabaseClient) return;
+                try {
+                    await databaseService.broadcastMessage(roomId, message as any, supabaseClient);
+                } catch (e: any) {
+                    console.warn(`[Worker] Supabase RT broadcast failed for room ${roomId}:`, e);
+                }
+            })();
+
+            if (ctx?.waitUntil) {
+                ctx.waitUntil(rtPromise);
+            }
           }
 
           return jsonResponse({
@@ -744,7 +943,6 @@ export default {
             message,
             serverDiag: rtDiag
           });
-
 
         } catch (err: any) {
           return jsonResponse({ success: false, error: 'Failed to process message: ' + (err.message || 'Malformed body') }, 400);
@@ -766,32 +964,78 @@ export default {
 
       if (request.method === 'POST') {
         try {
-          const body: any = await request.json();
-          const { id, nickname, avatar, isGuest, gender, action, status } = body || {};
+          const body: any = await request.json().catch(() => ({}));
+          const { id, action, status, guestToken: bodyGuestToken } = body || {};
 
+          // 1. Authenticate Request
+          const authResult = await authenticateRequest(
+            request,
+            url,
+            guestSecretInfo,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+            supabaseClient,
+            env,
+            bodyGuestToken
+          );
+
+          if ('errorResponse' in authResult) {
+            return authResult.errorResponse;
+          }
+
+          // 2. Reject mismatched client ID
+          if (id && id !== authResult.verifiedUserId) {
+            return jsonResponse({
+              success: false,
+              error: 'Forbidden: Identity mismatch in presence update.',
+            }, 403);
+          }
+
+          // 3. Handle leave / offline (remove only authenticated caller)
           if (action === 'leave' || status === 'offline') {
-            if (id) {
-              membersMap.delete(id);
-              const currentMembers = Array.from(membersMap.values());
-              broadcastToRoom(roomId, 'presence_update', currentMembers);
-              // Broadcast to other worker instances via Supabase
-              await databaseService.broadcastMessage(roomId, { id: 'presence_sync', roomId, content: JSON.stringify(currentMembers), senderNickname: 'system', senderAvatar: '⚡', timestamp: new Date().toISOString() } as any);
-              return jsonResponse({ success: true, members: currentMembers });
-            }
+            membersMap.delete(authResult.verifiedUserId);
+            const currentMembers = Array.from(membersMap.values());
+            broadcastToRoom(roomId, 'presence_update', currentMembers);
+            // Broadcast to other worker instances via Supabase
+            await databaseService.broadcastMessage(roomId, {
+              id: 'presence_sync',
+              roomId,
+              content: JSON.stringify(currentMembers),
+              senderNickname: 'system',
+              senderAvatar: '⚡',
+              timestamp: new Date().toISOString()
+            } as any);
+            return jsonResponse({ success: true, members: currentMembers });
           }
 
-          if (id && nickname) {
-            membersMap.set(id, {
-              id,
-              nickname,
-              avatar: avatar || '👤',
-              isGuest: Boolean(isGuest),
-              gender,
-              lastSeen: Date.now(),
+          // 4. Derive Authoritative Identity
+          let verifiedNickname: string;
+          let verifiedAvatar: string;
+          let verifiedGender: string | undefined;
+
+          if (authResult.isGuestCaller && authResult.guestSession) {
+            verifiedNickname = authResult.guestSession.nickname || 'Guest';
+            verifiedAvatar = authResult.guestSession.avatar || '⚡';
+            verifiedGender = authResult.guestSession.gender || 'prefer_not_to_say';
+          } else {
+            const profile = await fetchMemberProfile(authResult.verifiedUserId, {
+              supabaseUrl: baseSupabaseUrl,
+              supabaseServiceKey,
             });
+            verifiedNickname = profile.nickname;
+            verifiedAvatar = profile.avatar;
+            verifiedGender = undefined; // Do not invent or fabricate profile gender if unavailable
           }
 
-          // Clean up stale members > 45s
+          membersMap.set(authResult.verifiedUserId, {
+            id: authResult.verifiedUserId,
+            nickname: verifiedNickname,
+            avatar: verifiedAvatar,
+            isGuest: authResult.isGuestCaller,
+            gender: verifiedGender,
+            lastSeen: Date.now(),
+          });
+
+          // 5. Clean up stale members > 45s
           const now = Date.now();
           for (const [mid, m] of membersMap.entries()) {
             if (now - m.lastSeen > 45000) {
@@ -803,8 +1047,8 @@ export default {
           broadcastToRoom(roomId, 'presence_update', currentMembers);
 
           return jsonResponse({ success: true, members: currentMembers });
-        } catch {
-          return jsonResponse({ success: false, members: Array.from(membersMap.values()) });
+        } catch (err: any) {
+          return jsonResponse({ success: false, error: err.message || 'Presence update failed' }, 500);
         }
       }
 
@@ -822,18 +1066,53 @@ export default {
     if (typingMatch && request.method === 'POST') {
       const roomId = decodeURIComponent(typingMatch[1]);
       try {
-        const body: any = await request.json();
-        const { memberId, nickname, isTyping } = body || {};
+        const body: any = await request.json().catch(() => ({}));
+        const { memberId, isTyping, guestToken: bodyGuestToken } = body || {};
+
+        // 1. Authenticate Request
+        const authResult = await authenticateRequest(
+          request,
+          url,
+          guestSecretInfo,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+          supabaseClient,
+          env,
+          bodyGuestToken
+        );
+
+        if ('errorResponse' in authResult) {
+          return authResult.errorResponse;
+        }
+
+        // 2. Reject mismatched member ID
+        if (memberId && memberId !== authResult.verifiedUserId) {
+          return jsonResponse({
+            success: false,
+            error: 'Forbidden: Identity mismatch in typing update.',
+          }, 403);
+        }
+
+        // 3. Derive Authoritative Nickname
+        let verifiedNickname: string;
+        if (authResult.isGuestCaller && authResult.guestSession) {
+          verifiedNickname = authResult.guestSession.nickname || 'Guest';
+        } else {
+          const profile = await fetchMemberProfile(authResult.verifiedUserId, {
+            supabaseUrl: baseSupabaseUrl,
+            supabaseServiceKey,
+          });
+          verifiedNickname = profile.nickname;
+        }
 
         if (!roomTyping.has(roomId)) {
           roomTyping.set(roomId, new Map());
         }
         const typersMap = roomTyping.get(roomId)!;
 
-        if (isTyping && memberId && nickname) {
-          typersMap.set(memberId, { nickname, expiresAt: Date.now() + 3000 });
-        } else if (memberId) {
-          typersMap.delete(memberId);
+        if (isTyping) {
+          typersMap.set(authResult.verifiedUserId, { nickname: verifiedNickname, expiresAt: Date.now() + 3000 });
+        } else {
+          typersMap.delete(authResult.verifiedUserId);
         }
 
         const now = Date.now();
@@ -845,8 +1124,8 @@ export default {
         broadcastToRoom(roomId, 'typing_update', { typers: activeTypers });
 
         return jsonResponse({ success: true });
-      } catch {
-        return jsonResponse({ success: true });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Typing update failed' }, 500);
       }
     }
 
@@ -1069,7 +1348,6 @@ export default {
               return jsonResponse({ success: false, error: 'Partner identity could not be verified or user does not exist.' }, 400);
             }
 
-            // Generate deterministic conversation ID and slug using verified caller and partner IDs
             dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, resolvedPartnerId);
             convId = `conv_${[verifiedUserId, resolvedPartnerId].sort().join('_')}`;
 
@@ -1080,7 +1358,7 @@ export default {
                 'apikey': supabaseServiceKey,
                 'Authorization': `Bearer ${supabaseServiceKey}`,
                 'Content-Type': 'application/json',
-                'Prefer': 'resolution=merge-duplicates'
+                'Prefer': 'resolution=ignore-duplicates'
               },
               body: JSON.stringify({ id: dbConvId })
             });
@@ -1134,6 +1412,7 @@ export default {
                     'apikey': supabaseServiceKey,
                     'Authorization': `Bearer ${supabaseServiceKey}`,
                     'Content-Type': 'application/json',
+                    'Prefer': 'resolution=ignore-duplicates',
                   },
                   body: JSON.stringify(payload)
                 });
@@ -1141,7 +1420,7 @@ export default {
                 if (!insertRes.ok) {
                   // Concurrent insert race condition handling: re-verify if participant row was persisted concurrently
                   const recheckRes = await fetch(
-                    `${baseSupabaseUrl}/rest/v1/conversation_participants?${filter}&select=id`,
+                    `${baseSupabaseUrl}/rest/v1/conversation_participants?${filter}&select=conversation_id,user_id,guest_id`,
                     {
                       headers: {
                         'apikey': supabaseServiceKey,
@@ -1152,8 +1431,21 @@ export default {
 
                   let recheckExists = false;
                   if (recheckRes.ok) {
-                    const recheckRows: any = await recheckRes.json().catch(() => []);
-                    recheckExists = Array.isArray(recheckRows) && recheckRows.length > 0;
+                    try {
+                      const recheckRows: any = await recheckRes.json();
+                      if (Array.isArray(recheckRows)) {
+                        recheckExists = recheckRows.some((row: any) => {
+                          if (!row || typeof row !== 'object') return false;
+                          const matchesConv = row.conversation_id === dbConvId;
+                          const matchesId = p.type === 'guest'
+                            ? row.guest_id === p.id
+                            : row.user_id === p.id;
+                          return matchesConv && matchesId;
+                        });
+                      }
+                    } catch {
+                      recheckExists = false;
+                    }
                   }
 
                   if (!recheckExists) {
@@ -1191,10 +1483,264 @@ export default {
       }
     }
 
+async function authorizeConversationAccess(
+  convIdParam: string,
+  verifiedUserId: string,
+  isGuestCaller: boolean,
+  dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string },
+  guestSecretInfo: { isDevFallback: boolean }
+): Promise<
+  | { authorized: true; dbConvId: string; convSlug: string; recipientId: string }
+  | { authorized: false; errorResponse: Response }
+> {
+  const uuidFullRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let requestedSlugRecipientId: string | null = null;
+  let convSlug: string = '';
+  let dbConvId: string = '';
+
+  if (convIdParam.startsWith('conv_')) {
+    const idWithoutPrefix = convIdParam.slice('conv_'.length);
+    const parts = idWithoutPrefix.split('_');
+
+    if (parts.length !== 2) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Invalid conversation slug format.' }, 400),
+      };
+    }
+
+    const [id1, id2] = parts;
+    if (!uuidFullRegex.test(id1) || !uuidFullRegex.test(id2)) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Invalid participant identifier in conversation slug.' }, 400),
+      };
+    }
+
+    if (id1 === id2) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Invalid conversation slug: Duplicate participant identifiers.' }, 400),
+      };
+    }
+
+    if (id1 !== verifiedUserId && id2 !== verifiedUserId) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Authenticated caller is not a participant in this conversation slug.' }, 403),
+      };
+    }
+
+    requestedSlugRecipientId = id1 === verifiedUserId ? id2 : id1;
+    convSlug = `conv_${[id1, id2].sort().join('_')}`;
+    dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, requestedSlugRecipientId);
+  } else if (uuidFullRegex.test(convIdParam)) {
+    dbConvId = convIdParam;
+  } else {
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({ success: false, error: 'Invalid conversation identifier format.' }, 400),
+    };
+  }
+
+  // Database verification (Strictly Read-Only)
+  if (dbEnv.supabaseUrl && dbEnv.supabaseServiceKey) {
+    try {
+      const partsUrl = `${dbEnv.supabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(dbConvId)}&select=user_id,guest_id`;
+      const partsRes = await fetch(partsUrl, {
+        headers: {
+          'apikey': dbEnv.supabaseServiceKey,
+          'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+        },
+      });
+
+      if (!partsRes.ok) {
+        console.error(`[Worker] Participant lookup HTTP error ${partsRes.status}`);
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: `Database error verifying membership (HTTP ${partsRes.status}).` }, 500),
+        };
+      }
+
+      let rows: any;
+      try {
+        rows = await partsRes.json();
+      } catch (err) {
+        console.error('[Worker] Participant JSON parse error:', err);
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Database error parsing participant records.' }, 500),
+        };
+      }
+
+      if (!Array.isArray(rows)) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Invalid participant data format.' }, 403),
+        };
+      }
+
+      if (rows.length !== 2) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Conversation must have exactly two participant records.' }, 403),
+        };
+      }
+
+      const verifiedParticipantIds: string[] = [];
+      let callerFound = false;
+
+      for (const row of rows) {
+        if (!row || typeof row !== 'object') {
+          return {
+            authorized: false,
+            errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Invalid participant record format.' }, 403),
+          };
+        }
+
+        const hasUserId = typeof row.user_id === 'string' && row.user_id.trim().length > 0;
+        const hasGuestId = typeof row.guest_id === 'string' && row.guest_id.trim().length > 0;
+
+        // Reject rows where both columns are populated or both columns are null/invalid
+        if ((hasUserId && hasGuestId) || (!hasUserId && !hasGuestId)) {
+          return {
+            authorized: false,
+            errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Participant record must have exactly one identity column populated.' }, 403),
+          };
+        }
+
+        const identityId = hasUserId ? row.user_id.trim() : row.guest_id.trim();
+        if (!uuidFullRegex.test(identityId)) {
+          return {
+            authorized: false,
+            errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Invalid identity identifier in participant record.' }, 403),
+          };
+        }
+
+        // Require authenticated caller to match the correct identity column
+        if (identityId === verifiedUserId) {
+          if (isGuestCaller && !hasGuestId) {
+            return {
+              authorized: false,
+              errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Guest caller identity mismatch with user_id column.' }, 403),
+            };
+          }
+          if (!isGuestCaller && !hasUserId) {
+            return {
+              authorized: false,
+              errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Registered caller identity mismatch with guest_id column.' }, 403),
+            };
+          }
+          callerFound = true;
+        }
+
+        verifiedParticipantIds.push(identityId);
+      }
+
+      if (!callerFound) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Authenticated caller is not a participant in this conversation.' }, 403),
+        };
+      }
+
+      // Reject duplicate participant identities
+      const uniqueIds = Array.from(new Set(verifiedParticipantIds));
+      if (uniqueIds.length !== 2) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Conversation participant identities must be distinct.' }, 403),
+        };
+      }
+
+      // Derive actual recipient from database records
+      const dbRecipientId = verifiedParticipantIds.find((id) => id !== verifiedUserId);
+      if (!dbRecipientId) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Recipient participant not found in conversation.' }, 403),
+        };
+      }
+
+      // If a slug was requested, the slug's recipient must match the DB's recipient
+      if (requestedSlugRecipientId && requestedSlugRecipientId !== dbRecipientId) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Conversation slug does not match database participants.' }, 403),
+        };
+      }
+
+      // Verify the dbConvId matches the deterministic UUID for (verifiedUserId, dbRecipientId)
+      const expectedDbConvId = await databaseService.getDeterministicConvId(verifiedUserId, dbRecipientId);
+      if (dbConvId !== expectedDbConvId) {
+        return {
+          authorized: false,
+          errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Conversation UUID mismatch.' }, 403),
+        };
+      }
+
+      const canonicalSlug = `conv_${[verifiedUserId, dbRecipientId].sort().join('_')}`;
+      return { authorized: true, dbConvId, convSlug: canonicalSlug, recipientId: dbRecipientId };
+    } catch (err) {
+      console.error('[Worker] DB authorization exception:', err);
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({ success: false, error: 'Database authorization error.' }, 500),
+      };
+    }
+  } else if (!guestSecretInfo.isDevFallback) {
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({ success: false, error: 'Server configuration error: Database bindings missing in production.' }, 503),
+    };
+  } else {
+    // Local development fallback
+    const recipientId = requestedSlugRecipientId || 'dev_partner';
+    if (convSlug && (convSlug.includes(verifiedUserId) || dbConvId.includes(verifiedUserId))) {
+      return { authorized: true, dbConvId, convSlug, recipientId };
+    }
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({ success: false, error: 'Unauthorized: Not a member of this conversation.' }, 403),
+    };
+  }
+}
+
     // GET /api/chat/conversations/:id/events: SSE Stream for conversation
     const convEventsMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/events\/?$/);
     if (convEventsMatch && request.method === 'GET') {
-      const convId = decodeURIComponent(convEventsMatch[1]);
+      const convIdParam = decodeURIComponent(convEventsMatch[1]);
+
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      const verifiedUserId = authResult.verifiedUserId;
+      const isGuestCaller = authResult.isGuestCaller;
+
+      const authAccess = await authorizeConversationAccess(
+        convIdParam,
+        verifiedUserId,
+        isGuestCaller,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+        guestSecretInfo
+      );
+
+      if (!authAccess.authorized) {
+        return authAccess.errorResponse;
+      }
+
+      const { dbConvId, convSlug } = authAccess;
+      const convId = convSlug || convIdParam;
+
       let intervalId: any = null;
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
@@ -1204,15 +1750,22 @@ export default {
           if (!conversationStreams.has(convId)) {
             conversationStreams.set(convId, new Set());
           }
-          const controllers = conversationStreams.get(convId)!;
-          controllers.add(controller);
+          conversationStreams.get(convId)!.add(controller);
+
+          if (dbConvId && dbConvId !== convId) {
+            if (!conversationStreams.has(dbConvId)) {
+              conversationStreams.set(dbConvId, new Set());
+            }
+            conversationStreams.get(dbConvId)!.add(controller);
+          }
 
           const encoder = new TextEncoder();
           try {
             controller.enqueue(encoder.encode(`event: connected\ndata: {"status":"connected","convId":"${convId}"}\n\n`));
           } catch {
             if (intervalId) clearInterval(intervalId);
-            controllers.delete(controller);
+            conversationStreams.get(convId)?.delete(controller);
+            if (dbConvId) conversationStreams.get(dbConvId)?.delete(controller);
           }
 
           intervalId = setInterval(() => {
@@ -1220,17 +1773,27 @@ export default {
               controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
             } catch {
               if (intervalId) clearInterval(intervalId);
-              if (streamController) controllers.delete(streamController);
+              if (streamController) {
+                conversationStreams.get(convId)?.delete(streamController);
+                if (dbConvId) conversationStreams.get(dbConvId)?.delete(streamController);
+              }
             }
           }, 15000);
         },
-        cancel(reason) {
+        cancel() {
           if (intervalId) clearInterval(intervalId);
-          const controllers = conversationStreams.get(convId);
-          if (controllers && streamController) {
-            controllers.delete(streamController);
-            if (controllers.size === 0) {
-              conversationStreams.delete(convId);
+          if (streamController) {
+            const controllers = conversationStreams.get(convId);
+            if (controllers) {
+              controllers.delete(streamController);
+              if (controllers.size === 0) conversationStreams.delete(convId);
+            }
+            if (dbConvId) {
+              const dbControllers = conversationStreams.get(dbConvId);
+              if (dbControllers) {
+                dbControllers.delete(streamController);
+                if (dbControllers.size === 0) conversationStreams.delete(dbConvId);
+              }
             }
           }
         },
@@ -1254,241 +1817,47 @@ export default {
 
       if (request.method === 'GET') {
         const guestTokenParam = url.searchParams.get('guestToken') || request.headers.get('x-guest-token');
-        const authHeader = request.headers.get('Authorization');
-        const bearerToken = authHeader && authHeader.startsWith('Bearer ')
-          ? authHeader.slice(7).trim()
-          : null;
+        const authResult = await authenticateRequest(
+          request,
+          url,
+          guestSecretInfo,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+          supabaseClient,
+          env,
+          guestTokenParam || undefined
+        );
 
-        // Determine token type: guest tokens start with 'vx_gst_'
-        const guestToken = guestTokenParam || (bearerToken && bearerToken.startsWith('vx_gst_') ? bearerToken : null);
-        const memberJwt = !guestToken && bearerToken && !bearerToken.startsWith('vx_gst_') ? bearerToken : null;
+        if ('errorResponse' in authResult) {
+          return authResult.errorResponse;
+        }
+
+        const { verifiedUserId, isGuestCaller } = authResult;
         const clientSuppliedUserId = url.searchParams.get('userId');
 
-        let verifiedUserId: string | null = null;
-
-        if (guestToken) {
-          const authCheck = await verifyGuestToken(guestToken, guestSecretInfo, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey });
-          if (!authCheck.valid || !authCheck.session) {
-            return jsonResponse({
-              success: false,
-              error: `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}`,
-            }, 401);
-          }
-          verifiedUserId = authCheck.session.id;
-
-          if (clientSuppliedUserId && clientSuppliedUserId !== verifiedUserId) {
-            return jsonResponse({
-              success: false,
-              error: 'Unauthorized: Client user ID does not match validated guest session.',
-            }, 403);
-          }
-        } else if (memberJwt) {
-          // Independently validate registered user token
-          if (baseSupabaseUrl) {
-            try {
-              const userRes = await fetch(`${baseSupabaseUrl}/auth/v1/user`, {
-                headers: {
-                  'apikey': supabaseAnonKey || supabaseServiceKey,
-                  'Authorization': `Bearer ${memberJwt}`,
-                },
-              });
-              if (userRes.ok) {
-                const userData: any = await userRes.json();
-                if (userData && userData.id) {
-                  verifiedUserId = userData.id;
-                }
-              }
-            } catch (err) {
-              console.warn('[Worker] Supabase member verification fetch exception:', err);
-            }
-          }
-
-          // In dev/test fallback or if Supabase client is available:
-          if (!verifiedUserId && supabaseClient) {
-            try {
-              const { data: userData, error: userErr } = await supabaseClient.auth.getUser(memberJwt);
-              if (!userErr && userData?.user?.id) {
-                verifiedUserId = userData.user.id;
-              }
-            } catch {
-              // ignore
-            }
-          }
-
-          // In local dev/test fallback without active Supabase network:
-          if (!verifiedUserId && guestSecretInfo.isDevFallback) {
-            try {
-              const parts = memberJwt.split('.');
-              if (parts.length === 3) {
-                const payload = JSON.parse(fromBase64Url(parts[1]));
-                if (payload.sub || payload.id) {
-                  verifiedUserId = payload.sub || payload.id;
-                }
-              }
-            } catch {
-              // ignore
-            }
-          }
-
-          if (!verifiedUserId) {
-            return jsonResponse({
-              success: false,
-              error: 'Unauthorized: Invalid or expired member session token.',
-            }, 401);
-          }
-
-          if (clientSuppliedUserId && clientSuppliedUserId !== verifiedUserId) {
-            return jsonResponse({
-              success: false,
-              error: 'Unauthorized: Client user ID does not match validated session.',
-            }, 403);
-          }
-        } else {
-          // Reject unauthenticated requests regardless of clientSuppliedUserId
+        if (clientSuppliedUserId && clientSuppliedUserId !== verifiedUserId) {
           return jsonResponse({
             success: false,
-            error: 'Unauthorized: Authentication required to access conversation history.',
-          }, 401);
-        }
-
-        // Authorize conversation membership strictly using verified identity against database
-        const isGuestCaller = Boolean(guestToken);
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        let dbConvId: string | null = null;
-
-        if (convId.startsWith('conv_')) {
-          const idWithoutPrefix = convId.slice('conv_'.length);
-          const parts = idWithoutPrefix.split('_');
-
-          if (parts.length !== 2) {
-            return jsonResponse({
-              success: false,
-              error: 'Invalid conversation slug format.',
-            }, 400);
-          }
-
-          const [id1, id2] = parts;
-
-          if (!uuidRegex.test(id1) || !uuidRegex.test(id2)) {
-            return jsonResponse({
-              success: false,
-              error: 'Invalid participant identifier in conversation slug.',
-            }, 400);
-          }
-
-          if (id1 === id2) {
-            return jsonResponse({
-              success: false,
-              error: 'Invalid conversation slug: Duplicate participant identifiers are not allowed.',
-            }, 400);
-          }
-
-          if (id1 !== verifiedUserId && id2 !== verifiedUserId) {
-            return jsonResponse({
-              success: false,
-              error: 'Unauthorized: Authenticated caller is not a participant in this conversation slug.',
-            }, 403);
-          }
-
-          const partnerId = (id1 === verifiedUserId) ? id2 : id1;
-          dbConvId = await databaseService.getDeterministicConvId(verifiedUserId, partnerId);
-        } else if (uuidRegex.test(convId)) {
-          // Direct database UUID request
-          dbConvId = convId;
-        } else {
-          // Invalid conversation identifier (neither a valid slug nor a valid UUID)
-          return jsonResponse({
-            success: false,
-            error: 'Invalid conversation identifier format.',
-          }, 400);
-        }
-
-        if (!dbConvId || !uuidRegex.test(dbConvId)) {
-          return jsonResponse({
-            success: false,
-            error: 'Invalid or unresolved conversation identifier.',
-          }, 400);
-        }
-
-        let isMember = false;
-
-        if (baseSupabaseUrl && supabaseServiceKey) {
-          try {
-            const memberFilter = isGuestCaller
-              ? `guest_id=eq.${encodeURIComponent(verifiedUserId)}`
-              : `user_id=eq.${encodeURIComponent(verifiedUserId)}`;
-
-            // Strictly query conversation_participants using ONLY the canonical conversation UUID
-            const participantUrl = `${baseSupabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(dbConvId)}&${memberFilter}&select=id`;
-
-            const partRes = await fetch(participantUrl, {
-              headers: {
-                'apikey': supabaseServiceKey,
-                'Authorization': `Bearer ${supabaseServiceKey}`,
-              },
-            });
-
-            if (partRes.ok) {
-              let partData: any;
-              try {
-                partData = await partRes.json();
-              } catch (jsonErr) {
-                console.error('[Worker] JSON parse error on participant verification:', jsonErr);
-                return jsonResponse({
-                  success: false,
-                  error: 'Database error parsing membership verification response.',
-                }, 500);
-              }
-
-              if (!Array.isArray(partData)) {
-                console.error('[Worker] Unexpected non-array response for participant check:', partData);
-                return jsonResponse({
-                  success: false,
-                  error: 'Database error verifying conversation membership.',
-                }, 500);
-              }
-
-              if (partData.length > 0) {
-                isMember = true;
-              }
-            } else {
-              const errText = await partRes.text().catch(() => '');
-              console.error(`[Worker] Participant verification failed HTTP ${partRes.status}:`, errText);
-              return jsonResponse({
-                success: false,
-                error: `Database error verifying conversation membership (HTTP ${partRes.status}).`,
-              }, 500);
-            }
-          } catch (partErr) {
-            console.error('[Worker] Participant verification exception:', partErr);
-            return jsonResponse({
-              success: false,
-              error: 'Database error verifying conversation membership.',
-            }, 500);
-          }
-        } else if (guestSecretInfo.isDevFallback) {
-          // Local development fallback mode only when explicitly enabled
-          if (convId.includes(verifiedUserId) || dbConvId.includes(verifiedUserId)) {
-            isMember = true;
-          }
-        } else {
-          return jsonResponse({
-            success: false,
-            error: 'Server configuration error: Database bindings missing in production.',
-          }, 503);
-        }
-
-        if (!isMember) {
-          return jsonResponse({
-            success: false,
-            error: 'Unauthorized: Not a member of this conversation.',
+            error: 'Forbidden: Client user ID does not match authenticated identity.',
           }, 403);
         }
 
-        // Fetch history using server-side Supabase service-role key after identity and membership are proven
+        const authAccess = await authorizeConversationAccess(
+          convId,
+          verifiedUserId,
+          isGuestCaller,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+          guestSecretInfo
+        );
+
+        if (!authAccess.authorized) {
+          return authAccess.errorResponse;
+        }
+
+        const { dbConvId, convSlug } = authAccess;
+
+        // Fetch history using server-side Supabase service-role key
         if (baseSupabaseUrl && supabaseServiceKey) {
           try {
-            // Strictly query messages using ONLY the canonical conversation UUID
             const convMessagesRestUrl = `${baseSupabaseUrl}/rest/v1/messages?conversation_id=eq.${encodeURIComponent(dbConvId)}&order=created_at.asc`;
             const headers: Record<string, string> = {
               'apikey': supabaseServiceKey,
@@ -1523,7 +1892,7 @@ export default {
 
             const messages = data.map((m: any) => ({
               id: m.id,
-              conversationId: convId,
+              conversationId: convSlug || convId,
               senderId: m.sender_user_id || m.sender_guest_id || 'anonymous',
               senderNickname: m.sender_nickname,
               senderAvatar: m.sender_avatar,
@@ -1559,21 +1928,10 @@ export default {
 
       if (request.method === 'POST') {
         try {
-          const guestTokenParam = url.searchParams.get('guestToken') || request.headers.get('x-guest-token');
-          const authHeader = request.headers.get('Authorization');
-          const bearerToken = authHeader && authHeader.startsWith('Bearer ')
-            ? authHeader.slice(7).trim()
-            : null;
-
-          const guestToken = guestTokenParam || (bearerToken && bearerToken.startsWith('vx_gst_') ? bearerToken : null);
-          const memberJwt = !guestToken && bearerToken && !bearerToken.startsWith('vx_gst_') ? bearerToken : null;
-
-          const body: any = await request.json();
+          const body: any = await request.json().catch(() => ({}));
           const {
             senderId: clientSenderId,
-            senderNickname,
-            senderAvatar,
-            recipientId,
+            recipientId: clientRecipientId,
             content,
             mediaUrl,
             mediaType,
@@ -1582,124 +1940,87 @@ export default {
             guestToken: bodyGuestToken,
           } = body || {};
 
-          const effectiveGuestToken = guestToken || bodyGuestToken;
+          // 1. Authenticate Request
+          const authResult = await authenticateRequest(
+            request,
+            url,
+            guestSecretInfo,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+            supabaseClient,
+            env,
+            bodyGuestToken
+          );
 
-          let verifiedSenderId: string | null = null;
-          let verifiedSenderType: 'registered' | 'guest' = 'registered';
-          let verifiedNickname = senderNickname || 'User';
-          let verifiedAvatar = senderAvatar || '👤';
+          if ('errorResponse' in authResult) {
+            return authResult.errorResponse;
+          }
 
-          if (effectiveGuestToken) {
-            const authCheck = await verifyGuestToken(effectiveGuestToken, guestSecretInfo, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey });
-            if (!authCheck.valid || !authCheck.session) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Invalid or expired guest session token.' }, 401);
-            }
-            if (clientSenderId && authCheck.session.id !== clientSenderId) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Guest token mismatch.' }, 403);
-            }
-            verifiedSenderType = 'guest';
-            verifiedSenderId = authCheck.session.id;
-            verifiedNickname = authCheck.session.nickname;
-            verifiedAvatar = authCheck.session.avatar;
-          } else if (memberJwt) {
-            if (baseSupabaseUrl) {
-              try {
-                const userRes = await fetch(`${baseSupabaseUrl}/auth/v1/user`, {
-                  headers: {
-                    'apikey': supabaseAnonKey || supabaseServiceKey,
-                    'Authorization': `Bearer ${memberJwt}`,
-                  },
-                });
-                if (userRes.ok) {
-                  const userData: any = await userRes.json();
-                  if (userData && userData.id) {
-                    verifiedSenderId = userData.id;
-                  }
-                }
-              } catch (err) {
-                console.warn('[Worker] Supabase member verification fetch exception:', err);
-              }
-            }
+          const { verifiedUserId, isGuestCaller, guestSession } = authResult;
 
-            if (!verifiedSenderId && supabaseClient) {
-              try {
-                const { data: userData, error: userErr } = await supabaseClient.auth.getUser(memberJwt);
-                if (!userErr && userData?.user?.id) {
-                  verifiedSenderId = userData.user.id;
-                }
-              } catch {
-                // ignore
-              }
-            }
+          // 2. Validate senderType
+          const clientSenderType = body?.senderType;
+          if (clientSenderType && !['registered', 'guest'].includes(clientSenderType)) {
+             return jsonResponse({ success: false, error: 'Bad Request: Invalid senderType.' }, 400);
+          }
+          if (isGuestCaller && clientSenderType === 'registered') {
+             return jsonResponse({ success: false, error: 'Forbidden: Guest session cannot claim registered identity.' }, 403);
+          }
+          if (!isGuestCaller && clientSenderType === 'guest') {
+             return jsonResponse({ success: false, error: 'Forbidden: Registered session cannot be downgraded to guest identity.' }, 403);
+          }
 
-            if (!verifiedSenderId && guestSecretInfo.isDevFallback) {
-              try {
-                const parts = memberJwt.split('.');
-                if (parts.length === 3) {
-                  const payload = JSON.parse(fromBase64Url(parts[1]));
-                  if (payload.sub || payload.id) {
-                    verifiedSenderId = payload.sub || payload.id;
-                  }
-                }
-              } catch {
-                // ignore
-              }
-            }
+          // 3. Identity Spoofing Check
+          if (clientSenderId && clientSenderId !== verifiedUserId) {
+             return jsonResponse({ success: false, error: 'Forbidden: Sender identity mismatch (spoofing attempt rejected).' }, 403);
+          }
 
-            if (!verifiedSenderId) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Invalid or expired member session token.' }, 401);
-            }
+          if (!content && !mediaUrl) {
+            return jsonResponse({ success: false, error: 'Message content or media is required.' }, 400);
+          }
 
-            if (clientSenderId && clientSenderId !== verifiedSenderId) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Sender ID does not match authenticated member token (forgery prevented).' }, 403);
-            }
-            verifiedSenderType = 'registered';
+          // 4. Authorize conversation access strictly against database
+          const authAccess = await authorizeConversationAccess(
+            convId,
+            verifiedUserId,
+            isGuestCaller,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+            guestSecretInfo
+          );
+
+          if (!authAccess.authorized) {
+            return authAccess.errorResponse;
+          }
+
+          const { dbConvId, convSlug, recipientId: authorizedRecipientId } = authAccess;
+
+          // 5. Recipient mismatch check if recipientId was passed in POST body
+          if (clientRecipientId && authorizedRecipientId && clientRecipientId !== authorizedRecipientId) {
+            return jsonResponse({ success: false, error: 'Forbidden: Recipient identity mismatch.' }, 403);
+          }
+
+          const resolvedRecipientId = clientRecipientId || authorizedRecipientId;
+
+          // 6. Identity Resolution (Zero-trust)
+          let verifiedNickname: string;
+          let verifiedAvatar: string;
+
+          if (isGuestCaller && guestSession) {
+            verifiedNickname = guestSession.nickname;
+            verifiedAvatar = guestSession.avatar;
           } else {
-            return jsonResponse({ success: false, error: 'Unauthorized: Authentication required to post messages.' }, 401);
+            const profile = await fetchMemberProfile(verifiedUserId, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey });
+            verifiedNickname = profile.nickname;
+            verifiedAvatar = profile.avatar;
           }
-
-          if (!verifiedSenderId || (!content && !mediaUrl)) {
-            return jsonResponse({ success: false, error: 'Sender ID and content are required.' }, 400);
-          }
-
-          // Authorize: Verify that verifiedSenderId is a participant in this conversation
-          let resolvedRecipientId = recipientId;
-          if (!resolvedRecipientId && convId.startsWith('conv_')) {
-            const parts = convId.replace(/^conv_/, '').split('_');
-            resolvedRecipientId = parts.find(p => p !== verifiedSenderId);
-          }
-
-          if (!resolvedRecipientId) {
-            return jsonResponse({ success: false, error: 'Unauthorized: Recipient identity could not be verified.' }, 400);
-          }
-
-          if (convId.startsWith('conv_')) {
-            const idWithoutPrefix = convId.replace(/^conv_/, '');
-            const isMember =
-              (resolvedRecipientId && convId === `conv_${[verifiedSenderId, resolvedRecipientId].sort().join('_')}`) ||
-              idWithoutPrefix === verifiedSenderId ||
-              idWithoutPrefix.startsWith(verifiedSenderId + '_') ||
-              idWithoutPrefix.endsWith('_' + verifiedSenderId) ||
-              idWithoutPrefix.includes('_' + verifiedSenderId + '_');
-
-            if (!isMember) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Sender is not a member of this conversation.' }, 403);
-            }
-          }
-
-
 
           const cleanContent = sanitizeContent(content || '');
-          const correlationId = `dm_tx_${crypto.randomUUID().slice(0, 8)}`;
-          const rtDiag: Record<string, any> = {};
           const message: HubMessage = {
             id: crypto.randomUUID(),
-            roomId: convId, // Legacy shim
-            conversationId: convId,
-            senderId: verifiedSenderId,
+            conversationId: convSlug || convId,
+            senderId: verifiedUserId,
             senderNickname: verifiedNickname,
             senderAvatar: verifiedAvatar,
-            senderType: verifiedSenderType,
+            senderType: isGuestCaller ? 'guest' : 'registered',
             content: cleanContent,
             rawContent: content,
             mediaUrl,
@@ -1710,137 +2031,171 @@ export default {
             status: 'delivered',
           };
 
-          // Persist to Supabase if configured
+          // 7. Atomic Persistence
+          let isInserted = true;
           if (baseSupabaseUrl && supabaseServiceKey) {
-            try {
-              const directMessagesRestUrl = `${baseSupabaseUrl}/rest/v1/messages`;
-              const isSenderUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(verifiedSenderId);
-              
-              // Resolve deterministic conversation UUID if needed
-              let dbConvId = convId;
-              if (convId.startsWith('conv_') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(convId)) {
-                 dbConvId = await databaseService.getDeterministicConvId(verifiedSenderId, resolvedRecipientId);
-                 // Ensure the conversation record exists in DB to satisfy foreign key
-                 await fetch(`${baseSupabaseUrl}/rest/v1/conversations`, {
-                   method: 'POST',
-                   headers: {
-                     'apikey': supabaseServiceKey,
-                     'Authorization': `Bearer ${supabaseServiceKey}`,
-                     'Content-Type': 'application/json',
-                     'Prefer': 'resolution=merge-duplicates'
-                   },
-                   body: JSON.stringify({ id: dbConvId, type: 'direct' })
-                 }).catch(() => {});
-              }
+             await fetch(`${baseSupabaseUrl}/rest/v1/conversations`, {
+               method: 'POST',
+               headers: {
+                 'apikey': supabaseServiceKey,
+                 'Authorization': `Bearer ${supabaseServiceKey}`,
+                 'Content-Type': 'application/json',
+                 'Prefer': 'resolution=ignore-duplicates'
+               },
+               body: JSON.stringify({ id: dbConvId, type: 'direct' })
+             }).catch(() => {});
 
-              const dbRes = await fetch(directMessagesRestUrl, {
-                method: 'POST',
-                headers: {
-                  'apikey': supabaseServiceKey,
-                  'Authorization': `Bearer ${supabaseServiceKey}`,
-                  'Content-Type': 'application/json',
-                  'Prefer': 'return=minimal',
-                },
-                body: JSON.stringify({
-                  conversation_id: dbConvId,
-                  sender_user_id: verifiedSenderType === 'registered' ? verifiedSenderId : null,
-                  sender_guest_id: verifiedSenderType === 'guest' ? verifiedSenderId : null,
-                  sender_nickname: verifiedNickname,
-                  sender_avatar: verifiedAvatar,
-                  content: cleanContent,
-                  media_url: mediaUrl,
-                  media_type: mediaType,
-                  client_nonce: clientNonce,
-                }),
-              });
+             const result = await databaseService.atomicMessage({
+                id: message.id,
+                conversationId: dbConvId,
+                senderUserId: isGuestCaller ? undefined : verifiedUserId,
+                senderGuestId: isGuestCaller ? verifiedUserId : undefined,
+                senderNickname: verifiedNickname,
+                senderAvatar: verifiedAvatar,
+                content: cleanContent,
+                clientNonce: clientNonce,
+                mediaUrl,
+                mediaType,
+                linkPreview
+             }, supabaseClient);
 
-              if (!dbRes.ok) {
-                const errText = await dbRes.text().catch(() => '');
-                console.error(`[VX-DM] [${correlationId}] Supabase DM persistence failed HTTP ${dbRes.status}:`, errText);
-                return jsonResponse({ success: false, error: `Database DM persistence failed (HTTP ${dbRes.status}).` }, 500);
-              }
-              // Broadcast to recipient across all instances
-              await databaseService.broadcastToUser(resolvedRecipientId, 'incoming_dm', { conversationId: dbConvId, message });
-              
-              rtDiag.localSseAttempted = true;
-            } catch (dbErr: any) {
-              console.error(`[VX-DM] [${correlationId}] Supabase persistence error:`, dbErr);
-              return jsonResponse({ success: false, error: 'Database error: Unable to persist direct message.' }, 500);
-            }
+             if (!result.success) {
+                return jsonResponse({ success: false, error: result.error || 'Database DM persistence failed.' }, 500);
+             }
+
+             isInserted = result.inserted;
+
+             if (result.message) {
+               message.id = result.message.id;
+               message.timestamp = result.message.timestamp;
+               message.content = result.message.content;
+               message.senderNickname = result.message.senderNickname;
+               message.senderAvatar = result.message.senderAvatar;
+             }
           } else if (!guestSecretInfo.isDevFallback) {
-            return jsonResponse({ success: false, error: 'Server configuration error: Database bindings missing in production.' }, 503);
-          }
-          
-          // Broadcast via local SSE for immediate delivery to clients on THIS isolate
-          try {
-              broadcastToConversation(convId, 'new_dm', message);
-              broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message });
-          } catch (sseErr: any) {
-              console.warn(`[VX-DM] [${correlationId}] Local SSE broadcast error:`, sseErr);
+             return jsonResponse({
+               success: false,
+               error: 'Server configuration error: Database bindings missing in production.'
+             }, 503);
           }
 
-          // Broadcast via Supabase Realtime for cross-isolate delivery
-          const broadcastPromise = (async () => {
-              if (!supabaseClient) {
-                  rtDiag.rtStatus = 'no_client';
-                  return;
-              }
+          // 8. Broadcast and Local State (Only on genuine new insertions)
+          if (isInserted) {
               try {
-                const results = await Promise.all([
-                    databaseService.broadcastDM(convId, recipientId, message as any, supabaseClient),
-                    databaseService.broadcastToUser(recipientId, 'incoming_dm', { conversationId: convId, message }, supabaseClient)
-                ]);
-                rtDiag.rtResults = results;
-                console.log(`[VX-DM] [${correlationId}] Supabase broadcast results:`, results);
-              } catch (e: any) {
-                rtDiag.rtError = e.message || 'Unknown RT error';
-                console.error(`[VX-DM] [${correlationId}] Supabase broadcast fatal error:`, e);
+                  broadcastToConversation(convSlug || convId, 'new_dm', message);
+                  if (dbConvId && dbConvId !== (convSlug || convId)) {
+                    broadcastToConversation(dbConvId, 'new_dm', message);
+                  }
+                  if (resolvedRecipientId) {
+                    broadcastToUser(resolvedRecipientId, 'incoming_dm', { conversationId: convSlug || convId, message });
+                  }
+              } catch (sseErr: any) {
+                  console.warn(`[VX-DM] Local SSE broadcast error:`, sseErr);
               }
-          })();
 
-          // Ensure background work finishes even if we return the response
-          if (ctx?.waitUntil) {
-              ctx.waitUntil(broadcastPromise);
-          } else {
-              await broadcastPromise;
+              const broadcastPromise = (async () => {
+                  if (!supabaseClient) return;
+                  try {
+                    await Promise.all([
+                        databaseService.broadcastDM(convSlug || convId, resolvedRecipientId, message as any, supabaseClient),
+                        resolvedRecipientId ? databaseService.broadcastToUser(resolvedRecipientId, 'incoming_dm', { conversationId: convSlug || convId, message }, supabaseClient) : Promise.resolve()
+                    ]);
+                  } catch (e: any) {
+                    console.error(`[VX-DM] Supabase broadcast fatal error:`, e);
+                  }
+              })();
+
+              if (ctx?.waitUntil) {
+                  ctx.waitUntil(broadcastPromise);
+              } else {
+                  await broadcastPromise;
+              }
+
+              // Store in in-memory map
+              if (!conversationMessages.has(convId)) {
+                conversationMessages.set(convId, []);
+              }
+              const localList = conversationMessages.get(convId)!;
+              localList.push(message);
+              if (localList.length > 500) localList.shift();
           }
 
-          // Store in in-memory map for fast local retrieval and dev fallback
-          if (!conversationMessages.has(convId)) {
-            conversationMessages.set(convId, []);
-          }
-          const localList = conversationMessages.get(convId)!;
-          if (!clientNonce || !localList.some((m) => m.clientNonce === clientNonce)) {
-            localList.push(message);
-            if (localList.length > 500) localList.shift();
-          }
-
-          return jsonResponse({ success: true, message, correlationId, serverDiag: rtDiag });
-
+          return jsonResponse({ success: true, message, isInserted });
 
         } catch (err: any) {
-          return jsonResponse({ success: false, error: 'Failed to deliver message' }, 400);
+          return jsonResponse({ success: false, error: 'Failed to deliver message: ' + (err.message || 'Unknown error') }, 400);
         }
       }
-    }
+        }
 
     // POST /api/chat/conversations/:id/typing
     const convTypingMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/typing$/);
     if (convTypingMatch && request.method === 'POST') {
-      const convId = decodeURIComponent(convTypingMatch[1]);
+      const convIdParam = decodeURIComponent(convTypingMatch[1]);
       try {
-        const body: any = await request.json();
-        const { memberId, nickname, isTyping } = body || {};
+        const body: any = await request.json().catch(() => ({}));
+        const { memberId, isTyping, guestToken: bodyGuestToken } = body || {};
 
-        if (!conversationTyping.has(convId)) {
-          conversationTyping.set(convId, new Map());
+        // 1. Authenticate Request
+        const authResult = await authenticateRequest(
+          request,
+          url,
+          guestSecretInfo,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+          supabaseClient,
+          env,
+          bodyGuestToken
+        );
+
+        if ('errorResponse' in authResult) {
+          return authResult.errorResponse;
         }
-        const typersMap = conversationTyping.get(convId)!;
 
-        if (isTyping && memberId && nickname) {
-          typersMap.set(memberId, { nickname, expiresAt: Date.now() + 3000 });
-        } else if (memberId) {
-          typersMap.delete(memberId);
+        const { verifiedUserId, isGuestCaller, guestSession } = authResult;
+
+        // 2. Reject client identity spoofing / forgery
+        if (memberId && memberId !== verifiedUserId) {
+          return jsonResponse({
+            success: false,
+            error: 'Forbidden: Cannot report typing for another participant (identity mismatch).',
+          }, 403);
+        }
+
+        // 3. Authorize Conversation Access
+        const authAccess = await authorizeConversationAccess(
+          convIdParam,
+          verifiedUserId,
+          isGuestCaller,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+          guestSecretInfo
+        );
+
+        if (!authAccess.authorized) {
+          return authAccess.errorResponse;
+        }
+
+        // 4. Derive authoritative participant nickname
+        let verifiedNickname: string;
+        if (isGuestCaller && guestSession) {
+          verifiedNickname = guestSession.nickname || 'Guest';
+        } else {
+          const profile = await fetchMemberProfile(verifiedUserId, {
+            supabaseUrl: baseSupabaseUrl,
+            supabaseServiceKey,
+          });
+          verifiedNickname = profile.nickname || 'User';
+        }
+
+        const canonicalConvId = authAccess.convSlug || authAccess.dbConvId;
+        if (!conversationTyping.has(canonicalConvId)) {
+          conversationTyping.set(canonicalConvId, new Map());
+        }
+        const typersMap = conversationTyping.get(canonicalConvId)!;
+
+        if (isTyping) {
+          typersMap.set(verifiedUserId, { nickname: verifiedNickname, expiresAt: Date.now() + 3000 });
+        } else {
+          typersMap.delete(verifiedUserId);
         }
 
         const now = Date.now();
@@ -1849,50 +2204,154 @@ export default {
         }
 
         const activeTypers = Array.from(typersMap.values()).map((t) => t.nickname);
-        broadcastToConversation(convId, 'dm_typing', { typers: activeTypers });
+        const typingPayload = {
+          typers: activeTypers,
+          userId: verifiedUserId,
+          nickname: verifiedNickname,
+          isTyping: Boolean(isTyping),
+        };
+        broadcastToConversation(canonicalConvId, 'dm_typing', typingPayload);
+        if (authAccess.dbConvId && authAccess.dbConvId !== canonicalConvId) {
+          broadcastToConversation(authAccess.dbConvId, 'dm_typing', typingPayload);
+        }
 
         return jsonResponse({ success: true });
-      } catch {
-        return jsonResponse({ success: true });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Typing update failed' }, 500);
       }
     }
 
     // POST /api/chat/conversations/:id/read
     const convReadMatch = url.pathname.match(/^\/api\/chat\/conversations\/([^/]+)\/read$/);
     if (convReadMatch && request.method === 'POST') {
-      const convId = decodeURIComponent(convReadMatch[1]);
+      const convIdParam = decodeURIComponent(convReadMatch[1]);
       try {
-        const body: any = await request.json();
-        const { userId, messageId } = body || {};
+        const body: any = await request.json().catch(() => ({}));
+        const { userId, messageId, guestToken: bodyGuestToken } = body || {};
 
-        if (userId && messageId) {
-          if (convId.startsWith('conv_')) {
-            const idWithoutPrefix = convId.replace(/^conv_/, '');
-            const isMember =
-              idWithoutPrefix.startsWith(userId + '_') ||
-              idWithoutPrefix.endsWith('_' + userId) ||
-              idWithoutPrefix === userId;
-            if (!isMember) {
-              return jsonResponse({ success: false, error: 'Unauthorized: Not a member of this conversation.' }, 403);
-            }
-          }
+        // 1. Authenticate Request
+        const authResult = await authenticateRequest(
+          request,
+          url,
+          guestSecretInfo,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+          supabaseClient,
+          env,
+          bodyGuestToken
+        );
 
-          if (!conversationReadState.has(convId)) {
-            conversationReadState.set(convId, new Map());
-          }
-          const readMap = conversationReadState.get(convId)!;
-          readMap.set(userId, { readUntilId: messageId, readAt: new Date().toISOString() });
-
-          broadcastToConversation(convId, 'dm_read', {
-            userId,
-            messageId,
-            readAt: new Date().toISOString(),
-          });
+        if ('errorResponse' in authResult) {
+          return authResult.errorResponse;
         }
 
-        return jsonResponse({ success: true });
-      } catch {
-        return jsonResponse({ success: true });
+        const { verifiedUserId, isGuestCaller } = authResult;
+
+        // 2. Reject client identity spoofing / forgery
+        if (userId && userId !== verifiedUserId) {
+          return jsonResponse({
+            success: false,
+            error: 'Forbidden: Cannot report read receipt for another user (identity mismatch).',
+          }, 403);
+        }
+
+        // 3. Authorize Conversation Access
+        const authAccess = await authorizeConversationAccess(
+          convIdParam,
+          verifiedUserId,
+          isGuestCaller,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey },
+          guestSecretInfo
+        );
+
+        if (!authAccess.authorized) {
+          return authAccess.errorResponse;
+        }
+
+        const { dbConvId, convSlug } = authAccess;
+        const canonicalConvId = convSlug || dbConvId;
+
+        // 4. Validate messageId
+        if (!messageId || typeof messageId !== 'string' || messageId.trim().length === 0) {
+          return jsonResponse({
+            success: false,
+            error: 'Message ID is required.',
+          }, 400);
+        }
+
+        // 5. Database message ownership verification (must belong to this conversation)
+        if (baseSupabaseUrl && supabaseServiceKey) {
+          try {
+            const msgQueryUrl = `${baseSupabaseUrl}/rest/v1/messages?id=eq.${encodeURIComponent(messageId.trim())}&conversation_id=eq.${encodeURIComponent(dbConvId)}&select=id,conversation_id`;
+            const msgRes = await fetch(msgQueryUrl, {
+              headers: {
+                'apikey': supabaseServiceKey,
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+            });
+
+            if (!msgRes.ok) {
+              console.error(`[Worker] Message lookup HTTP error ${msgRes.status}`);
+              return jsonResponse({
+                success: false,
+                error: `Database error verifying message (HTTP ${msgRes.status}).`,
+              }, 500);
+            }
+
+            const msgRows: any = await msgRes.json();
+            if (!Array.isArray(msgRows) || msgRows.length !== 1) {
+              return jsonResponse({
+                success: false,
+                error: 'Bad Request: Message does not belong to this conversation.',
+              }, 400);
+            }
+          } catch (err: any) {
+            console.error('[Worker] DB message verification exception:', err);
+            return jsonResponse({
+              success: false,
+              error: 'Database error verifying message.',
+            }, 500);
+          }
+        } else if (!guestSecretInfo.isDevFallback) {
+          return jsonResponse({
+            success: false,
+            error: 'Server configuration error: Database bindings missing in production.',
+          }, 503);
+        } else {
+          // Dev fallback: verify message in in-memory message history
+          const memMsgs = conversationMessages.get(dbConvId) || conversationMessages.get(canonicalConvId) || [];
+          const found = memMsgs.some((m) => m.id === messageId);
+          if (!found) {
+            return jsonResponse({
+              success: false,
+              error: 'Bad Request: Message does not belong to this conversation.',
+            }, 400);
+          }
+        }
+
+        // 6. Update in-memory read state
+        if (!conversationReadState.has(canonicalConvId)) {
+          conversationReadState.set(canonicalConvId, new Map());
+        }
+        const readMap = conversationReadState.get(canonicalConvId)!;
+        const readAt = new Date().toISOString();
+        readMap.set(verifiedUserId, { readUntilId: messageId, readAt });
+
+        // 7. Broadcast dm_read to canonical conversation identifier
+        const readPayload = {
+          userId: verifiedUserId,
+          readerId: verifiedUserId,
+          messageId,
+          readAt,
+        };
+
+        broadcastToConversation(canonicalConvId, 'dm_read', readPayload);
+        if (dbConvId && dbConvId !== canonicalConvId) {
+          broadcastToConversation(dbConvId, 'dm_read', readPayload);
+        }
+
+        return jsonResponse({ success: true, messageId, readerId: verifiedUserId });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Read receipt failed' }, 500);
       }
     }
 
