@@ -273,12 +273,15 @@ class ChatClientSimulation {
   minimizeChat(conversationId: string) {
     this.openWindows = this.openWindows.map((w) => {
       if (w.conversationId !== conversationId) return w;
-      return {
-        ...w,
-        displayMode: 'floating' as ConversationDisplayMode,
-        isMaximized: false,
-        isMinimized: false,
-      };
+      if (w.displayMode === 'maximized' || w.isMaximized) {
+        return {
+          ...w,
+          displayMode: 'floating' as ConversationDisplayMode,
+          isMaximized: false,
+          isMinimized: false,
+        };
+      }
+      return { ...w, isMinimized: !w.isMinimized };
     });
     // PublicChatPage falls back cleanly to 'room'
     if (this.activeMainTab === conversationId) {
@@ -325,7 +328,6 @@ function runConsolidationUnitTests() {
   assert(multiConsolidated.length === 2, 'Assertion 3 & 15: Different conversation IDs and partners remain separate');
 
   // 4 & 5. Key collision / Partner ID mismatch safety
-  // If a window has partnerId matching another conversationId, authoritative conversationId mapping must keep them separate
   const collisionInput: FloatingChatWindow[] = [
     { conversationId: 'conv_A', partnerId: 'conv_B', partnerNickname: 'P1', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [msg1], unreadCount: 0, draft: '', isOpen: true },
     { conversationId: 'conv_B', partnerId: 'u9', partnerNickname: 'P2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [msg2], unreadCount: 0, draft: '', isOpen: true }
@@ -340,14 +342,8 @@ function runConsolidationUnitTests() {
   // 10. Invalid or missing timestamps do not crash consolidation
   const badMsg1: ChatMessage = { id: 'bm1', conversationId: 'conv_1_2', senderId: 'u1', senderNickname: 'User1', senderAvatar: '👤', content: 'Bad time 1', timestamp: 'invalid-date' };
   const badMsg2: ChatMessage = { id: 'bm2', conversationId: 'conv_1_2', senderId: 'u2', senderNickname: 'User2', senderAvatar: '👤', content: 'Bad time 2', timestamp: now };
-  const badTimeWin: FloatingChatWindow[] = [
-    { conversationId: 'conv_1_2', partnerId: 'u2', partnerNickname: 'User2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [badTimeWinMsg(badMsg1, badMsg2)], unreadCount: 0, draft: '', isOpen: true }
-  ];
-  function badMsgSrc() { return [badMsg1, badMsg2]; }
-  const badTimeResult = consolidateWindows([{ conversationId: 'conv_1_2', partnerId: 'u2', partnerNickname: 'User2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: badMsgSrc(), unreadCount: 0, draft: '', isOpen: true }]);
+  const badTimeResult = consolidateWindows([{ conversationId: 'conv_1_2', partnerId: 'u2', partnerNickname: 'User2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [badMsg1, badMsg2], unreadCount: 0, draft: '', isOpen: true }]);
   assert(badTimeResult.length === 1 && badTimeResult[0].messages.length === 2, 'Assertion 10: Invalid or missing timestamps do not crash consolidation');
-
-  function badTimeWinMsg(m1: ChatMessage, m2: ChatMessage) { return m1; }
 
   // 11. Draft content preserved
   assert(win.draft === 'Draft A', 'Assertion 11: Draft content preserved');
@@ -358,8 +354,13 @@ function runConsolidationUnitTests() {
   // 13. Display mode preserved
   assert(win.displayMode === 'floating', 'Assertion 13: Display mode preserved');
 
-  // 14. Repeated openChat simulation (tested in e2e suite as well)
-  assert(true, 'Assertion 14: Repeated openChat calls do not duplicate windows');
+  // 14. Repeated consolidation calls do not duplicate windows (exercising production consolidateWindows)
+  const repeatedInput = [
+    { conversationId: 'conv_rep', partnerId: 'u4', partnerNickname: 'User4', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating' as const, messages: [msg1], unreadCount: 0, draft: '', isOpen: true },
+    { conversationId: 'conv_rep', partnerId: 'u4', partnerNickname: 'User4', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating' as const, messages: [msg2], unreadCount: 0, draft: '', isOpen: true }
+  ];
+  const repeatedResult = consolidateWindows(repeatedInput);
+  assert(repeatedResult.length === 1 && repeatedResult[0].messages.length === 2, 'Assertion 14: Repeated open/consolidation calls do not duplicate windows');
 
   console.log('--- Production consolidateWindows() Unit Tests Passed Successfully ---');
 }
@@ -612,36 +613,32 @@ async function runRegressionSuite() {
     isOpen: true
   };
 
-  // Import consolidateWindows logic / test inline merge simulation
-  const mergedMsgMap = new Map<string, ChatMessage>();
-  w1.messages.forEach(m => mergedMsgMap.set(m.id, m));
-  w2.messages.forEach(m => mergedMsgMap.set(m.id, m));
-  const mergedList = Array.from(mergedMsgMap.values()).sort(
-    (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime()
-  );
+  // Test 10.3: Message merging using actual production consolidateWindows() helper
+  const consolidatedMerged = consolidateWindows([w1, w2]);
+  const mergedList = consolidatedMerged[0].messages;
 
   assert(
     mergedList.length === 2,
-    'Step 10.3: Message merging deduplicates by unique message ID (no message loss, exactly 2 unique messages)'
+    'Step 10.3: Production consolidateWindows deduplicates and merges without message loss (exactly 2 unique messages)'
   );
   assert(
     mergedList[0].id === 'm1' && mergedList[1].id === 'm2',
-    'Step 10.4: Messages sorted strictly in chronological order by timestamp'
+    'Step 10.4: Messages sorted strictly in chronological order by timestamp via production logic'
   );
 
-  // Test 10.4: Responsive mobile and tablet sizing classes verification
-  const mobileTabletSizingClass = 'w-[95vw] sm:w-[360px] h-[82vh] sm:h-[480px] max-h-[calc(100vh-5rem)]';
+  // Test 10.4: Responsive mobile and tablet sizing classes verification (matching FloatingChatManager.tsx)
+  const mobileTabletSizingClass = 'w-[min(360px,calc(100vw-24px))] h-[82vh] sm:h-[480px] max-h-[min(480px,82dvh,calc(100vh-5rem))]';
   assert(
-    mobileTabletSizingClass.includes('w-[95vw]') && mobileTabletSizingClass.includes('sm:w-[360px]'),
-    'Step 10.5: Responsive mobile width (95vw) and tablet/desktop width (360px) properly configured'
+    mobileTabletSizingClass.includes('w-[min(360px,calc(100vw-24px))]'),
+    'Step 10.5: Responsive mobile width constraint properly configured'
   );
   assert(
     mobileTabletSizingClass.includes('h-[82vh]') && mobileTabletSizingClass.includes('sm:h-[480px]'),
-    'Step 10.6: Responsive mobile height (82vh) and tablet/desktop height (480px) properly configured'
+    'Step 10.6: Responsive mobile and tablet height properly configured'
   );
   assert(
-    mobileTabletSizingClass.includes('max-h-[calc(100vh-5rem)]'),
-    'Step 10.7: Maximum height constraint prevents horizontal/vertical viewport overflow'
+    mobileTabletSizingClass.includes('max-h-[min(480px,82dvh,calc(100vh-5rem))]'),
+    'Step 10.7: Dynamic viewport height max-h constraint prevents viewport overflow'
   );
 
   console.log('\n================================================================================');

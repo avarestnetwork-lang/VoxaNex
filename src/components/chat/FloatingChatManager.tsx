@@ -64,7 +64,7 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
   }
 
   const containerClasses =
-    'w-[min(360px,calc(100vw-24px))] h-[82vh] sm:h-[480px] max-h-[calc(100vh-5rem)] bg-[#0d1424] border border-slate-700/80 rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden z-50 pointer-events-auto';
+    'w-[min(360px,calc(100vw-24px))] h-[82vh] sm:h-[480px] max-h-[min(480px,82dvh,calc(100vh-5rem))] bg-[#0d1424] border border-slate-700/80 rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden z-50 pointer-events-auto';
 
   return (
     <div className={containerClasses}>
