@@ -26,6 +26,8 @@ import { registerConversationMembers, postConversationMessage } from '../src/ser
 import { createGuestSession } from '../src/server/guestSessionManager';
 import { ConversationDisplayMode, FloatingChatWindow, consolidateWindows } from '../src/context/PrivateChatContext';
 import { ChatMessage } from '../src/types';
+import * as fs from 'fs';
+import * as path from 'path';
 
 function assert(condition: boolean, testName: string, detail?: string) {
   if (!condition) {
@@ -626,19 +628,19 @@ async function runRegressionSuite() {
     'Step 10.4: Messages sorted strictly in chronological order by timestamp via production logic'
   );
 
-  // Test 10.4: Responsive mobile and tablet sizing classes verification (matching FloatingChatManager.tsx)
-  const mobileTabletSizingClass = 'w-[min(360px,calc(100vw-24px))] h-[82vh] sm:h-[480px] max-h-[min(480px,82dvh,calc(100vh-5rem))]';
+  // Test 10.4: Source inspection of actual FloatingChatManager.tsx responsive sizing implementation
+  const floatingManagerSource = fs.readFileSync(path.join(__dirname, '../src/components/chat/FloatingChatManager.tsx'), 'utf-8');
   assert(
-    mobileTabletSizingClass.includes('w-[min(360px,calc(100vw-24px))]'),
-    'Step 10.5: Responsive mobile width constraint properly configured'
+    floatingManagerSource.includes('w-[min(360px,calc(100vw-24px))]'),
+    'Step 10.5: FloatingChatManager source implements responsive mobile width constraint'
   );
   assert(
-    mobileTabletSizingClass.includes('h-[82vh]') && mobileTabletSizingClass.includes('sm:h-[480px]'),
-    'Step 10.6: Responsive mobile and tablet height properly configured'
+    floatingManagerSource.includes('max-h-[calc(100vh-5rem)]'),
+    'Step 10.6: FloatingChatManager source implements reliable vh fallback max-height'
   );
   assert(
-    mobileTabletSizingClass.includes('max-h-[min(480px,82dvh,calc(100vh-5rem))]'),
-    'Step 10.7: Dynamic viewport height max-h constraint prevents viewport overflow'
+    floatingManagerSource.includes('supports-[height:100dvh]:'),
+    'Step 10.7: FloatingChatManager source implements dvh progressive enhancement via supports modifier'
   );
 
   console.log('\n================================================================================');
