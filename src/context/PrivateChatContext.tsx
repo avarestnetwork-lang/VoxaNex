@@ -46,7 +46,13 @@ function consolidateWindows(windows: FloatingChatWindow[]): FloatingChatWindow[]
     const key = w.conversationId;
     const existing = map.get(key) || map.get(w.partnerId);
     if (existing) {
-      existing.messages = existing.messages.length >= w.messages.length ? existing.messages : w.messages;
+      const msgMap = new Map<string, ChatMessage>();
+      existing.messages.forEach(m => msgMap.set(m.id, m));
+      w.messages.forEach(m => msgMap.set(m.id, m));
+      const mergedMessages = Array.from(msgMap.values()).sort(
+        (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime()
+      );
+      existing.messages = mergedMessages;
       existing.unreadCount = Math.max(existing.unreadCount, w.unreadCount);
       existing.draft = existing.draft || w.draft;
       existing.partnerNickname = w.partnerNickname || existing.partnerNickname;
@@ -61,8 +67,14 @@ function consolidateWindows(windows: FloatingChatWindow[]): FloatingChatWindow[]
         existing.displayMode = 'floating';
       }
     } else {
-      map.set(key, { ...w });
-      map.set(w.partnerId, map.get(key)!);
+      const msgMap = new Map<string, ChatMessage>();
+      w.messages.forEach(m => msgMap.set(m.id, m));
+      const sortedMessages = Array.from(msgMap.values()).sort(
+        (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime()
+      );
+      const cloned = { ...w, messages: sortedMessages };
+      map.set(key, cloned);
+      map.set(w.partnerId, cloned);
     }
   }
   const uniqueMap = new Map<string, FloatingChatWindow>();
