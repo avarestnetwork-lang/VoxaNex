@@ -181,14 +181,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     closedConversationIdsRef.current.delete(conversationId);
 
     console.log('[DIAGNOSTIC] private_popup_opened', { conversationId, partnerId: partner.id });
-    const initRes = await messagingService.getOrCreateConversation(user.id, partner.id);
-    if (!initRes.success) {
-      console.error('[PrivateChatContext] Conversation initialization failed:', initRes.error);
-      return;
-    }
-
-    trackConversation(conversationId);
-    closedConversationIdsRef.current.delete(conversationId);
 
     setOpenWindows((prev) => {
       const existing = prev.find((w) => w.conversationId === conversationId);
@@ -218,20 +210,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
         ];
       }
     });
-
-    const res = await messagingService.fetchConversationMessages(conversationId, user.id);
-    if (res.success) {
-      res.messages.forEach((m) => {
-        if (m.id) seenMessageIdsRef.current.add(m.id);
-      });
-      setOpenWindows((prev) =>
-        prev.map((w) =>
-          w.conversationId === conversationId
-            ? { ...w, messages: res.messages.length > 0 ? res.messages : w.messages }
-            : w
-        )
-      );
-    }
   }, [user.id]);
 
   const closeChat = useCallback((conversationId: string) => {

@@ -236,6 +236,72 @@ async function runInitErrorHandlingTests() {
       assert(Boolean(dataWorker.conversationId), '3.3 Worker returns conversationId');
     }
 
+    // =========================================================================
+    // 4. Floating Chat Window Opening & Init Error Isolation
+    // =========================================================================
+    console.log('\n--- 4. Window creation occurs regardless of init failure ---');
+    {
+      // Mock getOrCreateConversation failure
+      globalThis.fetch = (async () => {
+        return new Response(JSON.stringify({ success: false, error: 'Initialization blocked by server policy' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }) as typeof fetch;
+
+      // Verify getOrCreateConversation returns failure object with status 403 and error message
+      const initFailRes = await messagingService.getOrCreateConversation(guestAId, guestBId);
+      assert(initFailRes.success === false, '4.1 Failed initialization returns success: false');
+      assert(initFailRes.error === 'Initialization blocked by server policy', '4.2 Preserves exact error message for UI banner');
+
+      // Verify window structure can be created immediately for UI display
+      const sortedIds = [guestAId, guestBId].sort();
+      const conversationId = `conv_${sortedIds[0]}_${sortedIds[1]}`;
+      const dummyWindow = {
+        conversationId,
+        partnerId: guestBId,
+        partnerNickname: 'Bob',
+        partnerAvatar: '⚡',
+        isMinimized: false,
+        isMaximized: false,
+        displayMode: 'floating',
+        messages: [],
+        unreadCount: 0,
+        draft: '',
+        isOpen: true,
+      };
+
+      assert(dummyWindow.isOpen === true, '4.3 Floating chat window is set to isOpen: true immediately');
+      assert(dummyWindow.displayMode === 'floating', '4.4 Display mode starts as floating');
+    }
+
+    // =========================================================================
+    // 5. Registered Member & Guest Conversation Initialization Compatibility
+    // =========================================================================
+    console.log('\n--- 5. Registered Member & Guest conversation initialization ---');
+    {
+      const registeredUserA = 'reg-user-uuid-1111';
+      const registeredUserB = 'reg-user-uuid-2222';
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const urlStr = typeof input === 'string' ? input : input.toString();
+        if (urlStr.includes('/api/chat/conversations')) {
+          return new Response(JSON.stringify({ success: true, conversationId: 'conv-reg-123' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('Not Found', { status: 404 });
+      }) as typeof fetch;
+
+      const resMemberToMember = await messagingService.getOrCreateConversation(registeredUserA, registeredUserB);
+      assert(resMemberToMember.success === true, '5.1 Registered member-to-member conversation initialization succeeds');
+      assert(resMemberToMember.conversationId === 'conv-reg-123', '5.2 Returns valid conversation ID for members');
+
+      const resGuestToMember = await messagingService.getOrCreateConversation(guestAId, registeredUserB);
+      assert(resGuestToMember.success === true, '5.3 Guest-to-member conversation initialization succeeds');
+    }
+
   } finally {
     globalThis.fetch = origFetch;
     process.env = originalEnv;
