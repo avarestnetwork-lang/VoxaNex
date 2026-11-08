@@ -2,6 +2,7 @@ import React from 'react';
 import { usePrivateChat, FloatingChatWindow } from '../../context/PrivateChatContext';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
+import { useRouter } from '../../context/RouterContext';
 import { PrivateChatPane } from './PrivateChatPane';
 import {
   X,
@@ -12,9 +13,11 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
   const { user } = useAuth();
   const { closeChat, minimizeChat, maximizeChat } = usePrivateChat();
   const { language } = useLanguage();
+  const { currentRoute } = useRouter();
 
   // Rule 5 & 7: Only render when isOpen AND displayMode === 'floating'
-  if (!win.isOpen || win.displayMode !== 'floating') return null;
+  // Fix: Hide floating window if we are already viewing it on the /messages page
+  if (!win.isOpen || win.displayMode !== 'floating' || currentRoute === '/messages') return null;
 
   // Minimized view: small tab at bottom-right
   if (win.isMinimized) {
@@ -92,10 +95,12 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
 
 export const FloatingChatManager: React.FC = () => {
   const { openWindows, latestToast, clearToast, openChat } = usePrivateChat();
+  const { currentRoute } = useRouter();
 
   // Rule 5 & 7: The floating manager must render ONLY conversations whose mode is 'floating'
+  // Fix: Hide floating window if we are already viewing it on the /messages page
   const floatingWindows = openWindows.filter(
-    (win) => win.isOpen && win.displayMode === 'floating'
+    (win) => win.isOpen && win.displayMode === 'floating' && currentRoute !== '/messages'
   );
 
   return (
