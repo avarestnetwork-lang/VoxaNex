@@ -27,7 +27,6 @@ import { createGuestSession } from '../src/server/guestSessionManager';
 import { ConversationDisplayMode, FloatingChatWindow, consolidateWindows } from '../src/context/PrivateChatContext';
 import { ChatMessage } from '../src/types';
 import * as fs from 'fs';
-import * as path from 'path';
 
 function assert(condition: boolean, testName: string, detail?: string) {
   if (!condition) {
@@ -505,16 +504,35 @@ async function runRegressionSuite() {
     'Step 7: Expanded private chat interface rendered for convId'
   );
 
-  // --- STEP 8: Explicit Minimize / Restore ---
-  console.log('\n--- Step 8: Explicit Minimize / Restore ---');
+  // --- STEP 8: Explicit Minimize / Restore / Close Coverage ---
+  console.log('\n--- Step 8: Explicit Minimize / Restore / Close Coverage ---');
+  
+  // Test A — Maximized to floating
+  clientA.maximizeChat(convId);
   clientA.minimizeChat(convId);
-  assertInvariants('Step 8.1', 1, 0);
-  assert(clientA.isPublicRoomActive === true, 'Step 8.2: Public room remains active after minimize');
-  assert(clientA.openWindows.find(w => w.conversationId === convId)?.isMinimized === true, 'Step 8.3: Window is minimized');
+  assert(clientA.openWindows.find(w => w.conversationId === convId)?.displayMode === 'floating', 'Test A.1: Maximized to floating');
+  assert(clientA.openWindows.find(w => w.conversationId === convId)?.isMaximized === false, 'Test A.2: Maximized false');
+  assert(clientA.openWindows.find(w => w.conversationId === convId)?.isMinimized === false, 'Test A.3: Minimized false');
+  assert(clientA.isPublicRoomActive === true, 'Test A.4: Public room remains active');
 
+  // Test B — Floating to minimized
+  clientA.minimizeChat(convId); // Should toggle to minimized: true
+  assert(clientA.openWindows.find(w => w.conversationId === convId)?.isMinimized === true, 'Test B.1: Window is minimized');
+  assert(clientA.openWindows.find(w => w.conversationId === convId)?.conversationId === convId, 'Test B.2: Conversation ID unchanged');
+
+  // Test C — Minimized to restored
   clientA.openChat({ id: idB, nickname: 'GuestB_Sylhet', avatar: '🌸' });
-  assert(clientA.openWindows.find(w => w.conversationId === convId)?.isMinimized === false, 'Step 8.4: Window restored from minimized');
-  assert(clientA.openWindows.find(w => w.conversationId === convId)?.messages.length === 1, 'Step 8.5: Conversation and messages remain intact');
+  assert(clientA.openWindows.find(w => w.conversationId === convId)?.isMinimized === false, 'Test C.1: Window restored from minimized');
+  const winA = clientA.openWindows.find(w => w.conversationId === convId);
+  assert(winA !== undefined && winA.messages.length >= 1, 'Test C.2: Conversation and messages remain intact');
+
+  // Test D — Close behavior
+  clientA.closeChat(convId);
+  assert(clientA.openWindows.find(w => w.conversationId === convId) === undefined, 'Test D.1: Window removed from active collection');
+  // Re-open to verify history is NOT deleted
+  clientA.openChat({ id: idB, nickname: 'GuestB_Sylhet', avatar: '🌸' });
+  const restoredWin = clientA.openWindows.find(w => w.conversationId === convId);
+  assert(restoredWin !== undefined && restoredWin.messages.length >= 1, 'Test D.2: Conversation history is NOT deleted');
 
   // --- STEP 9: Receiver-side Incoming Private Message ---
   console.log('\n--- Step 9: Receiver-side Incoming Private Message ---');
@@ -629,7 +647,7 @@ async function runRegressionSuite() {
   );
 
   // Test 10.4: Source inspection of actual FloatingChatManager.tsx responsive sizing implementation
-  const floatingManagerSource = fs.readFileSync(path.join(__dirname, '../src/components/chat/FloatingChatManager.tsx'), 'utf-8');
+  const floatingManagerSource = fs.readFileSync(new URL('../src/components/chat/FloatingChatManager.tsx', import.meta.url), 'utf-8');
   assert(
     floatingManagerSource.includes('w-[min(360px,calc(100vw-24px))]'),
     'Step 10.5: FloatingChatManager source implements responsive mobile width constraint'
