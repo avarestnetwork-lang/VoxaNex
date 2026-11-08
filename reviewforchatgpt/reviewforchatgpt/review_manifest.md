@@ -6,25 +6,17 @@ Source Branch: main
 Review Staging Branch: main
 
 ## Review Information
-
-Task: Secure Account Deletion
-Source Commit: Not recorded — update with the exact source commit SHA used for these staged copies.
-Staging Date: 2026-11-02
+Task: Private Conversation Initialization HTTP 403 — PostgREST duplicate handling
+Source Commit: 9ee830ab344b1285eb72185843d4d1c703138604
+Staging Date: 2026-11-09
 
 ## Staged Files
 
-| Staged File | Original Source File |
-|---|---|
-| reviewforchatgpt/reviewforchatgpt/src/worker.ts | src/worker.ts |
-| reviewforchatgpt/reviewforchatgpt/src/authService.ts | src/services/authService.ts |
-| reviewforchatgpt/reviewforchatgpt/src/safetyService.ts | src/services/safetyService.ts |
-| reviewforchatgpt/reviewforchatgpt/src/AuthContext.tsx | src/context/AuthContext.tsx |
-| reviewforchatgpt/reviewforchatgpt/src/MemberDashboardPage.tsx | src/pages/MemberDashboardPage.tsx |
-| reviewforchatgpt/reviewforchatgpt/src/ProfileSettingsPage.tsx | src/pages/ProfileSettingsPage.tsx |
-| reviewforchatgpt/reviewforchatgpt/tests/account_deletion_audit_test.ts | tests/account_deletion_audit_test.ts |
-| reviewforchatgpt/reviewforchatgpt/tests/worker_conversation_history_test.ts | tests/worker_conversation_history_test.ts |
-| reviewforchatgpt/reviewforchatgpt/tests/security_audit_test.ts | tests/security_audit_test.ts |
+| Staged File | Original Source File | Source Commit |
+|---|---|---|
+| reviewforchatgpt/reviewforchatgpt/src/worker.ts | src/worker.ts | 9ee830ab344b1285eb72185843d4d1c703138604 |
+| reviewforchatgpt/reviewforchatgpt/tests/private_conversation_init_error_test.ts | tests/private_conversation_init_error_test.ts | 9ee830ab344b1285eb72185843d4d1c703138604 |
 
-Review Purpose: Read-only source review.
+Review Purpose: Read-only source review and staging verification.
 
-Deployment: Not authorized.
+Deployment: Not authorized. Review copy only; do not deploy from this folder.
