@@ -1,7 +1,7 @@
 import React from 'react';
 import { useRouter } from '../../context/RouterContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { MessageSquare, Globe, Shield, Lock, Sun, Moon, Monitor, Facebook, Mail } from 'lucide-react';
+import { MessageSquare, Globe, Shield, Lock, Sun, Moon, Monitor, Facebook, Mail, Users } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 
 export const Footer: React.FC = () => {
@@ -47,6 +47,17 @@ export const Footer: React.FC = () => {
                 className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-white hover:bg-[#1877F2] dark:hover:bg-[#1877F2] hover:border-[#1877F2] transition-all border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 cursor-pointer shadow-xs"
               >
                 <Facebook className="w-4 h-4" />
+              </a>
+
+              <a
+                href="https://www.facebook.com/groups/chatlustora/"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="ChatLustora on Facebook Group"
+                title="ChatLustora on Facebook Group"
+                className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-white hover:bg-[#1877F2] dark:hover:bg-[#1877F2] hover:border-[#1877F2] transition-all border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 cursor-pointer shadow-xs"
+              >
+                <Users className="w-4 h-4" />
               </a>
 
               <a

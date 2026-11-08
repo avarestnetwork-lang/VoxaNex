@@ -312,11 +312,18 @@ export const LandingPage: React.FC = () => {
               )}
             </h1>
 
-            {/* Suggested Phase 5.A Introduction */}
+            {/* Secondary Headline */}
+            <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-200">
+              {language === 'bn' 
+                ? 'বিশ্বব্যাপী কথোপকথন, বন্ধুত্ব এবং সংযোগ আবিষ্কার করুন' 
+                : 'Discover Global Conversations, Friendship & Connections'}
+            </h2>
+
+            {/* Description */}
             <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed max-w-2xl">
               {language === 'bn'
-                ? 'চ্যাটলাস্টোরায় (ChatLustora) স্বাগতম — প্রাপ্তবয়স্কদের চ্যাট, ফ্লার্টিং এবং সংযোগ স্থাপনের আধুনিক স্থান। বাংলা চ্যাট, বাঙালি আড্ডা, দেশি চ্যাট কমিউনিটি এবং প্রাইভেট মেসেজিং উপভোগ করুন এক প্ল্যাটফর্মে। নতুন মানুষের সাথে পরিচিত হোন, আড্ডায় যোগ দিন এবং একটি সম্মানজনক, প্রাপ্তবয়স্কদের উপযুক্ত পরিবেশে সংযোগ আবিষ্কার করুন। উপলব্ধ সুবিধাসমূহ চ্যাটলাস্টোরার বর্তমান পরিষেবার ওপর নির্ভরশীল। ব্যবহারকারীদের অবশ্যই ১৮ বা তার বেশি বয়সী হতে হবে।'
-                : 'Welcome to ChatLustora — a place for adults to chat, flirt and connect. Explore Bangla chat, Bengali conversations, desi chat communities and private messaging in one convenient platform. Meet new people, join conversations and discover connections in a respectful, adults-only environment. Available features depend on the services currently offered by ChatLustora. Users must be 18 or older.'}
+                ? 'পাবলিক চ্যাট রুমে ঘুরে দেখুন, বাঙালি, দেশি এবং আন্তর্জাতিক প্রাপ্তবয়স্কদের সাথে সংযোগ স্থাপন করুন এবং একটি সম্মানজনক ১৮+ কমিউনিটিতে ব্যক্তিগত মেসেজিং উপভোগ করুন।'
+                : 'Explore public chat rooms, connect with Bengali, Desi and international adults, and enjoy private messaging in a respectful 18+ community.'}
             </p>
 
             {/* CTA Buttons */}
@@ -797,6 +804,38 @@ export const LandingPage: React.FC = () => {
                 <button onClick={() => navigate('/profile')} className="text-orange-600 dark:text-orange-400 hover:text-orange-700 cursor-pointer">{t.landing.userLevels}</button>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Facebook Community Section */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 border-t border-slate-200/60 dark:border-slate-800">
+        <div className="mb-8">
+          <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+            {language === 'bn' ? 'চ্যাটলাস্টোরা কমিউনিটিতে যোগ দিন' : 'Join the ChatLustora Community'}
+          </h2>
+          <p className="text-slate-600 dark:text-slate-300 mt-2">
+            {language === 'bn' ? 'চ্যাট রুমের বাইরেও যুক্ত থাকুন। আমাদের আপডেট পেতে, কমিউনিটি মেম্বারদের সাথে দেখা করতে এবং আমাদের বৈশ্বিক কমিউনিটির অংশ হতে আমাদের ফলো করুন।' : 'Connect beyond the chat rooms. Follow our updates, meet community members and become part of our global community.'}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Card A */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">{language === 'bn' ? 'আমাদের ফেসবুক পেজ ফলো করুন' : 'Follow Our Facebook Page'}</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mb-6">{language === 'bn' ? 'লেটেস্ট চ্যাটলাস্টোরা আপডেট, নতুন ফিচার ঘোষণা, কমিউনিটি নিউজ এবং বিশেষ আপডেট পেতে আমাদের পেজে লাইক দিন।' : 'Get the latest ChatLustora updates, feature announcements, community news and special updates.'}</p>
+            <a href="https://www.facebook.com/chatlustora" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center bg-[#1877F2] hover:bg-[#166fe5] text-white font-bold px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer">
+              {language === 'bn' ? 'ফেসবুকে ফলো করুন' : 'Follow on Facebook'}
+            </a>
+          </div>
+
+          {/* Card B */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">{language === 'bn' ? 'আমাদের ফেসবুক গ্রুপে যোগ দিন' : 'Join Our Facebook Group'}</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mb-6">{language === 'bn' ? 'কমিউনিটি মেম্বারদের সাথে পরিচিত হোন, আলোচনায় অংশগ্রহণ করুন, আগ্রহ শেয়ার করুন এবং বাঙালি, দেশি ও আন্তর্জাতিক প্রাপ্তবয়স্কদের সাথে সংযোগ স্থাপন করুন।' : 'Meet community members, participate in discussions, share interests and connect with Bengali, Desi and international adults.'}</p>
+            <a href="https://www.facebook.com/groups/chatlustora/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center bg-[#1877F2] hover:bg-[#166fe5] text-white font-bold px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer">
+              {language === 'bn' ? 'আমাদের গ্রুপে যোগ দিন' : 'Join Our Group'}
+            </a>
           </div>
         </div>
       </section>
