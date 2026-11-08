@@ -173,7 +173,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   // Open or focus a chat window with a partner (Rule 1: Always starts in 'floating' mode)
   const openChat = useCallback(async (partner: { id: string; nickname: string; avatar: string; gender?: string }) => {
-    if (!user.id || partner.id === user.id) return;
+    if (!user.id || !partner.id || partner.id === user.id) return;
 
     const sortedIds = [user.id, partner.id].sort();
     const conversationId = `conv_${sortedIds[0]}_${sortedIds[1]}`;
@@ -183,11 +183,23 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     console.log('[DIAGNOSTIC] private_popup_opened', { conversationId, partnerId: partner.id });
 
     setOpenWindows((prev) => {
-      const existing = prev.find((w) => w.conversationId === conversationId);
+      const existing = prev.find((w) => w.conversationId === conversationId || w.partnerId === partner.id);
       if (existing) {
         return prev.map((w) =>
-          w.conversationId === conversationId
-            ? { ...w, isOpen: true, displayMode: 'floating', isMaximized: false, isMinimized: false, unreadCount: 0 }
+          (w.conversationId === conversationId || w.partnerId === partner.id)
+            ? {
+                ...w,
+                conversationId,
+                partnerId: partner.id,
+                partnerNickname: partner.nickname || w.partnerNickname,
+                partnerAvatar: partner.avatar || w.partnerAvatar,
+                partnerGender: partner.gender || w.partnerGender,
+                isOpen: true,
+                displayMode: 'floating',
+                isMaximized: false,
+                isMinimized: false,
+                unreadCount: 0,
+              }
             : w
         );
       } else {
@@ -471,41 +483,6 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       unsubSupabase();
     };
   }, [user.id, handleIncomingMessage]);
-
-  // Fix 2: Per-window Subscriptions (Incremental management)
-  useEffect(() => {
-    if (!user.id) return;
-
-    const currentConvIds = new Set(openWindows.map(w => w.conversationId));
-
-    // 1. Unsubscribe from windows that are no longer open
-    activeSubscriptionsRef.current.forEach((unsub, convId) => {
-      if (!currentConvIds.has(convId)) {
-        console.log('[VX-DM] Window closed, unsubscribing from:', convId);
-        unsub();
-        activeSubscriptionsRef.current.delete(convId);
-      }
-    });
-
-    // 2. Subscribe to newly opened windows
-    openWindows.forEach((win) => {
-      if (activeSubscriptionsRef.current.has(win.conversationId)) return;
-      
-      console.log('[VX-DM] New window detected, subscribing to:', win.conversationId);
-      const unsub = messagingService.subscribeToConversation(win.conversationId, user.id, {
-        onMessage: (msg) => {
-          handleIncomingMessage(msg, win.conversationId, {
-            id: win.partnerId,
-            nickname: win.partnerNickname,
-            avatar: win.partnerAvatar,
-          });
-        },
-      });
-
-      activeSubscriptionsRef.current.set(win.conversationId, unsub);
-    });
-
-  }, [user.id, openWindows, handleIncomingMessage]);
 
 
   // Fix 3: Polling Sync

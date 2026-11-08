@@ -17,6 +17,9 @@ import {
   RotateCcw,
   Shield,
   MessageSquare,
+  Minimize2,
+  Maximize2,
+  X,
 } from 'lucide-react';
 
 interface PrivateChatPaneProps {
@@ -34,6 +37,8 @@ interface PrivateChatPaneProps {
     avatar: string;
   };
   onClose: () => void;
+  onMinimize?: () => void;
+  onMaximize?: () => void;
   language: 'en' | 'bn';
 }
 
@@ -42,6 +47,8 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
   partner,
   currentUser,
   onClose,
+  onMinimize,
+  onMaximize,
   language,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -79,7 +86,9 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
         return;
       }
 
-      const res = await messagingService.fetchConversationMessages(conversationId, currentUser.id);
+      const activeConvId = initRes.conversationId || conversationId;
+
+      const res = await messagingService.fetchConversationMessages(activeConvId, currentUser.id);
       if (cancel) return;
 
       if (res.success) {
@@ -89,14 +98,14 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
           const incoming = res.messages.filter((m) => m.senderId === partner.id);
           if (incoming.length > 0) {
             const latest = incoming[incoming.length - 1];
-            messagingService.sendConversationRead(conversationId, currentUser.id, latest.id);
+            messagingService.sendConversationRead(activeConvId, currentUser.id, latest.id);
           }
         } else {
           // Welcome message placeholder - ONLY if initialization AND fetch succeeded with 0 messages
           setMessages([
             {
               id: `welcome_${Date.now()}`,
-              conversationId,
+              conversationId: activeConvId,
               senderId: partner.id,
               senderNickname: partner.nickname,
               senderAvatar: partner.avatar,
@@ -118,7 +127,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
       // Subscribe ONLY AFTER successful initialization and history fetch
       if (!cancel && res.success) {
-        unsubscribeFn = messagingService.subscribeToConversation(conversationId, currentUser.id, {
+        unsubscribeFn = messagingService.subscribeToConversation(activeConvId, currentUser.id, {
           onMessage: (newMsg) => {
             setMessages((prev) => {
               if (prev.some((m) => m.id === newMsg.id)) return prev;
@@ -131,7 +140,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
             // Mark incoming message as read
             if (newMsg.senderId === partner.id) {
-              messagingService.sendConversationRead(conversationId, currentUser.id, newMsg.id);
+              messagingService.sendConversationRead(activeConvId, currentUser.id, newMsg.id);
             }
 
             setTimeout(() => scrollToBottom(true), 50);
@@ -232,13 +241,15 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
       {/* Conversation Top Header */}
       <div className="p-3 bg-[#0d1424] border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-            title="Return to Public Chatroom"
-          >
-            <ArrowLeft className="w-5 h-5 text-cyan-400" />
-          </button>
+          {onClose && !onMinimize && (
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Return to Public Chatroom"
+            >
+              <ArrowLeft className="w-5 h-5 text-cyan-400" />
+            </button>
+          )}
           <div className="flex items-center gap-2.5">
             <span className="text-2xl select-none">{partner.avatar || '👤'}</span>
             <div>
@@ -268,13 +279,33 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={onClose}
-          className="text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 transition-colors cursor-pointer flex items-center gap-1.5"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Return to Group</span>
-        </button>
+        <div className="flex items-center gap-1">
+          {onMinimize && (
+            <button
+              onClick={onMinimize}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Minimize"
+            >
+              <Minimize2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {onMaximize && (
+            <button
+              onClick={onMaximize}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Maximize to large tab"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+            title="Close"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Messages Scroll Area */}
