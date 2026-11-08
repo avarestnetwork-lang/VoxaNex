@@ -47,6 +47,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [initError, setInitError] = useState<string | null>(null);
   const [partnerTyping, setPartnerTyping] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
@@ -63,13 +64,26 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
   // 1. Load History & Subscribe
   useEffect(() => {
     let cancel = false;
+    let unsubscribeFn: (() => void) | null = null;
 
     async function init() {
       setLoading(true);
-      await messagingService.getOrCreateConversation(currentUser.id, partner.id);
+      setInitError(null);
+
+      const initRes = await messagingService.getOrCreateConversation(currentUser.id, partner.id);
+      if (cancel) return;
+
+      if (!initRes.success) {
+        setInitError(initRes.error || 'Failed to initialize conversation');
+        setLoading(false);
+        return;
+      }
+
       const res = await messagingService.fetchConversationMessages(conversationId, currentUser.id);
-      if (!cancel) {
-        if (res.success && res.messages.length > 0) {
+      if (cancel) return;
+
+      if (res.success) {
+        if (res.messages.length > 0) {
           setMessages(res.messages);
           // Mark newest incoming message as read
           const incoming = res.messages.filter((m) => m.senderId === partner.id);
@@ -78,7 +92,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             messagingService.sendConversationRead(conversationId, currentUser.id, latest.id);
           }
         } else {
-          // Welcome message placeholder
+          // Welcome message placeholder - ONLY if initialization AND fetch succeeded with 0 messages
           setMessages([
             {
               id: `welcome_${Date.now()}`,
@@ -96,44 +110,49 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             },
           ]);
         }
-        setLoading(false);
-        setTimeout(() => scrollToBottom(false), 50);
+      } else {
+        setInitError(res.error || 'Failed to fetch conversation history');
+      }
+      setLoading(false);
+      setTimeout(() => scrollToBottom(false), 50);
+
+      // Subscribe ONLY AFTER successful initialization and history fetch
+      if (!cancel && res.success) {
+        unsubscribeFn = messagingService.subscribeToConversation(conversationId, currentUser.id, {
+          onMessage: (newMsg) => {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === newMsg.id)) return prev;
+              // Reconcile optimistic message by clientNonce or temp ID
+              if (newMsg.clientNonce && prev.some((m) => m.clientNonce === newMsg.clientNonce)) {
+                return prev.map((m) => (m.clientNonce === newMsg.clientNonce ? newMsg : m));
+              }
+              return [...prev, newMsg];
+            });
+
+            // Mark incoming message as read
+            if (newMsg.senderId === partner.id) {
+              messagingService.sendConversationRead(conversationId, currentUser.id, newMsg.id);
+            }
+
+            setTimeout(() => scrollToBottom(true), 50);
+          },
+          onTyping: (typers) => {
+            setPartnerTyping(typers.includes(partner.nickname));
+          },
+          onRead: (receipt) => {
+            if (receipt.userId === partner.id) {
+              setLastReadMessageId(receipt.messageId);
+            }
+          },
+        });
       }
     }
 
     init();
 
-    const unsubscribe = messagingService.subscribeToConversation(conversationId, currentUser.id, {
-      onMessage: (newMsg) => {
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === newMsg.id)) return prev;
-          // Reconcile optimistic message by clientNonce or temp ID
-          if (newMsg.clientNonce && prev.some((m) => m.clientNonce === newMsg.clientNonce)) {
-            return prev.map((m) => (m.clientNonce === newMsg.clientNonce ? newMsg : m));
-          }
-          return [...prev, newMsg];
-        });
-
-        // Mark incoming message as read
-        if (newMsg.senderId === partner.id) {
-          messagingService.sendConversationRead(conversationId, currentUser.id, newMsg.id);
-        }
-
-        setTimeout(() => scrollToBottom(true), 50);
-      },
-      onTyping: (typers) => {
-        setPartnerTyping(typers.includes(partner.nickname));
-      },
-      onRead: (receipt) => {
-        if (receipt.userId === partner.id) {
-          setLastReadMessageId(receipt.messageId);
-        }
-      },
-    });
-
     return () => {
       cancel = true;
-      unsubscribe();
+      if (unsubscribeFn) unsubscribeFn();
     };
   }, [conversationId, partner.id, partner.nickname, partner.avatar, currentUser.id, language]);
 
@@ -152,6 +171,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
   // Send DM
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (initError) return;
     const clean = inputText.trim();
     if (!clean && !attachedMedia) return;
 
@@ -259,7 +279,13 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
       {/* Messages Scroll Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {loading ? (
+        {initError ? (
+          <div className="py-8 flex flex-col items-center justify-center text-center text-rose-400 p-6 bg-rose-950/20 rounded-xl border border-rose-900/50 m-4">
+            <Shield className="w-8 h-8 mb-2 text-rose-500" />
+            <p className="font-semibold text-sm mb-1">{language === 'bn' ? 'চ্যাট শুরু করতে সমস্যা হয়েছে' : 'Conversation Initialization Failed'}</p>
+            <p className="text-xs text-rose-300 font-mono">{initError}</p>
+          </div>
+        ) : loading ? (
           <div className="py-12 text-center text-xs text-slate-400">Loading conversation history...</div>
         ) : (
           messages.map((msg, idx) => {
@@ -332,7 +358,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
       </div>
 
       {/* Typing Indicator */}
-      {partnerTyping && (
+      {partnerTyping && !initError && (
         <div className="px-4 py-1.5 bg-[#090d18] border-t border-slate-800/60 text-xs text-cyan-400 flex items-center gap-2 animate-pulse">
           <span className="w-2 h-2 rounded-full bg-cyan-400" />
           <span>{partner.nickname} is typing...</span>
@@ -364,21 +390,23 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
           <div className="flex items-center gap-1">
             <button
               type="button"
+              disabled={Boolean(initError)}
               onClick={() => {
                 setShowEmojiPicker(!showEmojiPicker);
                 setShowGifPicker(false);
               }}
-              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Smile className="w-4 h-4" />
             </button>
             <button
               type="button"
+              disabled={Boolean(initError)}
               onClick={() => {
                 setShowGifPicker(!showGifPicker);
                 setShowEmojiPicker(false);
               }}
-              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ImageIcon className="w-4 h-4" />
             </button>
@@ -386,13 +414,14 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
           <input
             type="text"
+            disabled={Boolean(initError)}
             value={inputText}
             onChange={handleInputChange}
-            placeholder={`Message ${partner.nickname}...`}
-            className="flex-1 bg-[#101729] border border-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+            placeholder={initError ? 'Conversation initialization failed' : `Message ${partner.nickname}...`}
+            className="flex-1 bg-[#101729] border border-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
           />
 
-          <Button type="submit" variant="primary" size="md" className="shrink-0">
+          <Button type="submit" variant="primary" size="md" disabled={Boolean(initError)} className="shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
             <Send className="w-4 h-4 mr-1.5" />
             <span>Send</span>
           </Button>

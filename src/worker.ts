@@ -1412,6 +1412,7 @@ export default {
                     'apikey': supabaseServiceKey,
                     'Authorization': `Bearer ${supabaseServiceKey}`,
                     'Content-Type': 'application/json',
+                    'Prefer': 'resolution=merge-duplicates',
                   },
                   body: JSON.stringify(payload)
                 });

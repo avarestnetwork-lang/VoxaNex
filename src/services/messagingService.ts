@@ -509,7 +509,7 @@ export const messagingService = {
   async getOrCreateConversation(
     userId: string,
     partnerId: string
-  ): Promise<{ success: boolean; conversationId?: string; error?: string }> {
+  ): Promise<{ success: boolean; conversationId?: string; slug?: string; error?: string; status?: number }> {
     try {
       const token = await getAuthToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -520,17 +520,33 @@ export const messagingService = {
         headers,
         body: JSON.stringify({ userId, partnerId }),
       });
-      const data = (await res.json()) as { success: boolean; conversationId?: string; error?: string };
-      return data;
-    } catch {
-      return { success: false, error: 'Failed to initialize conversation' };
+
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+
+      if (!res.ok || data.success === false) {
+        const errorMsg = data.error || `Failed to initialize conversation (HTTP ${res.status})`;
+        return { success: false, error: errorMsg, status: res.status };
+      }
+
+      return {
+        success: true,
+        conversationId: data.conversationId,
+        slug: data.slug,
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to initialize conversation' };
     }
   },
 
   async fetchConversationMessages(
     convId: string,
     userId: string
-  ): Promise<{ success: boolean; messages: ChatMessage[]; error?: string }> {
+  ): Promise<{ success: boolean; messages: ChatMessage[]; error?: string; status?: number }> {
     try {
       const token = await getAuthToken();
       const url = `${API_BASE}/api/chat/conversations/${convId}/messages?userId=${encodeURIComponent(userId)}`;
@@ -538,10 +554,22 @@ export const messagingService = {
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const res = await fetch(url, { headers });
-      const data = (await res.json()) as { messages?: ChatMessage[] };
-      return { success: true, messages: data.messages || [] };
-    } catch {
-      return { success: false, messages: [], error: 'Failed to fetch direct messages' };
+
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+
+      if (!res.ok || data.success === false) {
+        const errorMsg = data.error || `Failed to fetch direct messages (HTTP ${res.status})`;
+        return { success: false, messages: [], error: errorMsg, status: res.status };
+      }
+
+      return { success: true, messages: Array.isArray(data.messages) ? data.messages : [] };
+    } catch (err: any) {
+      return { success: false, messages: [], error: err.message || 'Failed to fetch direct messages' };
     }
   },
 

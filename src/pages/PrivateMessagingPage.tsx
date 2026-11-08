@@ -65,6 +65,7 @@ export const PrivateMessagingPage: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [textInput, setTextInput] = useState('');
   const [blockedUsers, setBlockedUsers] = useState<Set<string>>(new Set());
+  const [initError, setInitError] = useState<string | null>(null);
 
   // Pickers & Modals
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -87,14 +88,25 @@ export const PrivateMessagingPage: React.FC = () => {
     const currentConv = activeConversation;
 
     let cancel = false;
+    let unsubscribeFn: (() => void) | null = null;
+
     async function init() {
+      setInitError(null);
       // Register membership on server
-      await messagingService.getOrCreateConversation(user.id, currentConv.partnerId);
+      const initRes = await messagingService.getOrCreateConversation(user.id, currentConv.partnerId);
+      if (cancel) return;
+
+      if (!initRes.success) {
+        setInitError(initRes.error || 'Failed to initialize conversation');
+        return;
+      }
 
       // Fetch history
       const res = await messagingService.fetchConversationMessages(activeConvId, user.id);
-      if (!cancel) {
-        if (res.success && res.messages.length > 0) {
+      if (cancel) return;
+
+      if (res.success) {
+        if (res.messages.length > 0) {
           setMessages(res.messages);
         } else {
           // Initialize friendly welcome message if empty
@@ -111,26 +123,30 @@ export const PrivateMessagingPage: React.FC = () => {
             },
           ]);
         }
-        setTimeout(scrollToBottom, 50);
+      } else {
+        setInitError(res.error || 'Failed to fetch conversation history');
+      }
+      setTimeout(scrollToBottom, 50);
+
+      // Subscribe ONLY AFTER successful initialization and history fetch
+      if (!cancel && res.success) {
+        unsubscribeFn = messagingService.subscribeToConversation(activeConvId, user.id, {
+          onMessage: (newMsg) => {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === newMsg.id)) return prev;
+              return [...prev, newMsg];
+            });
+            setTimeout(scrollToBottom, 50);
+          },
+        });
       }
     }
 
     init();
 
-    // Subscribe to SSE stream for this conversation
-    const unsubscribe = messagingService.subscribeToConversation(activeConvId, user.id, {
-      onMessage: (newMsg) => {
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === newMsg.id)) return prev;
-          return [...prev, newMsg];
-        });
-        setTimeout(scrollToBottom, 50);
-      },
-    });
-
     return () => {
       cancel = true;
-      unsubscribe();
+      if (unsubscribeFn) unsubscribeFn();
     };
   }, [activeConvId, activeConversation, user.id]);
 
@@ -418,7 +434,14 @@ export const PrivateMessagingPage: React.FC = () => {
 
             {/* Message Stream */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#090d18]">
-              {messages.map((msg, idx) => {
+              {initError ? (
+                <div className="py-8 flex flex-col items-center justify-center text-center text-rose-400 p-6 bg-rose-950/20 rounded-xl border border-rose-900/50 m-4">
+                  <ShieldAlert className="w-8 h-8 mb-2 text-rose-500" />
+                  <p className="font-semibold text-sm mb-1">{language === 'bn' ? 'চ্যাট শুরু করতে সমস্যা হয়েছে' : 'Conversation Initialization Failed'}</p>
+                  <p className="text-xs text-rose-300 font-mono">{initError}</p>
+                </div>
+              ) : (
+                messages.map((msg, idx) => {
                 const isMe = msg.senderId === user.id;
 
                 return (
@@ -461,7 +484,8 @@ export const PrivateMessagingPage: React.FC = () => {
                     </div>
                   </div>
                 );
-              })}
+              })
+            )}
               <div ref={messagesEndRef} />
             </div>
 
