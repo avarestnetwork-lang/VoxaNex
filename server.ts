@@ -169,8 +169,8 @@ export async function authenticateRequest(
           verifiedUserId = userData.id;
         }
       }
-    } catch (err) {
-      console.warn('[Server] Supabase member verification fetch exception:', err);
+    } catch {
+      // Intentionally swallow network errors and let verifiedUserId remain null
     }
 
     if (verifiedUserId) {
@@ -193,6 +193,15 @@ export async function authenticateRequest(
       return { errorCode: 401, error: `Unauthorized: ${authCheck.reason || 'Invalid or expired guest session token.'}` };
     }
 
+    const isProdOrCi = process.env.NODE_ENV === 'production' || 
+                       Boolean(process.env.CI) || 
+                       process.env.ENVIRONMENT === 'production' || 
+                       process.env.ENVIRONMENT === 'staging';
+
+    if (isProdOrCi && (!dbEnv.supabaseUrl || !dbEnv.supabaseServiceKey)) {
+      return { errorCode: 503, error: 'Server configuration error: Database bindings unavailable in production environment.' };
+    }
+
     // MANDATORY: Durable database verification if bindings are available (Production Hardening)
     if (dbEnv.supabaseUrl && dbEnv.supabaseServiceKey) {
       try {
@@ -204,25 +213,30 @@ export async function authenticateRequest(
             'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
           },
         });
-        if (res.ok) {
-          const rows: any = await res.json();
-          if (Array.isArray(rows) && rows.length === 1) {
-            const row = rows[0];
-            if (row.is_revoked) {
-              return { errorCode: 401, error: 'Unauthorized: Guest session has been revoked by security policy.' };
-            }
-            if (new Date(row.expires_at).getTime() <= Date.now()) {
-              return { errorCode: 401, error: 'Unauthorized: Guest session has expired in database.' };
-            }
-          } else if (Array.isArray(rows) && rows.length === 0) {
-             // In strict production or CI, fail closed if not in database
-             if (process.env.NODE_ENV === 'production' || process.env.CI) {
-               return { errorCode: 401, error: 'Unauthorized: Guest session not recognized by durable store.' };
-             }
-          }
+        if (!res.ok) {
+          return { errorCode: 401, error: 'Unauthorized: Durable session verification failed.' };
         }
-      } catch (err) {
-        console.error('[Server] Guest session DB verification exception:', err);
+
+        const rows: any = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) {
+          return { errorCode: 401, error: 'Unauthorized: Guest session not recognized by durable store.' };
+        }
+        if (rows.length > 1) {
+          return { errorCode: 401, error: 'Unauthorized: Duplicate guest session records detected.' };
+        }
+
+        const row = rows[0];
+        if (row.is_revoked !== false) {
+          return { errorCode: 401, error: 'Unauthorized: Guest session has been revoked by security policy.' };
+        }
+        if (!row.expires_at || isNaN(Date.parse(row.expires_at)) || !Number.isFinite(Date.parse(row.expires_at))) {
+          return { errorCode: 401, error: 'Unauthorized: Invalid guest session expiration in database.' };
+        }
+        if (Date.now() >= Date.parse(row.expires_at)) {
+          return { errorCode: 401, error: 'Unauthorized: Guest session has expired in database.' };
+        }
+      } catch {
+        return { errorCode: 401, error: 'Unauthorized: Durable session verification network error.' };
       }
     }
 
@@ -263,15 +277,17 @@ async function fetchMemberProfile(
   return fallback;
 }
 
-async function startServer() {
+export function createExpressApp(dbEnvOverride?: {
+  supabaseUrl?: string;
+  supabaseServiceKey?: string;
+  supabaseAnonKey?: string;
+}) {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-  const isProd = process.env.NODE_ENV === 'production';
 
   // Supabase Env Context
-  const baseSupabaseUrl = process.env.VITE_SUPABASE_URL || '';
-  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  const baseSupabaseUrl = dbEnvOverride?.supabaseUrl ?? (process.env.VITE_SUPABASE_URL || '');
+  const supabaseAnonKey = dbEnvOverride?.supabaseAnonKey ?? (process.env.VITE_SUPABASE_ANON_KEY || '');
+  const supabaseServiceKey = dbEnvOverride?.supabaseServiceKey ?? (process.env.SUPABASE_SERVICE_ROLE_KEY || '');
   const dbEnv = { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey };
 
   app.use(express.json());
@@ -403,8 +419,8 @@ async function startServer() {
     const { roomId } = req.params;
     const {
       senderId: clientSenderId,
-      senderNickname: clientSenderNickname,
-      senderAvatar: clientSenderAvatar,
+      senderNickname: _clientSenderNickname,
+      senderAvatar: _clientSenderAvatar,
       senderType: bodySenderType,
       guestToken,
       content,
@@ -414,19 +430,19 @@ async function startServer() {
       clientNonce,
     } = req.body || {};
 
-    // 1. Authenticate Request
+    // 1. Normalize effective sender type before authorization
+    const senderType = bodySenderType || 'guest';
+    if (!['registered', 'guest'].includes(senderType)) {
+      return res.status(400).json({ success: false, error: 'Invalid senderType.' });
+    }
+
+    // 2. Authenticate Request
     const authResult = await authenticateRequest(req, dbEnv, guestToken);
     if ('errorCode' in authResult) {
       return res.status(authResult.errorCode).json({ success: false, error: authResult.error });
     }
 
     const { verifiedUserId, isGuestCaller, guestSession } = authResult;
-
-    // 2. Validate senderType
-    const senderType = bodySenderType || 'guest';
-    if (!['registered', 'guest'].includes(senderType)) {
-      return res.status(400).json({ success: false, error: 'Invalid senderType.' });
-    }
 
     // Cross-check declared type and verified identity
     if (isGuestCaller && senderType !== 'guest') {
@@ -445,7 +461,10 @@ async function startServer() {
     let verifiedNickname: string;
     let verifiedAvatar: string;
 
-    if (isGuestCaller && guestSession) {
+    if (isGuestCaller) {
+      if (!guestSession || !guestSession.id) {
+        return res.status(401).json({ success: false, error: 'Unauthorized: Invalid guest session.' });
+      }
       verifiedNickname = guestSession.nickname;
       verifiedAvatar = guestSession.avatar;
     } else {
@@ -477,7 +496,7 @@ async function startServer() {
   // Post presence / heartbeat
   app.post('/api/chat/rooms/:roomId/presence', async (req, res) => {
     const { roomId } = req.params;
-    const { id, nickname, avatar, isGuest, gender, action, status, guestToken } = req.body || {};
+    const { id, action, status, guestToken } = req.body || {};
 
     // 1. Authenticate to prevent impersonation
     const authResult = await authenticateRequest(req, dbEnv, guestToken);
@@ -490,22 +509,33 @@ async function startServer() {
     }
 
     if (action === 'leave' || status === 'offline') {
-      if (id) {
-        removeRoomPresence(roomId, id);
-      }
+      removeRoomPresence(roomId, authResult.verifiedUserId);
       return res.json({ success: true, members: getRoomPresence(roomId) });
     }
 
-    if (id && (nickname || authResult.guestSession?.nickname)) {
-      updateRoomPresence(roomId, {
-        id,
-        nickname: authResult.guestSession?.nickname || nickname,
-        avatar: authResult.guestSession?.avatar || avatar || '👤',
-        isGuest: authResult.isGuestCaller,
-        gender: authResult.guestSession?.gender || gender,
-        lastSeen: Date.now(),
-      });
+    let verifiedNickname: string;
+    let verifiedAvatar: string;
+    let verifiedGender: string | undefined;
+
+    if (authResult.isGuestCaller && authResult.guestSession) {
+      verifiedNickname = authResult.guestSession.nickname || 'Guest';
+      verifiedAvatar = authResult.guestSession.avatar || '⚡';
+      verifiedGender = authResult.guestSession.gender || 'prefer_not_to_say';
+    } else {
+      const profile = await fetchMemberProfile(authResult.verifiedUserId, dbEnv);
+      verifiedNickname = profile.nickname;
+      verifiedAvatar = profile.avatar;
+      verifiedGender = undefined;
     }
+
+    updateRoomPresence(roomId, {
+      id: authResult.verifiedUserId,
+      nickname: verifiedNickname,
+      avatar: verifiedAvatar,
+      isGuest: authResult.isGuestCaller,
+      gender: verifiedGender,
+      lastSeen: Date.now(),
+    });
 
     res.json({ success: true, members: getRoomPresence(roomId) });
   });
@@ -519,7 +549,7 @@ async function startServer() {
   // Typing indicator
   app.post('/api/chat/rooms/:roomId/typing', async (req, res) => {
     const { roomId } = req.params;
-    const { memberId, nickname, isTyping, guestToken } = req.body || {};
+    const { memberId, isTyping, guestToken } = req.body || {};
 
     const authResult = await authenticateRequest(req, dbEnv, guestToken);
     if ('errorCode' in authResult) {
@@ -530,9 +560,15 @@ async function startServer() {
       return res.status(403).json({ success: false, error: 'Forbidden: Identity mismatch in typing update.' });
     }
 
-    if (memberId) {
-      setRoomTyping(roomId, memberId, authResult.guestSession?.nickname || nickname, Boolean(isTyping));
+    let verifiedNickname: string;
+    if (authResult.isGuestCaller && authResult.guestSession) {
+      verifiedNickname = authResult.guestSession.nickname || 'Guest';
+    } else {
+      const profile = await fetchMemberProfile(authResult.verifiedUserId, dbEnv);
+      verifiedNickname = profile.nickname;
     }
+
+    setRoomTyping(roomId, authResult.verifiedUserId, verifiedNickname, Boolean(isTyping));
     res.json({ success: true });
   });
 
@@ -1726,6 +1762,14 @@ async function startServer() {
     res.json({ success });
   });
 
+  return app;
+}
+
+async function startServer() {
+  const app = createExpressApp();
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const isProd = process.env.NODE_ENV === 'production';
+
   // Periodically clean up expired guest sessions every 15 minutes
   setInterval(() => {
     cleanupExpiredSessions();
@@ -1761,10 +1805,15 @@ async function startServer() {
   });
 }
 
-const isMainModule = process.argv[1] && 
-  (process.argv[1].endsWith('server.ts') || 
-   process.argv[1].endsWith('server.js') || 
-   process.argv[1].endsWith('server'));
+const isMainModule = Boolean(
+  process.argv[1] && 
+  (fileURLToPath(import.meta.url) === path.resolve(process.argv[1]) ||
+   process.argv[1].endsWith('/server.ts') || 
+   process.argv[1].endsWith('/server.js') || 
+   process.argv[1] === 'server.ts' || 
+   process.argv[1] === 'server.js') &&
+  !process.argv[1].includes('test')
+);
 
 if (isMainModule) {
   startServer().catch((err) => {
