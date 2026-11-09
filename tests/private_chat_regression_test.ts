@@ -3,6 +3,9 @@
  *
  * This test suite models the behavioral logic of the PrivateChatContext and FloatingChatManager
  * to verify core invariants, deduplication, and responsive constraints.
+ *
+ * NOTE: This is a behavioral model simulation and source-level verification.
+ * It does NOT execute actual Production React components or real backend services.
  */
 
 import { ConversationDisplayMode, FloatingChatWindow, consolidateWindows } from '../src/context/PrivateChatContext';
@@ -21,10 +24,11 @@ function assert(condition: boolean, testName: string, detail?: string) {
   }
 }
 
-// Behavioral Model Persistence Layer (Mocking messagingService/database/localStorage behavior)
+// Behavioral Model Persistence Layer (Mocking basic history behavior)
+// Note: Drafts are NOT persistent in this behavioral model for close/reopen cycles,
+// matching the actual Production implementation in PrivateChatContext.tsx.
 class MockPersistence {
   messages: Map<string, ChatMessage[]> = new Map();
-  drafts: Map<string, string> = new Map();
   knownConversations: Set<string> = new Set();
 
   saveMessage(msg: ChatMessage) {
@@ -38,14 +42,6 @@ class MockPersistence {
 
   getMessages(conversationId: string): ChatMessage[] {
     return [...(this.messages.get(conversationId) || [])];
-  }
-
-  saveDraft(conversationId: string, draft: string) {
-    this.drafts.set(conversationId, draft);
-  }
-
-  getDraft(conversationId: string): string {
-    return this.drafts.get(conversationId) || '';
   }
 }
 
@@ -69,7 +65,7 @@ class ChatClientSimulation {
     this.avatar = avatar;
   }
 
-  // Authoritative render paths matching production components
+  // Authoritative render paths matching production component filter logic
   get floatingWindowsRendered(): FloatingChatWindow[] {
     return this.openWindows.filter((w) => w.isOpen && w.displayMode === 'floating');
   }
@@ -101,9 +97,9 @@ class ChatClientSimulation {
           : w
       );
     } else {
-      // Restore history and draft from persistence (Modeling localStorage/API restoration)
+      // Restore history from behavioral model persistence
+      // Note: Draft is explicitly initialized to '' matching Production openChat logic.
       const history = persistence.getMessages(conversationId);
-      const draft = persistence.getDraft(conversationId);
       this.openWindows.push({
         conversationId,
         partnerId: partner.id,
@@ -115,7 +111,7 @@ class ChatClientSimulation {
         displayMode: 'floating',
         messages: history,
         unreadCount: 0,
-        draft: draft,
+        draft: '', 
         isOpen: true,
       });
     }
@@ -123,14 +119,8 @@ class ChatClientSimulation {
   }
 
   closeChat(conversationId: string) {
-    const window = this.openWindows.find(w => w.conversationId === conversationId);
-    if (window) {
-      // Modeling persistence of state on close
-      persistence.saveDraft(conversationId, window.draft);
-    }
-    
     this.closedConversationIds.add(conversationId);
-    // Production behavior: Remove from openWindows array
+    // Production behavior: Remove from openWindows array (filtering)
     this.openWindows = this.openWindows.filter((w) => w.conversationId !== conversationId);
   }
 
@@ -236,7 +226,7 @@ class ChatClientSimulation {
         displayMode: 'floating',
         messages: persistence.getMessages(conversationId),
         unreadCount: 1,
-        draft: persistence.getDraft(conversationId),
+        draft: '', 
         isOpen: true,
       });
       this.openWindows = consolidateWindows(this.openWindows);
@@ -367,20 +357,20 @@ async function runRegressionSuite() {
 
   // L11-L12: Minimize transition & Mutual Exclusivity (Backward)
   clientA.minimizeChat(convId);
-  assert(clientA.floatingWindowsRendered.length === 1, 'L11: Minimize: returns to floating mode');
-  assert(clientA.maximizedTabsRendered.length === 0, 'L12: Minimize: Maximized renderer count is zero');
+  assert(clientA.floatingWindowsRendered.length === 1, 'L11: Minimize from maximized: returns to floating mode');
+  assert(clientA.maximizedTabsRendered.length === 0, 'L12: Minimize from maximized: Maximized renderer count is zero');
   assert(clientA.floatingWindowsRendered.some(w => w.conversationId === convId), 'L12.1: Conversation returned to floating renderer');
 
   // L13-L14: Restore from minimized
   clientA.minimizeChat(convId); // Set minimized (true)
   assert(clientA.openWindows[0].isMinimized === true, 'L13: Window is minimized');
-  await clientA.openChat({ id: idB, nickname: 'Partner', avatar: '🌸' }); // Restore
-  assert(clientA.openWindows[0].isMinimized === false, 'L14: Restore from minimized state');
+  await clientA.openChat({ id: idB, nickname: 'Partner', avatar: '🌸' }); // Restore (re-open focuses it)
+  assert(clientA.openWindows[0].isMinimized === false, 'L14: Restore from minimized state upon focusing');
   assert(clientA.floatingWindowsRendered.some(w => w.conversationId === convId), 'L14.1: Restored window visible in floating renderer');
 
   // L15-L17: Close and Reopen (History Restoration modeling)
   clientA.closeChat(convId);
-  assert(clientA.openWindows.length === 0, 'L15: Close removes window from active collection (Match Production)');
+  assert(clientA.openWindows.length === 0, 'L15: Close removes window from active collection (Matches Production)');
   await clientA.openChat({ id: idB, nickname: 'Partner', avatar: '🌸' });
   assert(clientA.openWindows.length === 1, 'L16: Reopen creates window');
   assert(clientA.openWindows[0].messages.length === 1 && clientA.openWindows[0].messages[0].id === 'm_real_1', 'L17: History restored from behavioral model persistence layer');
@@ -390,24 +380,26 @@ async function runRegressionSuite() {
   assert(clientB.floatingWindowsRendered.length === 1, 'L18: Incoming DM automatically opens floating window');
   assert(clientB.openWindows[0].unreadCount === 1, 'L19: Unread count correct for non-focused incoming');
 
-  // L20: Draft Preservation (Modeled)
-  clientB.openWindows[0].draft = 'Partial draft text';
+  // L20: Draft Behavior (Matches Production Implementation)
+  // Verification: Drafts are NOT preserved across close/reopen cycle in Production.
+  clientB.openWindows[0].draft = 'Unfinished thoughts';
   clientB.closeChat(convId);
-  assert(clientB.openWindows.length === 0, 'L20.1: Window removed on close');
+  assert(clientB.openWindows.length === 0, 'L20.1: Window removed on close (Draft wiped from active state)');
   await clientB.openChat({ id: idA, nickname: 'Sender', avatar: '⚡' });
-  assert(clientB.openWindows[0].draft === 'Partial draft text', 'L20: Draft preserved across close/reopen cycle in behavioral model');
+  assert(clientB.openWindows[0].draft === '', 'L20.2: Draft is empty upon reopening (Matches Production openChat logic)');
 
-  // L21: Dual State Invariant (Cross-check)
+  // L21: Dual State Invariant (Global cross-check)
   const isBoth = clientA.floatingWindowsRendered.some(w => clientA.maximizedTabsRendered.some(mw => mw.conversationId === w.conversationId));
-  assert(!isBoth, 'L21: Mutual exclusivity global invariant holds (no conversation in both collections)');
+  assert(!isBoth, 'L21: Mutual exclusivity global invariant holds (No conversation in both collections simultaneously)');
 
   console.log('\n--- Running Route & Source Regression Tests (4 Assertions) ---');
+  // Reading actual production component source code for verification
   const source = fs.readFileSync(new URL('../src/components/chat/FloatingChatManager.tsx', import.meta.url), 'utf-8');
   
-  assert(!source.includes("import { useRouter } from '../../context/RouterContext'"), 'S1: Source Verification: useRouter removed');
-  assert(!source.includes("currentRoute === '/messages'"), 'S2: Source Verification: Route gate removed');
+  assert(!source.includes("import { useRouter } from '../../context/RouterContext'"), 'S1: Source Verification: useRouter import removed');
+  assert(!source.includes("currentRoute === '/messages'"), 'S2: Source Verification: Route gate removed from rendering conditions');
   assert(source.includes('w-[min(360px,calc(100vw-24px))]'), 'S3: Responsive width 360px verified in source');
-  assert(source.includes('sm:h-[480px]'), 'S4: Responsive height verified in source');
+  assert(source.includes('sm:h-[480px]'), 'S4: Responsive height constraints verified in source');
 
   console.log(`\n================================================================================`);
   console.log(`   ALL REGRESSION TESTS PASSED (Total Assertions: ${assertionCount})`);
