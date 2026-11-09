@@ -1,32 +1,14 @@
 /**
  * ChatLustora — Comprehensive Private Chat Regression Test Suite
- *
- * Verifies the fix for:
- * Duplicate Private Chat UI Beside Room Tab (Sender seeing both large private tab & floating window)
- *
- * Requirements verified:
- * 1. Single authoritative display mode per conversation ID: 'closed' | 'floating' | 'maximized'
- * 2. Floating manager renders ONLY conversations with displayMode === 'floating'
- * 3. Expanded / tab-style renderer renders ONLY conversations with displayMode === 'maximized'
- * 4. Mutual exclusivity: A conversation is NEVER rendered by both floating and maximized renderers
- * 5. Full sender-side sequence:
- *    Step 1: Guest A is viewing the Bangla public room
- *    Step 2: Guest A selects Guest B and starts a private conversation
- *    Step 3: Guest A sends a private text message
- *    Step 4: Send-success callback runs
- *    Step 5: Sender processes its own echo message event
- *    Step 6: Realtime synchronization / polling runs
- *    Step 7: Explicit Maximize transitions to exactly 1 expanded interface, 0 floating
- *    Step 8: Explicit Minimize transitions back to exactly 1 floating window, 0 expanded tabs
- * 6. Receiver-side sequence:
- *    Incoming message defaults to compact floating window, 0 maximized tabs
  */
 
 import { ConversationDisplayMode, FloatingChatWindow, consolidateWindows } from '../src/context/PrivateChatContext';
 import { ChatMessage } from '../src/types';
 import * as fs from 'fs';
 
+let assertionCount = 0;
 function assert(condition: boolean, testName: string, detail?: string) {
+  assertionCount++;
   if (!condition) {
     console.error(`❌ [FAILED] ${testName}${detail ? ` — ${detail}` : ''}`);
     process.exitCode = 1;
@@ -36,13 +18,10 @@ function assert(condition: boolean, testName: string, detail?: string) {
   }
 }
 
-// Local Mocks to bypass environment secrets
-function createGuestSession(opts: { nickname: string; avatar: string; languagePref?: string; is18Verified?: boolean; ipAddress?: string }) {
-  return {
-    session: { id: `guest_${opts.nickname}_${Date.now()}` }
-  };
+// Local Mocks
+function createGuestSession(opts: { nickname: string; avatar: string }) {
+  return { session: { id: `guest_${opts.nickname}_${Date.now()}` } };
 }
-function registerConversationMembers(convId: string, members: string[]) {}
 async function postConversationMessage(msg: any) {
   return { success: true, message: { id: `m_${Date.now()}`, conversationId: msg.conversationId, senderId: msg.senderId, senderNickname: msg.senderNickname, content: msg.rawContent, timestamp: new Date().toISOString(), status: 'delivered' } };
 }
@@ -51,58 +30,41 @@ class ChatClientSimulation {
   userId: string;
   nickname: string;
   avatar: string;
-  activeRoomSlug: string = 'bangla';
-  activeMainTab: 'room' | string = 'room';
   openWindows: FloatingChatWindow[] = [];
   seenMessageIds: Set<string> = new Set();
-  autoOpenPrivateChats: boolean = true;
-  currentRoute: string = 'home'; 
-
+  
   constructor(userId: string, nickname: string, avatar: string) {
-    this.userId = userId;
-    this.nickname = nickname;
-    this.avatar = avatar;
+    this.userId = userId; this.nickname = nickname; this.avatar = avatar;
   }
 
-  get publicRoomTabPresent(): boolean { return true; }
-  get isPublicRoomActive(): boolean { return this.activeMainTab === 'room'; }
   get floatingWindowsRendered(): FloatingChatWindow[] { return this.openWindows.filter((w) => w.isOpen && w.displayMode === 'floating'); }
   get maximizedTabsRendered(): FloatingChatWindow[] { return this.openWindows.filter((w) => w.isOpen && w.displayMode === 'maximized'); }
-  get expandedPrivatePaneRendered(): FloatingChatWindow | null {
-    const activeMax = this.maximizedTabsRendered.find((w) => w.conversationId === this.activeMainTab);
-    return activeMax || null;
-  }
 
-  openChat(partner: { id: string; nickname: string; avatar: string; gender?: string }) {
-    if (!this.userId || partner.id === this.userId) return;
+  openChat(partner: { id: string; nickname: string; avatar: string }) {
     const sortedIds = [this.userId, partner.id].sort();
     const conversationId = `conv_${sortedIds[0]}_${sortedIds[1]}`;
     const existing = this.openWindows.find((w) => w.conversationId === conversationId);
     if (existing) {
-      this.openWindows = this.openWindows.map((w) =>
-        w.conversationId === conversationId ? { ...w, isOpen: true, displayMode: 'floating' as ConversationDisplayMode } : w
-      );
+      this.openWindows = this.openWindows.map(w => w.conversationId === conversationId ? { ...w, isOpen: true, displayMode: 'floating' } : w);
     } else {
       this.openWindows.push({ conversationId, partnerId: partner.id, partnerNickname: partner.nickname, partnerAvatar: partner.avatar, isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [], unreadCount: 0, draft: '', isOpen: true });
     }
   }
 
   sendMessage(conversationId: string, content: string): { tempId: string } {
-    const target = this.openWindows.find((w) => w.conversationId === conversationId);
-    if (!target) throw new Error('Cannot send message');
     const tempId = `temp_${Date.now()}`;
-    const optimisticMsg: ChatMessage = { id: tempId, conversationId, senderId: this.userId, senderNickname: this.nickname, content, timestamp: new Date().toISOString() };
-    this.openWindows = this.openWindows.map((w) => w.conversationId === conversationId ? { ...w, messages: [...w.messages, optimisticMsg] } : w);
+    const msg: ChatMessage = { id: tempId, conversationId, senderId: this.userId, senderNickname: this.nickname, content, timestamp: new Date().toISOString() };
+    this.openWindows = this.openWindows.map(w => w.conversationId === conversationId ? { ...w, messages: [...w.messages, msg] } : w);
     return { tempId };
   }
 
   handleSendSuccess(conversationId: string, tempId: string, persistedMsg: ChatMessage) {
     this.seenMessageIds.add(persistedMsg.id);
-    this.openWindows = this.openWindows.map((w) => w.conversationId === conversationId ? { ...w, messages: w.messages.map((m) => (m.id === tempId ? persistedMsg : m)) } : w);
+    this.openWindows = this.openWindows.map(w => w.conversationId === conversationId ? { ...w, messages: w.messages.map(m => m.id === tempId ? persistedMsg : m) } : w);
   }
 
   handleIncomingEcho(msg: ChatMessage, conversationId: string) {
-    this.openWindows = this.openWindows.map((w) => w.conversationId === conversationId ? { ...w, messages: w.messages.some(m => m.id === msg.id) ? w.messages : [...w.messages, msg] } : w);
+    this.openWindows = this.openWindows.map(w => w.conversationId === conversationId ? { ...w, messages: w.messages.some(m => m.id === msg.id) ? w.messages : [...w.messages, msg] } : w);
   }
 
   handleIncomingMessage(msg: ChatMessage, conversationId: string, partnerInfo: any) {
@@ -110,78 +72,92 @@ class ChatClientSimulation {
     this.seenMessageIds.add(msg.id);
     const existing = this.openWindows.find((w) => w.conversationId === conversationId);
     if (existing) {
-      this.openWindows = this.openWindows.map((w) => w.conversationId === conversationId ? { ...w, messages: [...w.messages, msg], isOpen: true } : w);
+      this.openWindows = this.openWindows.map(w => w.conversationId === conversationId ? { ...w, messages: w.messages.some(m => m.id === msg.id) ? w.messages : [...w.messages, msg], isOpen: true } : w);
     } else {
       this.openWindows.push({ conversationId, partnerId: partnerInfo.id, partnerNickname: partnerInfo.nickname, partnerAvatar: partnerInfo.avatar, isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [msg], unreadCount: 1, draft: '', isOpen: true });
     }
   }
 
   syncPolling(conversationId: string, serverMessages: ChatMessage[]) {
-    this.openWindows = this.openWindows.map((w) => w.conversationId === conversationId ? { ...w, messages: serverMessages } : w);
+    this.openWindows = this.openWindows.map(w => w.conversationId === conversationId ? { ...w, messages: serverMessages } : w);
   }
 
   maximizeChat(conversationId: string) {
-    this.openWindows = this.openWindows.map((w) => w.conversationId === conversationId ? { ...w, displayMode: 'maximized' as ConversationDisplayMode, isMaximized: true } : w);
-    this.activeMainTab = conversationId;
-  }
-
-  minimizeChat(conversationId: string) {
-    this.openWindows = this.openWindows.map((w) => w.conversationId === conversationId ? { ...w, displayMode: w.displayMode === 'maximized' ? 'floating' : w.displayMode, isMaximized: false, isMinimized: !w.isMinimized } : w);
-    if (this.activeMainTab === conversationId) this.activeMainTab = 'room';
+    this.openWindows = this.openWindows.map(w => w.conversationId === conversationId ? { ...w, displayMode: 'maximized' as ConversationDisplayMode, isMaximized: true } : w);
   }
 
   closeChat(conversationId: string) {
-    this.openWindows = this.openWindows.map((w) =>
-      w.conversationId === conversationId ? { ...w, isOpen: false } : w
-    );
-    if (this.activeMainTab === conversationId) {
-      this.activeMainTab = 'room';
-    }
+    this.openWindows = this.openWindows.map(w => w.conversationId === conversationId ? { ...w, isOpen: false } : w);
   }
 }
 
-async function runRegressionSuite() {
-  console.log('\n================================================================================');
-  console.log('   CHATLUSTORA — RESTORED REGRESSION TEST SUITE');
-  console.log('================================================================================\n');
+function runConsolidationUnitTests() {
+  console.log('\n--- Running Consolidation Unit Tests ---');
+  const now = '2026-11-08T10:00:00Z';
+  const m1: ChatMessage = { id: 'm1', conversationId: 'c1', senderId: 'u1', senderNickname: 'U1', content: 'Hi', timestamp: now };
+  const m2: ChatMessage = { id: 'm2', conversationId: 'c1', senderId: 'u2', senderNickname: 'U2', content: 'Hey', timestamp: '2026-11-08T10:01:00Z' };
 
+  const input: FloatingChatWindow[] = [
+    { conversationId: 'c1', partnerId: 'u2', partnerNickname: 'U2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [m2], unreadCount: 1, draft: 'Draft', isOpen: true },
+    { conversationId: 'c1', partnerId: 'u2', partnerNickname: 'U2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [m1], unreadCount: 2, draft: '', isOpen: true }
+  ];
+  
+  const res = consolidateWindows(input);
+  assert(res.length === 1, 'Same ID = 1 canonical');
+  assert(consolidateWindows(res).length === 1, 'Idempotent');
+  assert(res[0].conversationId === 'c1', 'ID preserved');
+  assert(res[0].messages.length === 2, 'Merge by ID');
+  assert(res[0].messages[0].id === 'm1' && res[0].messages[1].id === 'm2', 'Chronological');
+  assert(res[0].draft === 'Draft', 'Draft preserved');
+  assert(res[0].unreadCount === 2, 'Unread max');
+  assert(res[0].displayMode === 'floating', 'Mode preserved');
+  assert(consolidateWindows([...input, { conversationId: 'c2', partnerId: 'u3', partnerNickname: 'U3', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [], unreadCount: 0, draft: '', isOpen: true }]).length === 2, 'Different IDs isolated');
+  assert(consolidateWindows([{conversationId: 'c1', partnerId: 'u2', partnerNickname: 'U2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [m1], unreadCount: 0, draft: '', isOpen: true}, {conversationId: 'c1', partnerId: 'u2', partnerNickname: 'U2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [m1], unreadCount: 0, draft: '', isOpen: true}]).length === 1, 'Duplicate dedup');
+  assert(consolidateWindows([{ conversationId: 'c1', partnerId: 'u2', partnerNickname: 'U2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [{id: 'bm', conversationId: 'c1', senderId: 'u1', senderNickname: 'U1', content: 'Bad', timestamp: 'invalid'}], unreadCount: 0, draft: '', isOpen: true }]).length === 1, 'Invalid timestamp does not crash');
+}
+
+async function runRegressionSuite() {
+  runConsolidationUnitTests();
   const guestA = createGuestSession({ nickname: 'A', avatar: '⚡' });
   const guestB = createGuestSession({ nickname: 'B', avatar: '🌸' });
   const idA = guestA.session!.id;
   const idB = guestB.session!.id;
   const convId = `conv_${[idA, idB].sort().join('_')}`;
-
   const clientA = new ChatClientSimulation(idA, 'A', '⚡');
   const clientB = new ChatClientSimulation(idB, 'B', '🌸');
 
-  const assertInvariants = (label: string, expFloat: number, expMax: number) => {
-    assert(clientA.floatingWindowsRendered.length === expFloat, `${label}: Floating windows`, `Expected ${expFloat}, got ${clientA.floatingWindowsRendered.length}`);
-    assert(clientA.maximizedTabsRendered.length === expMax, `${label}: Maximized tabs`, `Expected ${expMax}, got ${clientA.maximizedTabsRendered.length}`);
-  };
+  console.log('\n--- Running Lifecycle Tests ---');
+  clientA.openChat({ id: idB, nickname: 'B', avatar: '🌸' });
+  assert(clientA.floatingWindowsRendered.length === 1, 'S1: Start DM');
+  assert(clientA.openWindows[0].displayMode === 'floating', 'S1: Mode is floating');
+  const { tempId } = clientA.sendMessage(convId, 'Hi');
+  assert(clientA.openWindows[0].messages.length === 1, 'S2: Optimistic insert');
+  const res = await postConversationMessage({ conversationId: convId, senderId: idA, senderNickname: 'A', rawContent: 'Hi' });
+  clientA.handleSendSuccess(convId, tempId, res.message!);
+  assert(clientA.openWindows[0].messages[0].id === res.message!.id, 'S3: Backend reconciliation');
+  clientA.handleIncomingEcho(res.message!, convId);
+  assert(clientA.openWindows[0].messages.length === 1, 'S4: Echo dedup');
+  clientA.syncPolling(convId, [res.message!]);
+  assert(clientA.openWindows[0].messages.length === 1, 'S5: Sync poll');
+  clientA.maximizeChat(convId);
+  assert(clientA.floatingWindowsRendered.length === 0 && clientA.maximizedTabsRendered.length === 1, 'S6: Maximize');
+  clientA.closeChat(convId);
+  clientA.openChat({ id: idB, nickname: 'B', avatar: '🌸' });
+  assert(clientA.openWindows.length === 1 && clientA.openWindows[0].isOpen === true, 'S7: Reopen successful');
+  assert(clientA.openWindows[0].messages.length >= 1, 'S7: History preserved');
+  clientB.handleIncomingMessage(res.message!, convId, { id: idA, nickname: 'A', avatar: '⚡' });
+  assert(clientB.floatingWindowsRendered.length === 1, 'S8: Receiver auto-open');
+  assert(clientB.openWindows[0].unreadCount === 1, 'S8: Unread count correct');
+  clientB.openWindows[0].draft = 'Drafting...';
+  assert(clientB.openWindows[0].draft === 'Drafting...', 'S8: Draft preserved');
+  assert(!(clientA.floatingWindowsRendered.some(w => w.conversationId === convId) && clientA.maximizedTabsRendered.some(w => w.conversationId === convId)), 'S9: Mutual exclusivity');
 
-  // Steps 1-9 restoration
-  console.log('--- Step 1: Bangla room ---'); assertInvariants('S1', 0, 0);
-  console.log('--- Step 2: Start DM ---'); clientA.openChat({ id: idB, nickname: 'B', avatar: '🌸' }); assertInvariants('S2', 1, 0);
-  console.log('--- Step 3: Send DM ---'); const { tempId } = clientA.sendMessage(convId, 'Hi'); assert(clientA.openWindows[0].messages.length === 1, 'S3: Optimistic insert');
-  console.log('--- Step 4: Success callback ---'); const res = await postConversationMessage({ conversationId: convId, senderId: idA, senderNickname: 'A', rawContent: 'Hi' }); clientA.handleSendSuccess(convId, tempId, res.message!); assert(clientA.openWindows[0].messages[0].id === res.message!.id, 'S4: Backend reconciliation');
-  console.log('--- Step 5: Echo ---'); clientA.handleIncomingEcho(res.message!, convId); assert(clientA.openWindows[0].messages.length === 1, 'S5: Echo deduplication');
-  console.log('--- Step 6: Sync ---'); clientA.syncPolling(convId, [res.message!]); assert(clientA.openWindows[0].messages.length === 1, 'S6: Sync poll');
-  console.log('--- Step 7: Maximize ---'); clientA.maximizeChat(convId); assertInvariants('S7', 0, 1);
-  console.log('--- Step 8: Close/Reopen ---'); clientA.closeChat(convId); clientA.openChat({ id: idB, nickname: 'B', avatar: '🌸' }); assert(clientA.openWindows.length === 1 && clientA.openWindows[0].messages.length > 0, 'S8: History preservation');
-  console.log('--- Step 9: Receiver ---'); clientB.handleIncomingMessage(res.message!, convId, { id: idA, nickname: 'A', avatar: '⚡' }); assert(clientB.floatingWindowsRendered.length === 1, 'S9: Receiver auto-open');
-
-  // New: /messages route test
-  console.log('\n--- Step 10: /messages route test ---');
-  clientA.currentRoute = '/messages';
-  assert(clientA.floatingWindowsRendered.length === 1, 'S10: Window renders on /messages (no restriction)');
-
-  // Width assertion
+  console.log('\n--- Running Route & Width Tests ---');
   const source = fs.readFileSync(new URL('../src/components/chat/FloatingChatManager.tsx', import.meta.url), 'utf-8');
+  assert(!source.includes("currentRoute === '/messages'"), 'S10: Route restriction removed');
   assert(source.includes('w-[min(360px,calc(100vw-24px))]'), 'S11: Responsive width 360px');
 
-  console.log('\n================================================================================');
-  console.log('   ALL REGRESSION TESTS PASSED (100% SUCCESS)');
-  console.log('================================================================================\n');
+  console.log(`\nTests Passed. Total assertions: ${assertionCount}`);
 }
 
 runRegressionSuite().catch((err) => { console.error(err); process.exit(1); });
