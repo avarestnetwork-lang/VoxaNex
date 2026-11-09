@@ -2,7 +2,6 @@ import React from 'react';
 import { usePrivateChat, FloatingChatWindow } from '../../context/PrivateChatContext';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { useRouter } from '../../context/RouterContext';
 import { PrivateChatPane } from './PrivateChatPane';
 import {
   X,
@@ -13,11 +12,9 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
   const { user } = useAuth();
   const { closeChat, minimizeChat, maximizeChat } = usePrivateChat();
   const { language } = useLanguage();
-  const { currentRoute } = useRouter();
 
   // Rule 5 & 7: Only render when isOpen AND displayMode === 'floating'
-  // Fix: Hide floating window if we are already viewing it on the /messages page
-  if (!win.isOpen || win.displayMode !== 'floating' || currentRoute === '/messages') return null;
+  if (!win.isOpen || win.displayMode !== 'floating') return null;
 
   // Minimized view: small tab at bottom-right
   if (win.isMinimized) {
@@ -67,7 +64,7 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
   }
 
   const containerClasses =
-    'w-[min(320px,calc(100vw-24px))] h-[82vh] sm:h-[480px] max-h-[calc(100vh-5rem)] supports-[height:100dvh]:max-h-[min(480px,82dvh,calc(100vh-5rem))] bg-[#0d1424] border border-slate-700/80 rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden z-50 pointer-events-auto';
+    'w-[min(360px,calc(100vw-24px))] h-[82vh] sm:h-[480px] max-h-[calc(100vh-5rem)] supports-[height:100dvh]:max-h-[min(480px,82dvh,calc(100vh-5rem))] bg-[#0d1424] border border-slate-700/80 rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden z-50 pointer-events-auto';
 
   return (
     <div className={containerClasses}>
@@ -95,12 +92,10 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
 
 export const FloatingChatManager: React.FC = () => {
   const { openWindows, latestToast, clearToast, openChat } = usePrivateChat();
-  const { currentRoute } = useRouter();
 
   // Rule 5 & 7: The floating manager must render ONLY conversations whose mode is 'floating'
-  // Fix: Hide floating window if we are already viewing it on the /messages page
   const floatingWindows = openWindows.filter(
-    (win) => win.isOpen && win.displayMode === 'floating' && currentRoute !== '/messages'
+    (win) => win.isOpen && win.displayMode === 'floating'
   );
 
   return (
