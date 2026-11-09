@@ -59,8 +59,13 @@ const AppRoutes: React.FC = () => {
       case '/guest-entry':
       case '/register':
       case '/auth':
+      case '/user/guest-entry':
+      case '/user/register':
+      case '/user/login':
         return <GuestEntryPage />;
       case '/dashboard':
+      case '/user/dashboard':
+      case '/profile':
         return <MemberDashboardPage />;
       case '/rooms':
         return <RoomDirectoryPage />;
@@ -81,10 +86,6 @@ const AppRoutes: React.FC = () => {
       case '/av-chat':
       case '/chat/video':
         return <VoiceWebcamPage />;
-      case '/auth':
-        return <GuestEntryPage />;
-      case '/profile':
-        return <MemberDashboardPage />;
       case '/safety':
         return <SafetyCenterPage />;
       case '/forum':

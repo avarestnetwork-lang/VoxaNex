@@ -6,7 +6,7 @@ import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { AppLanguage, Room, UserGender } from '../types';
-import { User, Shuffle, ArrowRight, Check, Lock, Mail, ShieldAlert, AlertTriangle, Sparkles, CheckCircle2 } from 'lucide-react';
+import { User, Shuffle, ArrowRight, Check, Lock, Mail, ShieldAlert, AlertTriangle, Sparkles, CheckCircle2, Globe, Github } from 'lucide-react';
 import { SEOHead } from '../components/common/SEOHead';
 
 export const GuestEntryPage: React.FC = () => {
@@ -19,14 +19,14 @@ export const GuestEntryPage: React.FC = () => {
   const targetRoom: Room | undefined = ROOMS_CONFIG.find((r) => r.slug === targetRoomSlug);
 
   // Mode tabs: 'guest' | 'login' | 'register'
-  const initialTab = (params.mode as any) || (currentRoute === '/register' ? 'register' : currentRoute === '/auth' ? 'login' : 'guest');
+  const initialTab = (params.mode as any) || (currentRoute === '/user/register' ? 'register' : currentRoute === '/user/login' ? 'login' : 'guest');
   const [activeTab, setActiveTab] = useState<'guest' | 'login' | 'register'>(initialTab);
 
   // Guest form state
   const [nickname, setNicknameState] = useState(user.nickname);
   const [selectedAvatar, setSelectedAvatar] = useState(user.avatar || GUEST_AVATARS[0]);
-  const [gender, setGender] = useState<string>('prefer_not_to_say');
-  const [age, setAge] = useState<string>('21');
+  const [gender, setGender] = useState<string>('');
+  const [age, setAge] = useState<string>('');
   const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [safetyPledge, setSafetyPledge] = useState(false);
   const [guestError, setGuestError] = useState<string | null>(null);
@@ -61,8 +61,12 @@ export const GuestEntryPage: React.FC = () => {
       setGuestError(language === 'bn' ? 'নিকনেম ৩ থেকে ২৪ অক্ষরের মধ্যে হতে হবে।' : 'Nickname must be between 3 and 24 characters.');
       return;
     }
-    if (isNaN(parsedAge) || parsedAge < 13 || parsedAge > 120) {
-      setGuestError(language === 'bn' ? 'অনুগ্রহ করে একটি বৈধ বয়স প্রদান করুন।' : 'Please provide a valid age.');
+    if (!gender) {
+      setGuestError(language === 'bn' ? 'অনুগ্রহ করে আপনার লিঙ্গ নির্বাচন করুন।' : 'Please select your gender.');
+      return;
+    }
+    if (!age || isNaN(parsedAge) || parsedAge < 13 || parsedAge > 120 || age.includes('.')) {
+      setGuestError(language === 'bn' ? 'অনুগ্রহ করে একটি বৈধ বয়স প্রদান করুন (দশমিক ছাড়া)।' : 'Please provide a valid age (whole numbers only).');
       return;
     }
 
@@ -126,8 +130,12 @@ export const GuestEntryPage: React.FC = () => {
       }
       
       const parsedAge = parseInt(age, 10);
-      if (isNaN(parsedAge) || parsedAge < 18) {
-        setAccountError(language === 'bn' ? 'রেজিস্ট্রেশনের জন্য আপনার বয়স কমপক্ষে ১৮ হতে হবে।' : 'You must be at least 18 years old to register.');
+      if (!gender) {
+        setAccountError(language === 'bn' ? 'লিঙ্গ নির্বাচন আবশ্যক।' : 'Gender selection is required.');
+        return;
+      }
+      if (!age || isNaN(parsedAge) || parsedAge < 18 || age.includes('.')) {
+        setAccountError(language === 'bn' ? 'রেজিস্ট্রেশনের জন্য আপনার বয়স কমপক্ষে ১৮ হতে হবে।' : 'You must be at least 18 years old to register (whole numbers only).');
         return;
       }
 
@@ -172,7 +180,7 @@ export const GuestEntryPage: React.FC = () => {
       if (targetRoom) {
         navigate('/chat', { roomId: targetRoom.slug });
       } else {
-        navigate('/dashboard');
+        navigate('/user/dashboard');
       }
     } catch (err: any) {
       setLoading(false);
@@ -232,7 +240,7 @@ export const GuestEntryPage: React.FC = () => {
             (language === 'bn' ? 'প্রবেশ ও ১৮+ নিশ্চিতকরণ – ChatLustora' : 'Entry & 18+ Age Gate – ChatLustora')
           }
           description="Enter ChatLustora Bangla & Desi adult chatrooms with instant guest access or user account."
-          canonicalPath={activeTab === 'register' ? '/register' : activeTab === 'login' ? '/auth' : '/guest-entry'}
+          canonicalPath={activeTab === 'register' ? '/user/register' : activeTab === 'login' ? '/user/login' : '/user/guest-entry'}
           noindex={true}
         />
         <div className="text-center space-y-2">
@@ -352,9 +360,13 @@ export const GuestEntryPage: React.FC = () => {
                 </label>
                 <select
                   value={gender}
-                  onChange={(e) => setGender(e.target.value)}
+                  onChange={(e) => {
+                    setGender(e.target.value);
+                    setGuestError(null);
+                  }}
                   className="w-full bg-[#101728] border border-slate-800 rounded-lg px-3 py-2.5 text-xs text-white focus:outline-none focus:border-violet-500"
                 >
+                  <option value="" disabled>Select Gender</option>
                   <option value="male">Male</option>
                   <option value="female">Female</option>
                   <option value="other">Other / Non-binary</option>
@@ -460,9 +472,13 @@ export const GuestEntryPage: React.FC = () => {
                     </label>
                     <select
                       value={gender}
-                      onChange={(e) => setGender(e.target.value)}
+                      onChange={(e) => {
+                        setGender(e.target.value);
+                        setAccountError(null);
+                      }}
                       className="w-full bg-[#101728] border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-violet-500"
                     >
+                      <option value="" disabled>Select Gender</option>
                       <option value="male">Male</option>
                       <option value="female">Female</option>
                       <option value="other">Other / Non-binary</option>
@@ -592,6 +608,33 @@ export const GuestEntryPage: React.FC = () => {
               <span>{loading ? 'Processing...' : activeTab === 'login' ? 'Sign In' : 'Create Account'}</span>
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
+
+            {/* Social login placeholders for Phase 2 */}
+            <div className="pt-2 border-t border-slate-800/80 space-y-2">
+              <div className="text-center text-[10px] text-slate-500 uppercase tracking-wider">
+                Supabase OAuth Providers
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled
+                  className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-500 text-xs flex items-center justify-center gap-1.5 opacity-60 cursor-not-allowed"
+                  title="Phase 2 Supabase Google OAuth"
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>Google</span>
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-500 text-xs flex items-center justify-center gap-1.5 opacity-60 cursor-not-allowed"
+                  title="Phase 2 Supabase GitHub OAuth"
+                >
+                  <Github className="w-3.5 h-3.5" />
+                  <span>GitHub</span>
+                </button>
+              </div>
+            </div>
           </form>
         )}
 

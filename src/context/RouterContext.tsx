@@ -6,6 +6,10 @@ export type AppRoute =
   | '/guest-entry'
   | '/register'
   | '/dashboard'
+  | '/user/register'
+  | '/user/guest-entry'
+  | '/user/login'
+  | '/user/dashboard'
   | '/rooms'
   | '/chat'
   | '/messages'
@@ -46,6 +50,12 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
     path = '/';
   }
 
+  // Legacy Redirects
+  if (path === '/register') return { route: '/user/register', params: {} };
+  if (path === '/guest-entry') return { route: '/user/guest-entry', params: {} };
+  if (path === '/auth' || path === '/login') return { route: '/user/login', params: {} };
+  if (path === '/dashboard' || path === '/profile') return { route: '/user/dashboard', params: {} };
+
   // Handle /chat/:roomId
   if (path.startsWith('/chat/')) {
     if (path === '/chat/indian') {
@@ -79,6 +89,10 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
     '/guest-entry',
     '/register',
     '/dashboard',
+    '/user/register',
+    '/user/guest-entry',
+    '/user/login',
+    '/user/dashboard',
     '/rooms',
     '/chat',
     '/messages',

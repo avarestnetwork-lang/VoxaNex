@@ -118,7 +118,7 @@ export const RoomDirectoryPage: React.FC = () => {
   }, [rooms, searchQuery, selectedCategory, selectedMode, selectedLanguage, selectedRegion, language]);
 
   const handleJoin = (room: Room) => {
-    navigate('/guest-entry', { targetRoom: room.slug });
+    navigate('/user/guest-entry', { targetRoom: room.slug });
   };
 
   return (

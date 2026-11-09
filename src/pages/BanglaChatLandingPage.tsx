@@ -130,7 +130,7 @@ export const BanglaChatLandingPage: React.FC = () => {
 
           <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
             <button
-              onClick={() => navigate('/guest-entry', { targetRoom: 'bangla' })}
+              onClick={() => navigate('/user/guest-entry', { targetRoom: 'bangla' })}
               className="inline-flex items-center justify-center bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white text-base sm:text-lg font-bold px-8 py-3.5 rounded-xl shadow-lg shadow-rose-600/25 transition-all transform hover:-translate-y-0.5 cursor-pointer"
             >
               <span>{language === 'bn' ? 'বাংলা রুমে প্রবেশ করুন' : 'Enter Bangla Chat Room'}</span>
@@ -268,7 +268,7 @@ export const BanglaChatLandingPage: React.FC = () => {
               : 'Pick your nickname and step into a respectful, adult-verified environment today.'}
           </p>
           <button
-            onClick={() => navigate('/guest-entry', { targetRoom: 'bangla' })}
+            onClick={() => navigate('/user/guest-entry', { targetRoom: 'bangla' })}
             className="inline-flex items-center justify-center bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white font-bold px-8 py-3.5 rounded-xl shadow-lg shadow-rose-600/25 transition-all cursor-pointer"
           >
             <span>{language === 'bn' ? 'গেস্ট হিসেবে প্রবেশ করুন' : 'Join as Guest'}</span>

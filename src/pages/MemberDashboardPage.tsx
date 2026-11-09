@@ -62,6 +62,7 @@ export const MemberDashboardPage: React.FC = () => {
     updatePreferences,
     logout,
     deleteAccount,
+    hasPermission,
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'overview' | 'identity' | 'privacy' | 'blocked' | 'connections' | 'data'>('overview');
@@ -123,11 +124,11 @@ export const MemberDashboardPage: React.FC = () => {
   if (!hasActiveSession) {
     return (
       <div className="min-h-[75vh] flex items-center justify-center px-4 py-16">
-        <SEOHead
-          title="Sign In Required | ChatLustora Member Dashboard"
-          description="Authentication required to access the ChatLustora member dashboard."
-          canonicalPath="/dashboard"
-        />
+      <SEOHead
+        title={user.isGuest ? "Guest Dashboard | ChatLustora" : "Member Dashboard | ChatLustora"}
+        description="Manage your ChatLustora profile, direct messages, privacy settings, and security controls."
+        canonicalPath="/user/dashboard"
+      />
         <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 text-center shadow-xl space-y-6">
           <div className="w-16 h-16 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400 shadow-inner">
             <Lock className="w-8 h-8" />
@@ -160,7 +161,7 @@ export const MemberDashboardPage: React.FC = () => {
               variant="secondary"
               size="lg"
               fullWidth
-              onClick={() => navigate('/register')}
+              onClick={() => navigate('/user/register')}
               className="border-slate-200 dark:border-slate-700"
             >
               <User className="w-4 h-4 mr-2 text-orange-500" />
@@ -170,7 +171,7 @@ export const MemberDashboardPage: React.FC = () => {
             <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500">
               <span>{language === 'bn' ? 'নিবন্ধন ছাড়াই চ্যাট করতে চান? ' : 'Prefer no account? '}</span>
               <button
-                onClick={() => navigate('/guest-entry')}
+                onClick={() => navigate('/user/guest-entry')}
                 className="font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
               >
                 {language === 'bn' ? 'গেস্ট হিসেবে প্রবেশ করুন' : 'Continue as Guest'}
@@ -359,9 +360,9 @@ export const MemberDashboardPage: React.FC = () => {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 font-sans">
       <SEOHead
-        title="Member Dashboard | ChatLustora"
-        description="Manage your ChatLustora member profile, direct messages, privacy settings, blocked contacts, and security controls."
-        canonicalPath="/dashboard"
+        title={user.isGuest ? "Guest Dashboard | ChatLustora" : "Member Dashboard | ChatLustora"}
+        description="Manage your ChatLustora profile, direct messages, privacy settings, and security controls."
+        canonicalPath="/user/dashboard"
       />
 
       {/* Guest Warning Banner if in Guest mode */}
@@ -385,7 +386,7 @@ export const MemberDashboardPage: React.FC = () => {
           <Button
             variant="primary"
             size="sm"
-            onClick={() => navigate('/register')}
+            onClick={() => navigate('/user/register')}
             className="bg-amber-600 hover:bg-amber-700 text-white shrink-0 font-bold"
           >
             <span>{language === 'bn' ? 'স্থায়ী অ্যাকাউন্ট তৈরি করুন' : 'Create Member Account'}</span>
@@ -522,12 +523,12 @@ export const MemberDashboardPage: React.FC = () => {
       {/* Tab Navigation */}
       <div className="flex rounded-2xl bg-slate-100 dark:bg-slate-800/70 p-1 border border-slate-200 dark:border-slate-700 gap-1 overflow-x-auto">
         {[
-          { id: 'overview', label: language === 'bn' ? 'সারসংক্ষেপ' : 'Overview & Profile', icon: User },
-          { id: 'privacy', label: language === 'bn' ? 'গোপনীয়তা ও দৃশ্যমানতা' : 'Privacy & Visibility', icon: Eye },
-          { id: 'blocked', label: `${language === 'bn' ? 'ব্লক তালিকা' : 'Blocked Users'} (${blockedUsers.length})`, icon: UserX },
-          { id: 'connections', label: `${language === 'bn' ? 'বন্ধু সংযোগ' : 'Connections'} (${connections.length})`, icon: Users },
-          { id: 'data', label: language === 'bn' ? 'ডাটা ও অ্যাকাউন্ট' : 'Data & Governance', icon: Download },
-        ].map((tab) => {
+          { id: 'overview', label: language === 'bn' ? 'সারসংক্ষেপ' : 'Overview & Profile', icon: User, permission: 'PUBLIC_CHAT' },
+          { id: 'privacy', label: language === 'bn' ? 'গোপনীয়তা ও দৃশ্যমানতা' : 'Privacy & Visibility', icon: Eye, permission: 'ACCOUNT_SETTINGS' },
+          { id: 'blocked', label: `${language === 'bn' ? 'ব্লক তালিকা' : 'Blocked Users'} (${blockedUsers.length})`, icon: UserX, permission: 'PUBLIC_CHAT' },
+          { id: 'connections', label: `${language === 'bn' ? 'বন্ধু সংযোগ' : 'Connections'} (${connections.length})`, icon: Users, permission: 'ACCOUNT_SETTINGS' },
+          { id: 'data', label: language === 'bn' ? 'ডাটা ও অ্যাকাউন্ট' : 'Data & Governance', icon: Download, permission: 'ACCOUNT_SETTINGS' },
+        ].filter(tab => hasPermission(tab.permission as any)).map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (

@@ -65,7 +65,7 @@ export const LandingPage: React.FC = () => {
     try {
       const res = await loginWithAccount(loginEmail.trim(), loginPassword);
       if (res.success) {
-        navigate('/dashboard');
+        navigate('/user/dashboard');
       } else {
         setLoginError(res.error || (language === 'bn' ? 'লগইন ব্যর্থ হয়েছে।' : 'Authentication failed. Please check your credentials.'));
       }
@@ -336,7 +336,7 @@ export const LandingPage: React.FC = () => {
                 <ArrowRight className="w-5 h-5 ml-2" />
               </button>
               <button
-                onClick={() => navigate('/guest-entry')}
+                onClick={() => navigate('/user/guest-entry')}
                 className="inline-flex items-center justify-center bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-base font-bold px-6 py-3.5 rounded-xl transition-all cursor-pointer"
               >
                 <User className="w-4 h-4 mr-2 text-rose-500" />
@@ -431,7 +431,7 @@ export const LandingPage: React.FC = () => {
 
                       <div className="grid grid-cols-2 gap-2.5">
                         <button
-                          onClick={() => navigate('/dashboard')}
+                          onClick={() => navigate('/user/dashboard')}
                           className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white text-xs font-bold transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
                         >
                           <User className="w-4 h-4" />
@@ -482,7 +482,7 @@ export const LandingPage: React.FC = () => {
                           </label>
                           <button
                             type="button"
-                            onClick={() => navigate('/auth')}
+                            onClick={() => navigate('/user/login')}
                             className="text-[11px] text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
                           >
                             {language === 'bn' ? 'পাসওয়ার্ড ভুলে গেছেন?' : 'Forgot password?'}
@@ -532,7 +532,7 @@ export const LandingPage: React.FC = () => {
                           </span>
                           <button
                             type="button"
-                            onClick={() => navigate('/register')}
+                            onClick={() => navigate('/user/register')}
                             className="font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
                           >
                             {language === 'bn' ? 'অ্যাকাউন্ট তৈরি করুন' : 'Create Free Account'}
@@ -543,7 +543,7 @@ export const LandingPage: React.FC = () => {
                           <span>{language === 'bn' ? 'অথবা অ্যাকাউন্ট ছাড়াই যোগ দিন: ' : 'Or chat instantly: '}</span>
                           <button
                             type="button"
-                            onClick={() => navigate('/guest-entry')}
+                            onClick={() => navigate('/user/guest-entry')}
                             className="font-bold text-orange-600 dark:text-orange-400 hover:underline cursor-pointer"
                           >
                             {language === 'bn' ? 'গেস্ট হিসেবে প্রবেশ করুন' : 'Continue as Guest'}
@@ -801,7 +801,7 @@ export const LandingPage: React.FC = () => {
               </ul>
               <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs font-bold">
                 <button onClick={() => navigate('/safety')} className="text-orange-600 dark:text-orange-400 hover:text-orange-700 cursor-pointer">{t.landing.allChatRules}</button>
-                <button onClick={() => navigate('/profile')} className="text-orange-600 dark:text-orange-400 hover:text-orange-700 cursor-pointer">{t.landing.userLevels}</button>
+                <button onClick={() => navigate('/user/dashboard')} className="text-orange-600 dark:text-orange-400 hover:text-orange-700 cursor-pointer">{t.landing.userLevels}</button>
               </div>
             </div>
           </div>

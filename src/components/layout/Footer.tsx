@@ -135,7 +135,7 @@ export const Footer: React.FC = () => {
               </li>
               <li><button onClick={() => navigate('/safety')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'চ্যাট সাহায্য' : 'Chat Help'}</button></li>
               <li><button onClick={() => navigate('/safety')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'চ্যাট নিয়মাবলী' : 'Chat Rules'}</button></li>
-              <li><button onClick={() => navigate('/profile')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'ব্যবহারকারী লেভেল' : 'User Levels'}</button></li>
+              <li><button onClick={() => navigate('/user/dashboard')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'ব্যবহারকারী লেভেল' : 'User Levels'}</button></li>
               <li><button onClick={() => navigate('/faq')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'সাধারণ প্রশ্ন (FAQ)' : 'FAQ'}</button></li>
               <li><button onClick={() => navigate('/sitemap')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'সাইটম্যাপ' : 'Sitemap'}</button></li>
               <li><button onClick={() => navigate('/safety')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'নিরাপত্তা টিপস' : 'Safety Tips'}</button></li>

@@ -157,7 +157,7 @@ export const authService = {
 
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/dashboard`,
+        redirectTo: `${window.location.origin}/user/dashboard`,
       });
       if (error) return { success: false, error: error.message };
       return { success: true };

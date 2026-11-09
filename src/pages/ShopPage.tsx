@@ -160,7 +160,7 @@ export const ShopPage: React.FC = () => {
                   </ul>
                 </div>
                 <button
-                  onClick={() => navigate('/register')}
+                  onClick={() => navigate('/user/register')}
                   className={`mt-8 w-full py-3 px-4 rounded-xl font-bold text-sm text-white bg-gradient-to-r ${plan.color} hover:opacity-95 shadow-md transition-all cursor-pointer`}
                 >
                   Get {plan.name}
@@ -189,7 +189,7 @@ export const ShopPage: React.FC = () => {
                 )}
                 <div className="text-2xl font-bold text-slate-900 dark:text-white mt-4">{pkg.price}</div>
                 <button
-                  onClick={() => navigate('/register')}
+                  onClick={() => navigate('/user/register')}
                   className="mt-6 w-full py-2.5 px-4 rounded-xl font-bold text-xs bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-rose-600 dark:hover:bg-rose-500 dark:hover:text-white transition-colors cursor-pointer"
                 >
                   Purchase Credits

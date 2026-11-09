@@ -21,6 +21,7 @@ interface AuthContextType {
   logout: () => Promise<{ success: boolean; error?: string }>;
   updatePreferences: (prefs: Partial<UserProfile>) => Promise<void>;
   isSupabaseActive: boolean;
+  hasPermission: (featureId: 'PROFILE_EDIT' | 'ACCOUNT_SETTINGS' | 'PRIVATE_DM' | 'PUBLIC_CHAT' | 'VOICE_VIDEO') => boolean;
 }
 
 const GUEST_AVATARS = [
@@ -337,6 +338,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
+  const hasPermission = (featureId: string): boolean => {
+    // Registered Member = Default Full Access
+    if (!user.isGuest && hasActiveSession) {
+      return true;
+    }
+
+    // Guest = Explicitly Allowed Limited
+    const GUEST_ALLOWED_FEATURES = ['PUBLIC_CHAT', 'PRIVATE_DM', 'VOICE_VIDEO'];
+    if (user.isGuest && hasActiveSession) {
+      return GUEST_ALLOWED_FEATURES.includes(featureId);
+    }
+
+    return false;
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -356,6 +372,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         updatePreferences,
         isSupabaseActive,
+        hasPermission,
       }}
     >
       {children}

@@ -61,7 +61,7 @@ export const Navbar: React.FC = () => {
 
             {/* 18+ Tag */}
             <button
-              onClick={() => handleNav('/age-gate')}
+              onClick={() => handleNav('/user/guest-entry')}
               className="text-xs font-bold px-2 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors border border-rose-200 dark:border-rose-800 cursor-pointer shrink-0"
             >
               18+
@@ -150,7 +150,7 @@ export const Navbar: React.FC = () => {
             {/* Member Dashboard button for logged in members */}
             {hasActiveSession && !user.isGuest ? (
               <button
-                onClick={() => handleNav('/dashboard')}
+                onClick={() => handleNav('/user/dashboard')}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium transition-colors cursor-pointer"
                 title="Member Dashboard"
               >
@@ -162,7 +162,7 @@ export const Navbar: React.FC = () => {
               </button>
             ) : (
               <button
-                onClick={() => handleNav('/register')}
+                onClick={() => handleNav('/user/register')}
                 className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition-colors cursor-pointer shadow-xs whitespace-nowrap"
                 title="Create Free Account"
               >
@@ -201,14 +201,14 @@ export const Navbar: React.FC = () => {
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end">
             {hasActiveSession && !user.isGuest ? (
               <button
-                onClick={() => handleNav('/dashboard')}
+                onClick={() => handleNav('/user/dashboard')}
                 className="w-full text-center text-xs font-bold text-rose-600 dark:text-rose-400 px-3 py-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40"
               >
                 {language === 'bn' ? 'সদস্য ড্যাশবোর্ড' : 'Member Dashboard'}
               </button>
             ) : (
               <button
-                onClick={() => handleNav('/register')}
+                onClick={() => handleNav('/user/register')}
                 className="w-full text-center text-xs font-bold text-white px-4 py-2.5 rounded-lg bg-rose-600 shadow-sm"
               >
                 {language === 'bn' ? 'রেজিস্টার' : 'Register'}

@@ -157,11 +157,11 @@ export const PublicChatPage: React.FC = () => {
   // Mandatory Sign-In Gateway & 18+ Access Gate enforcement
   useEffect(() => {
     if (!hasActiveSession) {
-      navigate('/guest-entry', { targetRoom: activeRoom.slug });
+      navigate('/user/guest-entry', { targetRoom: activeRoom.slug });
       return;
     }
     if (activeRoom.is18Plus && (!is18Verified || !user.is18Verified)) {
-      navigate('/guest-entry', { targetRoom: activeRoom.slug });
+      navigate('/user/guest-entry', { targetRoom: activeRoom.slug });
     }
   }, [hasActiveSession, activeRoom, is18Verified, user.is18Verified, navigate]);
 
