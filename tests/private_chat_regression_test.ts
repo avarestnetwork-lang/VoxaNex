@@ -21,9 +21,10 @@ function assert(condition: boolean, testName: string, detail?: string) {
   }
 }
 
-// Behavioral Model Persistence Layer (Mocking messagingService/database behavior)
+// Behavioral Model Persistence Layer (Mocking messagingService/database/localStorage behavior)
 class MockPersistence {
   messages: Map<string, ChatMessage[]> = new Map();
+  drafts: Map<string, string> = new Map();
   knownConversations: Set<string> = new Set();
 
   saveMessage(msg: ChatMessage) {
@@ -37,6 +38,14 @@ class MockPersistence {
 
   getMessages(conversationId: string): ChatMessage[] {
     return [...(this.messages.get(conversationId) || [])];
+  }
+
+  saveDraft(conversationId: string, draft: string) {
+    this.drafts.set(conversationId, draft);
+  }
+
+  getDraft(conversationId: string): string {
+    return this.drafts.get(conversationId) || '';
   }
 }
 
@@ -92,8 +101,9 @@ class ChatClientSimulation {
           : w
       );
     } else {
-      // Restore history from persistence if it's "new" to openWindows but known to the system
+      // Restore history and draft from persistence (Modeling localStorage/API restoration)
       const history = persistence.getMessages(conversationId);
+      const draft = persistence.getDraft(conversationId);
       this.openWindows.push({
         conversationId,
         partnerId: partner.id,
@@ -105,7 +115,7 @@ class ChatClientSimulation {
         displayMode: 'floating',
         messages: history,
         unreadCount: 0,
-        draft: '',
+        draft: draft,
         isOpen: true,
       });
     }
@@ -113,8 +123,14 @@ class ChatClientSimulation {
   }
 
   closeChat(conversationId: string) {
+    const window = this.openWindows.find(w => w.conversationId === conversationId);
+    if (window) {
+      // Modeling persistence of state on close
+      persistence.saveDraft(conversationId, window.draft);
+    }
+    
     this.closedConversationIds.add(conversationId);
-    // Production behavior: Remove from openWindows
+    // Production behavior: Remove from openWindows array
     this.openWindows = this.openWindows.filter((w) => w.conversationId !== conversationId);
   }
 
@@ -220,7 +236,7 @@ class ChatClientSimulation {
         displayMode: 'floating',
         messages: persistence.getMessages(conversationId),
         unreadCount: 1,
-        draft: '',
+        draft: persistence.getDraft(conversationId),
         isOpen: true,
       });
       this.openWindows = consolidateWindows(this.openWindows);
@@ -342,28 +358,32 @@ async function runRegressionSuite() {
   assert(clientA.openWindows[0].messages.length === 1, 'L7: Realtime/Polling sync deduplication');
 
   // L8-L10: Maximize transition & Mutual Exclusivity (Forward)
+  assert(clientA.floatingWindowsRendered.some(w => w.conversationId === convId), 'Pre-Maximize: Conversation is floating');
   clientA.maximizeChat(convId);
   assert(clientA.floatingWindowsRendered.length === 0, 'L8: Maximize: Floating renderer count is zero');
   assert(clientA.maximizedTabsRendered.length === 1, 'L9: Maximize: Maximized renderer count is exactly one');
-  assert(clientA.maximizedTabsRendered[0].conversationId === convId, 'L10: Correct conversation maximized');
+  assert(clientA.maximizedTabsRendered.some(w => w.conversationId === convId), 'L10: Correct conversation maximized');
+  assert(!clientA.floatingWindowsRendered.some(w => w.conversationId === convId), 'L10.1: Maximized conversation removed from floating renderer');
 
   // L11-L12: Minimize transition & Mutual Exclusivity (Backward)
   clientA.minimizeChat(convId);
   assert(clientA.floatingWindowsRendered.length === 1, 'L11: Minimize: returns to floating mode');
   assert(clientA.maximizedTabsRendered.length === 0, 'L12: Minimize: Maximized renderer count is zero');
+  assert(clientA.floatingWindowsRendered.some(w => w.conversationId === convId), 'L12.1: Conversation returned to floating renderer');
 
   // L13-L14: Restore from minimized
   clientA.minimizeChat(convId); // Set minimized (true)
   assert(clientA.openWindows[0].isMinimized === true, 'L13: Window is minimized');
   await clientA.openChat({ id: idB, nickname: 'Partner', avatar: '🌸' }); // Restore
   assert(clientA.openWindows[0].isMinimized === false, 'L14: Restore from minimized state');
+  assert(clientA.floatingWindowsRendered.some(w => w.conversationId === convId), 'L14.1: Restored window visible in floating renderer');
 
-  // L15-L17: Close and Reopen (History Restoration)
+  // L15-L17: Close and Reopen (History Restoration modeling)
   clientA.closeChat(convId);
   assert(clientA.openWindows.length === 0, 'L15: Close removes window from active collection (Match Production)');
   await clientA.openChat({ id: idB, nickname: 'Partner', avatar: '🌸' });
   assert(clientA.openWindows.length === 1, 'L16: Reopen creates window');
-  assert(clientA.openWindows[0].messages.length === 1 && clientA.openWindows[0].messages[0].id === 'm_real_1', 'L17: History restored from persistence layer');
+  assert(clientA.openWindows[0].messages.length === 1 && clientA.openWindows[0].messages[0].id === 'm_real_1', 'L17: History restored from behavioral model persistence layer');
 
   // L18-L19: Receiver Auto-open
   clientB.handleIncomingMessage(persisted, convId, { id: idA, nickname: 'Sender', avatar: '⚡' });
@@ -371,16 +391,15 @@ async function runRegressionSuite() {
   assert(clientB.openWindows[0].unreadCount === 1, 'L19: Unread count correct for non-focused incoming');
 
   // L20: Draft Preservation (Modeled)
-  clientB.openWindows[0].draft = 'Partial';
+  clientB.openWindows[0].draft = 'Partial draft text';
   clientB.closeChat(convId);
-  // Note: Production PrivateChatContext persists drafts to localStorage. 
-  // Simulation uses Persistence Layer or state to model this.
-  // Let's model it by having consolidateWindows / openChat preserve it if we had a more complex persistence.
-  // For now, simple assertion that it existed.
-  assert(persistence.getMessages(convId).length > 0, 'L20: Message history persistent');
+  assert(clientB.openWindows.length === 0, 'L20.1: Window removed on close');
+  await clientB.openChat({ id: idA, nickname: 'Sender', avatar: '⚡' });
+  assert(clientB.openWindows[0].draft === 'Partial draft text', 'L20: Draft preserved across close/reopen cycle in behavioral model');
 
-  // L21: Dual State Invariant
-  assert(!(clientA.floatingWindowsRendered.length > 0 && clientA.maximizedTabsRendered.length > 0), 'L21: Mutual exclusivity invariant holds');
+  // L21: Dual State Invariant (Cross-check)
+  const isBoth = clientA.floatingWindowsRendered.some(w => clientA.maximizedTabsRendered.some(mw => mw.conversationId === w.conversationId));
+  assert(!isBoth, 'L21: Mutual exclusivity global invariant holds (no conversation in both collections)');
 
   console.log('\n--- Running Route & Source Regression Tests (4 Assertions) ---');
   const source = fs.readFileSync(new URL('../src/components/chat/FloatingChatManager.tsx', import.meta.url), 'utf-8');
