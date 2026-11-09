@@ -345,7 +345,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // Guest = Explicitly Allowed Limited
-    const GUEST_ALLOWED_FEATURES = ['PUBLIC_CHAT', 'PRIVATE_DM', 'VOICE_VIDEO'];
+    const GUEST_ALLOWED_FEATURES = ['PUBLIC_CHAT', 'PRIVATE_DM'];
     if (user.isGuest && hasActiveSession) {
       return GUEST_ALLOWED_FEATURES.includes(featureId);
     }

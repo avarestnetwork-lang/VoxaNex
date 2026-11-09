@@ -51,7 +51,8 @@ export const GuestEntryPage: React.FC = () => {
   const handleGuestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanNick = nickname.trim();
-    const parsedAge = parseInt(age, 10);
+    const isNumericAge = /^\d+$/.test(age);
+    const parsedAge = isNumericAge ? parseInt(age, 10) : NaN;
 
     if (!cleanNick) {
       setGuestError(language === 'bn' ? 'অনুগ্রহ করে একটি নিকনেম লিখুন।' : 'Please enter a valid nickname.');
@@ -65,8 +66,12 @@ export const GuestEntryPage: React.FC = () => {
       setGuestError(language === 'bn' ? 'অনুগ্রহ করে আপনার লিঙ্গ নির্বাচন করুন।' : 'Please select your gender.');
       return;
     }
-    if (!age || isNaN(parsedAge) || parsedAge < 13 || parsedAge > 120 || age.includes('.')) {
-      setGuestError(language === 'bn' ? 'অনুগ্রহ করে একটি বৈধ বয়স প্রদান করুন (দশমিক ছাড়া)।' : 'Please provide a valid age (whole numbers only).');
+    if (!age || !isNumericAge || isNaN(parsedAge) || parsedAge < 18 || parsedAge > 120) {
+      setGuestError(
+        language === 'bn' 
+          ? 'অনুগ্রহ করে একটি বৈধ বয়স প্রদান করুন (১৮-১২০ এর মধ্যে এবং শুধুমাত্র সংখ্যা)।' 
+          : 'Please provide a valid age (between 18 and 120, whole numbers only).'
+      );
       return;
     }
 
@@ -75,7 +80,7 @@ export const GuestEntryPage: React.FC = () => {
       setGuestError(
         language === 'bn'
           ? 'চ্যাটলাস্টোরা (ChatLustora) শুধুমাত্র ১৮+ প্রাপ্তবয়স্কদের জন্য। আপনার ঘোষিত বয়স ১৮ বছরের কম হওয়ায় প্রবেশাধিকার সম্পূর্ণরূপে নিষিদ্ধ।'
-          : 'ChatLustora is strictly an adult community for users aged 18 and older. Minors are strictly prohibited from entering.'
+          : 'ChatLustora is strictly an adult community for users aged 18 and older. Access is strictly prohibited for minors.'
       );
       return;
     }
@@ -110,7 +115,7 @@ export const GuestEntryPage: React.FC = () => {
     if (targetRoom) {
       navigate('/chat', { roomId: targetRoom.slug });
     } else {
-      navigate('/rooms');
+      navigate('/user/dashboard');
     }
   };
 
@@ -129,13 +134,18 @@ export const GuestEntryPage: React.FC = () => {
         return;
       }
       
-      const parsedAge = parseInt(age, 10);
+      const isNumericAge = /^\d+$/.test(age);
+      const parsedAge = isNumericAge ? parseInt(age, 10) : NaN;
       if (!gender) {
         setAccountError(language === 'bn' ? 'লিঙ্গ নির্বাচন আবশ্যক।' : 'Gender selection is required.');
         return;
       }
-      if (!age || isNaN(parsedAge) || parsedAge < 18 || age.includes('.')) {
-        setAccountError(language === 'bn' ? 'রেজিস্ট্রেশনের জন্য আপনার বয়স কমপক্ষে ১৮ হতে হবে।' : 'You must be at least 18 years old to register (whole numbers only).');
+      if (!age || !isNumericAge || isNaN(parsedAge) || parsedAge < 18 || parsedAge > 120) {
+        setAccountError(
+          language === 'bn' 
+            ? 'রেজিস্ট্রেশনের জন্য আপনার বয়স কমপক্ষে ১৮ হতে হবে (১৮-১২০ এর মধ্যে এবং শুধুমাত্র সংখ্যা)।' 
+            : 'You must be at least 18 years old to register (between 18 and 120, whole numbers only).'
+        );
         return;
       }
 
@@ -268,7 +278,7 @@ export const GuestEntryPage: React.FC = () => {
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            {language === 'bn' ? 'গেস্ট প্রবেশ' : 'Continue as Guest'}
+            {language === 'bn' ? 'গেস্ট প্রবেশ (Guest)' : 'Login as Guest'}
           </button>
           <button
             type="button"
@@ -279,7 +289,7 @@ export const GuestEntryPage: React.FC = () => {
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            {language === 'bn' ? 'সাইন ইন' : 'Sign In'}
+            {language === 'bn' ? 'সদস্য লগইন (Member)' : 'Member Login'}
           </button>
           <button
             type="button"
@@ -290,7 +300,7 @@ export const GuestEntryPage: React.FC = () => {
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            {language === 'bn' ? 'রেজিস্ট্রেশন' : 'Create Account'}
+            {language === 'bn' ? 'অ্যাকাউন্ট তৈরি (Register)' : 'Create Account'}
           </button>
         </div>
 

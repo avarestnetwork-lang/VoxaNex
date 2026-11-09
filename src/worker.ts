@@ -2818,6 +2818,116 @@ async function authorizeConversationAccess(
     }
 
     // -------------------------------------------------------------------------
+    // 6B. AUTHENTICATED DATA EXPORT ENDPOINT
+    // -------------------------------------------------------------------------
+    if (url.pathname === '/api/auth/data-export' && request.method === 'GET') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      if (authResult.isGuestCaller) {
+        return jsonResponse({
+          success: false,
+          error: 'Forbidden: Data export is only available for registered members.',
+        }, 403);
+      }
+
+      // Authoritative profile fetch
+      const profile = await fetchMemberProfile(authResult.verifiedUserId, {
+        supabaseUrl: baseSupabaseUrl,
+        supabaseServiceKey,
+      });
+
+      return jsonResponse({
+        success: true,
+        export: {
+          user: {
+            id: authResult.verifiedUserId,
+            ...profile,
+          },
+          exportedAt: new Date().toISOString(),
+          platform: 'ChatLustora',
+        },
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // 6C. AUTHENTICATED PROFILE UPDATE ENDPOINT (Audit Layer)
+    // -------------------------------------------------------------------------
+    if (url.pathname === '/api/auth/profile/update' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      if (authResult.isGuestCaller) {
+        return jsonResponse({
+          success: false,
+          error: 'Forbidden: Profile updates via this endpoint are restricted to registered members.',
+        }, 403);
+      }
+
+      try {
+        const body: any = await request.json();
+        const { updates } = body || {};
+
+        if (!updates || typeof updates !== 'object') {
+          return jsonResponse({ success: false, error: 'Bad Request: Missing update payload.' }, 400);
+        }
+
+        // Fail closed if database bindings missing
+        if (!baseSupabaseUrl || !supabaseServiceKey) {
+          return jsonResponse({ success: false, error: 'Server configuration error: Database bindings missing.' }, 503);
+        }
+
+        // Perform authoritative update via Service Role to ensure bypass of potential RLS issues during edge audit
+        // but strictly scoped to the verifiedUserId
+        const res = await fetch(`${baseSupabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(authResult.verifiedUserId)}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': supabaseServiceKey,
+            'Authorization': `Bearer ${supabaseServiceKey}`,
+          },
+          body: JSON.stringify({
+            nickname: updates.nickname,
+            bio: updates.bio,
+            avatar_url: updates.avatar,
+            is_18_verified: updates.is18Verified,
+            safe_filter_enabled: updates.safeFilterEnabled,
+            notification_sounds: updates.notificationSounds,
+            updated_at: new Date().toISOString(),
+          }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          console.error(`[Worker] Profile update failed HTTP ${res.status}:`, errText);
+          return jsonResponse({ success: false, error: `Profile update failed (HTTP ${res.status}).` }, 500);
+        }
+
+        return jsonResponse({ success: true, message: 'Profile updated successfully via audit layer.' });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: 'Malformed profile update request.' }, 400);
+      }
+    }
+
+    // -------------------------------------------------------------------------
     // 7. DEFAULT API FALLBACK FOR UNHANDLED /api/* ROUTES
     // -------------------------------------------------------------------------
     if (url.pathname.startsWith('/api/')) {

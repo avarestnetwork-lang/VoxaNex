@@ -473,8 +473,8 @@ export const MemberDashboardPage: React.FC = () => {
               <LogOut className="w-4 h-4 mr-1.5" />
               <span>
                 {user.isGuest
-                  ? (language === 'bn' ? 'গেস্ট সেশন সমাপ্ত করুন' : 'End Guest Session')
-                  : (language === 'bn' ? 'সাইন আউট' : 'Sign Out')}
+                  ? (language === 'bn' ? 'গেস্ট সেশন সমাপ্ত করুন (End Session)' : 'End Guest Session')
+                  : (language === 'bn' ? 'সাইন আউট (Sign Out)' : 'Sign Out')}
               </span>
             </Button>
           </div>
@@ -493,10 +493,15 @@ export const MemberDashboardPage: React.FC = () => {
 
           <button
             onClick={() => navigate('/dating')}
-            className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-slate-200/80 dark:border-slate-700 text-left transition-all group cursor-pointer"
+            className={`p-3.5 rounded-2xl border transition-all group cursor-pointer text-left ${
+              hasPermission('VOICE_VIDEO')
+                ? 'bg-slate-50 dark:bg-slate-800/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 border-slate-200/80 dark:border-slate-700'
+                : 'bg-slate-100 dark:bg-slate-900/40 border-slate-200/40 dark:border-slate-800/40 opacity-60'
+            }`}
+            title={!hasPermission('VOICE_VIDEO') ? 'Member only feature' : ''}
           >
-            <Heart className="w-5 h-5 text-rose-500 mb-2 group-hover:scale-110 transition-transform fill-rose-500/20" />
-            <div className="text-xs font-bold text-slate-900 dark:text-white">Dating & Flirt</div>
+            <Heart className={`w-5 h-5 mb-2 transition-transform ${hasPermission('VOICE_VIDEO') ? 'text-rose-500 group-hover:scale-110 fill-rose-500/20' : 'text-slate-400'}`} />
+            <div className={`text-xs font-bold ${hasPermission('VOICE_VIDEO') ? 'text-slate-900 dark:text-white' : 'text-slate-500'}`}>Dating & Flirt</div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">18+ Desi adult singles</div>
           </button>
 
@@ -510,10 +515,38 @@ export const MemberDashboardPage: React.FC = () => {
           </button>
 
           <button
-            onClick={() => navigate('/safety')}
-            className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border border-slate-200/80 dark:border-slate-700 text-left transition-all group cursor-pointer"
+            onClick={() => navigate('/voice-webcam')}
+            className={`p-3.5 rounded-2xl border transition-all group cursor-pointer text-left ${
+              hasPermission('VOICE_VIDEO')
+                ? 'bg-slate-50 dark:bg-slate-800/60 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border-slate-200/80 dark:border-slate-700'
+                : 'bg-slate-100 dark:bg-slate-900/40 border-slate-200/40 dark:border-slate-800/40 opacity-60'
+            }`}
+            title={!hasPermission('VOICE_VIDEO') ? 'Member only feature' : ''}
           >
-            <Shield className="w-5 h-5 text-emerald-500 mb-2 group-hover:scale-110 transition-transform" />
+            <Eye className={`w-5 h-5 mb-2 transition-transform ${hasPermission('VOICE_VIDEO') ? 'text-cyan-500 group-hover:scale-110' : 'text-slate-400'}`} />
+            <div className={`text-xs font-bold ${hasPermission('VOICE_VIDEO') ? 'text-slate-900 dark:text-white' : 'text-slate-500'}`}>Cam & Voice</div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Live video & audio chat</div>
+          </button>
+
+          <button
+            onClick={() => navigate('/shop')}
+            className={`p-3.5 rounded-2xl border transition-all group cursor-pointer text-left ${
+              hasPermission('ACCOUNT_SETTINGS')
+                ? 'bg-slate-50 dark:bg-slate-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border-slate-200/80 dark:border-slate-700'
+                : 'bg-slate-100 dark:bg-slate-900/40 border-slate-200/40 dark:border-slate-800/40 opacity-60'
+            }`}
+            title={!hasPermission('ACCOUNT_SETTINGS') ? 'Member only feature' : ''}
+          >
+            <Tag className={`w-5 h-5 mb-2 transition-transform ${hasPermission('ACCOUNT_SETTINGS') ? 'text-emerald-500 group-hover:scale-110' : 'text-slate-400'}`} />
+            <div className={`text-xs font-bold ${hasPermission('ACCOUNT_SETTINGS') ? 'text-slate-900 dark:text-white' : 'text-slate-500'}`}>Lustora Shop</div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Custom avatars & perks</div>
+          </button>
+
+          <button
+            onClick={() => navigate('/safety')}
+            className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-700 text-left transition-all group cursor-pointer"
+          >
+            <Shield className="w-5 h-5 text-slate-500 mb-2 group-hover:scale-110 transition-transform" />
             <div className="text-xs font-bold text-slate-900 dark:text-white">Safety Center</div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Rules, blocks & report</div>
           </button>
@@ -525,7 +558,7 @@ export const MemberDashboardPage: React.FC = () => {
         {[
           { id: 'overview', label: language === 'bn' ? 'সারসংক্ষেপ' : 'Overview & Profile', icon: User, permission: 'PUBLIC_CHAT' },
           { id: 'privacy', label: language === 'bn' ? 'গোপনীয়তা ও দৃশ্যমানতা' : 'Privacy & Visibility', icon: Eye, permission: 'ACCOUNT_SETTINGS' },
-          { id: 'blocked', label: `${language === 'bn' ? 'ব্লক তালিকা' : 'Blocked Users'} (${blockedUsers.length})`, icon: UserX, permission: 'PUBLIC_CHAT' },
+          { id: 'blocked', label: `${language === 'bn' ? 'ব্লক তালিকা' : 'Blocked Users'} (${blockedUsers.length})`, icon: UserX, permission: 'ACCOUNT_SETTINGS' },
           { id: 'connections', label: `${language === 'bn' ? 'বন্ধু সংযোগ' : 'Connections'} (${connections.length})`, icon: Users, permission: 'ACCOUNT_SETTINGS' },
           { id: 'data', label: language === 'bn' ? 'ডাটা ও অ্যাকাউন্ট' : 'Data & Governance', icon: Download, permission: 'ACCOUNT_SETTINGS' },
         ].filter(tab => hasPermission(tab.permission as any)).map((tab) => {

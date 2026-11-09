@@ -75,7 +75,7 @@ export const authService = {
         createdAt: new Date().toISOString(),
       };
 
-      await supabase.from('profiles').upsert({
+      const { error: profileError } = await supabase.from('profiles').upsert({
         id: data.user.id,
         nickname: nickname.trim(),
         avatar_url: '🛡️',
@@ -84,6 +84,11 @@ export const authService = {
         safe_filter_enabled: true,
         notification_sounds: true,
       });
+
+      if (profileError) {
+        console.error('[authService] Profile persistence failed:', profileError);
+        return { success: false, error: `Registration failed: Could not create user profile (${profileError.message})` };
+      }
 
       return { success: true, user: profileData };
     } catch (err: any) {
@@ -283,20 +288,46 @@ export const authService = {
     if (!supabase) return true;
 
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          nickname: updates.nickname,
-          bio: updates.bio,
-          avatar_url: updates.avatar,
-          is_18_verified: updates.is18Verified,
-          safe_filter_enabled: updates.safeFilterEnabled,
-          notification_sounds: updates.notificationSounds,
-        })
-        .eq('id', userId);
+      // Resolve active session token for authoritative audit
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
 
-      return !error;
-    } catch {
+      if (!token) {
+        console.warn('[authService] No active session token found for profile update audit.');
+        // Fallback to direct PostgREST if no token, though RLS might reject it if it requires auth
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            nickname: updates.nickname,
+            bio: updates.bio,
+            avatar_url: updates.avatar,
+            is_18_verified: updates.is18Verified,
+            safe_filter_enabled: updates.safeFilterEnabled,
+            notification_sounds: updates.notificationSounds,
+          })
+          .eq('id', userId);
+        return !error;
+      }
+
+      // Route via worker audit layer
+      const res = await fetch('/api/auth/profile/update', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ updates }),
+      });
+
+      if (!res.ok) {
+        console.error(`[authService] Worker profile update audit failed (HTTP ${res.status}).`);
+        return false;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      return data.success === true;
+    } catch (err) {
+      console.error('[authService] Unexpected error during profile update audit:', err);
       return false;
     }
   },
