@@ -278,11 +278,33 @@ class SafetyService {
    * Privacy Data Export (JSON download)
    */
   async exportUserData(userId: string): Promise<any> {
+    const supabase = (await import('../lib/supabaseClient')).getSupabaseClient();
+    if (!supabase) return null;
+
     try {
-      const res = await fetch(`/api/auth/data-export?userId=${encodeURIComponent(userId)}`);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+
+      if (!token) {
+        console.warn('[safetyService] Data export failed: No active member session found.');
+        return null;
+      }
+
+      const res = await fetch(`/api/auth/data-export?userId=${encodeURIComponent(userId)}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        console.error(`[safetyService] Data export request failed (HTTP ${res.status}).`);
+        return null;
+      }
+
       const data = (await res.json()) as { export?: any };
       return data.export;
-    } catch {
+    } catch (err) {
+      console.error('[safetyService] Unexpected error during data export request:', err);
       return null;
     }
   }

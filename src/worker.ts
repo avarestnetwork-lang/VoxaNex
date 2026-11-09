@@ -2895,24 +2895,27 @@ async function authorizeConversationAccess(
           return jsonResponse({ success: false, error: 'Server configuration error: Database bindings missing.' }, 503);
         }
 
-        // Perform authoritative update via Service Role to ensure bypass of potential RLS issues during edge audit
-        // but strictly scoped to the verifiedUserId
+        // Correction 2: Generic profile updates must never modify trusted verification fields.
+        const allowedUpdates: any = {
+          nickname: updates.nickname,
+          bio: updates.bio,
+          avatar_url: updates.avatar,
+          safe_filter_enabled: updates.safeFilterEnabled,
+          notification_sounds: updates.notificationSounds,
+          updated_at: new Date().toISOString(),
+        };
+
+        // Perform authoritative update strictly scoped to the verifiedUserId.
+        // Use 'Prefer: return=representation' to verify the target row was actually affected.
         const res = await fetch(`${baseSupabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(authResult.verifiedUserId)}`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
             'apikey': supabaseServiceKey,
             'Authorization': `Bearer ${supabaseServiceKey}`,
+            'Prefer': 'return=representation',
           },
-          body: JSON.stringify({
-            nickname: updates.nickname,
-            bio: updates.bio,
-            avatar_url: updates.avatar,
-            is_18_verified: updates.is18Verified,
-            safe_filter_enabled: updates.safeFilterEnabled,
-            notification_sounds: updates.notificationSounds,
-            updated_at: new Date().toISOString(),
-          }),
+          body: JSON.stringify(allowedUpdates),
         });
 
         if (!res.ok) {
@@ -2921,7 +2924,16 @@ async function authorizeConversationAccess(
           return jsonResponse({ success: false, error: `Profile update failed (HTTP ${res.status}).` }, 500);
         }
 
-        return jsonResponse({ success: true, message: 'Profile updated successfully via audit layer.' });
+        const updatedRows: any = await res.json().catch(() => []);
+        if (!Array.isArray(updatedRows) || updatedRows.length !== 1) {
+          console.warn(`[Worker] Profile update for ${authResult.verifiedUserId} affected ${Array.isArray(updatedRows) ? updatedRows.length : 0} rows.`);
+          return jsonResponse({
+            success: false,
+            error: 'Profile update failed: Identity record not found or inaccessible.',
+          }, 404);
+        }
+
+        return jsonResponse({ success: true, message: 'Profile updated successfully.' });
       } catch (err: any) {
         return jsonResponse({ success: false, error: 'Malformed profile update request.' }, 400);
       }
@@ -2932,10 +2944,10 @@ async function authorizeConversationAccess(
     // -------------------------------------------------------------------------
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({
-        success: true,
-        message: 'Endpoint acknowledged by ChatLustora Edge Worker',
+        success: false,
+        error: 'Not Found: The requested API endpoint is not implemented on this worker instance.',
         path: url.pathname,
-      });
+      }, 404);
     }
 
     // -------------------------------------------------------------------------

@@ -90,6 +90,15 @@ export const authService = {
         return { success: false, error: `Registration failed: Could not create user profile (${profileError.message})` };
       }
 
+      // If email confirmation is enabled, data.session will be null.
+      // The user must confirm their email before they can access the application.
+      if (!data.session) {
+        return {
+          success: false,
+          error: 'Registration successful! Please check your email and confirm your account before logging in.'
+        };
+      }
+
       return { success: true, user: profileData };
     } catch (err: any) {
       return { success: false, error: err.message || 'An unexpected error occurred during signup.' };
@@ -293,21 +302,17 @@ export const authService = {
       const token = sessionData?.session?.access_token;
 
       if (!token) {
-        console.warn('[authService] No active session token found for profile update audit.');
-        // Fallback to direct PostgREST if no token, though RLS might reject it if it requires auth
-        const { error } = await supabase
-          .from('profiles')
-          .update({
-            nickname: updates.nickname,
-            bio: updates.bio,
-            avatar_url: updates.avatar,
-            is_18_verified: updates.is18Verified,
-            safe_filter_enabled: updates.safeFilterEnabled,
-            notification_sounds: updates.notificationSounds,
-          })
-          .eq('id', userId);
-        return !error;
+        console.warn('[authService] Generic profile update failed: No active member session found.');
+        return false;
       }
+
+      // Generic profile update path must never attempt to modify trusted verification fields.
+      const { 
+        is18Verified: _ignored1, 
+        verifiedAt: _ignored2, 
+        verificationMethod: _ignored3, 
+        ...safeUpdates 
+      } = updates;
 
       // Route via worker audit layer
       const res = await fetch('/api/auth/profile/update', {
@@ -316,7 +321,7 @@ export const authService = {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ updates }),
+        body: JSON.stringify({ updates: safeUpdates }),
       });
 
       if (!res.ok) {

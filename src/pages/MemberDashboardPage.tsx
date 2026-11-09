@@ -492,11 +492,12 @@ export const MemberDashboardPage: React.FC = () => {
           </button>
 
           <button
-            onClick={() => navigate('/dating')}
-            className={`p-3.5 rounded-2xl border transition-all group cursor-pointer text-left ${
+            onClick={() => hasPermission('VOICE_VIDEO') && navigate('/dating')}
+            disabled={!hasPermission('VOICE_VIDEO')}
+            className={`p-3.5 rounded-2xl border transition-all group text-left ${
               hasPermission('VOICE_VIDEO')
-                ? 'bg-slate-50 dark:bg-slate-800/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 border-slate-200/80 dark:border-slate-700'
-                : 'bg-slate-100 dark:bg-slate-900/40 border-slate-200/40 dark:border-slate-800/40 opacity-60'
+                ? 'bg-slate-50 dark:bg-slate-800/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 border-slate-200/80 dark:border-slate-700 cursor-pointer'
+                : 'bg-slate-100 dark:bg-slate-900/40 border-slate-200/40 dark:border-slate-800/40 opacity-60 cursor-not-allowed'
             }`}
             title={!hasPermission('VOICE_VIDEO') ? 'Member only feature' : ''}
           >
@@ -515,11 +516,12 @@ export const MemberDashboardPage: React.FC = () => {
           </button>
 
           <button
-            onClick={() => navigate('/voice-webcam')}
-            className={`p-3.5 rounded-2xl border transition-all group cursor-pointer text-left ${
+            onClick={() => hasPermission('VOICE_VIDEO') && navigate('/voice-webcam')}
+            disabled={!hasPermission('VOICE_VIDEO')}
+            className={`p-3.5 rounded-2xl border transition-all group text-left ${
               hasPermission('VOICE_VIDEO')
-                ? 'bg-slate-50 dark:bg-slate-800/60 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border-slate-200/80 dark:border-slate-700'
-                : 'bg-slate-100 dark:bg-slate-900/40 border-slate-200/40 dark:border-slate-800/40 opacity-60'
+                ? 'bg-slate-50 dark:bg-slate-800/60 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border-slate-200/80 dark:border-slate-700 cursor-pointer'
+                : 'bg-slate-100 dark:bg-slate-900/40 border-slate-200/40 dark:border-slate-800/40 opacity-60 cursor-not-allowed'
             }`}
             title={!hasPermission('VOICE_VIDEO') ? 'Member only feature' : ''}
           >
@@ -529,11 +531,12 @@ export const MemberDashboardPage: React.FC = () => {
           </button>
 
           <button
-            onClick={() => navigate('/shop')}
-            className={`p-3.5 rounded-2xl border transition-all group cursor-pointer text-left ${
+            onClick={() => hasPermission('ACCOUNT_SETTINGS') && navigate('/shop')}
+            disabled={!hasPermission('ACCOUNT_SETTINGS')}
+            className={`p-3.5 rounded-2xl border transition-all group text-left ${
               hasPermission('ACCOUNT_SETTINGS')
-                ? 'bg-slate-50 dark:bg-slate-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border-slate-200/80 dark:border-slate-700'
-                : 'bg-slate-100 dark:bg-slate-900/40 border-slate-200/40 dark:border-slate-800/40 opacity-60'
+                ? 'bg-slate-50 dark:bg-slate-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border-slate-200/80 dark:border-slate-700 cursor-pointer'
+                : 'bg-slate-100 dark:bg-slate-900/40 border-slate-200/40 dark:border-slate-800/40 opacity-60 cursor-not-allowed'
             }`}
             title={!hasPermission('ACCOUNT_SETTINGS') ? 'Member only feature' : ''}
           >
