@@ -15,7 +15,7 @@ interface AuthContextType {
   setAvatar: (avatar: string) => void;
   loginGuest: (nickname?: string, lang?: AppLanguage, gender?: string) => Promise<{ success: boolean; error?: string }>;
   loginWithAccount: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  registerWithAccount: (email: string, password: string, nickname: string) => Promise<{ success: boolean; error?: string }>;
+  registerWithAccount: (email: string, password: string, nickname: string, gender?: string) => Promise<{ success: boolean; error?: string }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
   deleteAccount: () => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<{ success: boolean; error?: string }>;
@@ -102,6 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             nickname: check.session?.nickname || prev.nickname,
             avatar: check.session?.avatar || prev.avatar,
             is18Verified: Boolean(check.session?.is18Verified),
+            gender: check.session?.gender as UserGender,
           }));
           setHasActiveSession(true);
         } else {
@@ -235,8 +236,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: false, error: res.error || 'Authentication failed' };
   };
 
-  const registerWithAccount = async (email: string, password: string, nickname: string) => {
-    const res = await authService.register(email, password, nickname, user.languagePreference);
+  const registerWithAccount = async (email: string, password: string, nickname: string, gender?: string) => {
+    const res = await authService.register(email, password, nickname, gender, user.languagePreference);
     if (res.success && res.user) {
       setUser(res.user);
       setHasActiveSession(true);

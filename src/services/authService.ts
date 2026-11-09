@@ -15,6 +15,7 @@ export const authService = {
     email: string,
     password: string,
     nickname: string,
+    gender: string = 'prefer_not_to_say',
     languagePref: AppLanguage = 'en'
   ): Promise<AuthResponse> {
     const supabase = getSupabaseClient();
@@ -24,6 +25,7 @@ export const authService = {
         id: `usr_${Date.now()}`,
         email,
         nickname: nickname.trim(),
+        gender: gender as any,
         isGuest: false,
         is18Verified: true,
         verifiedAt: new Date().toISOString(),
@@ -45,6 +47,7 @@ export const authService = {
           data: {
             nickname: nickname.trim(),
             avatar_url: '🛡️',
+            gender,
           },
         },
       });
@@ -62,6 +65,7 @@ export const authService = {
         id: data.user.id,
         email: data.user.email,
         nickname: nickname.trim(),
+        gender: gender as any,
         avatar: '🛡️',
         isGuest: false,
         is18Verified: false,
@@ -124,8 +128,8 @@ export const authService = {
         return { success: false, error: 'Login failed: Invalid credentials.' };
       }
 
-      // Retrieve full profile from database
-      const profile = await this.getProfile(data.user.id);
+      // Retrieve full profile from database and merge auth metadata
+      const profile = await this.getProfile(data.user.id, data.user);
       return { success: true, user: profile || undefined };
     } catch (err: any) {
       return { success: false, error: err.message || 'An unexpected error occurred during signin.' };
@@ -188,7 +192,7 @@ export const authService = {
     try {
       const { data } = await supabase.auth.getSession();
       if (data?.session?.user) {
-        return await this.getProfile(data.session.user.id);
+        return await this.getProfile(data.session.user.id, data.session.user);
       }
       return null;
     } catch {
@@ -199,7 +203,7 @@ export const authService = {
   /**
    * Fetch profile record from public.profiles
    */
-  async getProfile(userId: string): Promise<UserProfile | null> {
+  async getProfile(userId: string, authUser?: any): Promise<UserProfile | null> {
     const supabase = getSupabaseClient();
     if (!supabase) return null;
 
@@ -209,6 +213,13 @@ export const authService = {
         .select('*')
         .eq('id', userId)
         .single();
+
+      // Get metadata from authUser if provided, or try to fetch current user
+      let metadata = authUser?.user_metadata || {};
+      if (!authUser && userId) {
+         // Optionally fetch auth user if not provided and it matches the current session
+         // For now, we rely on callers passing authUser when available (login/restore)
+      }
 
       if (error) {
         // Detailed logging for PostgREST errors (e.g. PGRST205 / 404)
@@ -228,6 +239,7 @@ export const authService = {
                id: user.id,
                nickname: user.user_metadata?.nickname || user.email?.split('@')[0] || 'User',
                avatar: user.user_metadata?.avatar_url || '🛡️',
+               gender: user.user_metadata?.gender,
                isGuest: false,
                is18Verified: false,
                languagePreference: 'en',
@@ -246,6 +258,7 @@ export const authService = {
         id: data.id,
         nickname: data.nickname,
         avatar: data.avatar_url || '🛡️',
+        gender: metadata.gender,
         bio: data.bio || '',
         isGuest: false,
         is18Verified: Boolean(data.is_18_verified),

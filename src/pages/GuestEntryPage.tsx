@@ -4,21 +4,23 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth, GUEST_AVATARS, getRandomGuestNickname } from '../context/AuthContext';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { Button } from '../components/ui/Button';
-import { AppLanguage, Room } from '../types';
-import { User, Shuffle, ArrowRight, Check, Lock, Mail, ShieldAlert, AlertTriangle, Sparkles } from 'lucide-react';
+import { Modal } from '../components/ui/Modal';
+import { AppLanguage, Room, UserGender } from '../types';
+import { User, Shuffle, ArrowRight, Check, Lock, Mail, ShieldAlert, AlertTriangle, Sparkles, CheckCircle2 } from 'lucide-react';
 import { SEOHead } from '../components/common/SEOHead';
 
 export const GuestEntryPage: React.FC = () => {
-  const { navigate, params } = useRouter();
+  const { navigate, params, currentRoute } = useRouter();
   const { language, setLanguage, t } = useLanguage();
-  const { user, loginGuest, setAvatar, loginWithAccount, registerWithAccount, isSupabaseActive, verify18 } = useAuth();
+  const { user, loginGuest, setAvatar, loginWithAccount, registerWithAccount, requestPasswordReset, isSupabaseActive, verify18 } = useAuth();
 
   // Determine target room from params
   const targetRoomSlug = params.targetRoom || params.roomId;
   const targetRoom: Room | undefined = ROOMS_CONFIG.find((r) => r.slug === targetRoomSlug);
 
   // Mode tabs: 'guest' | 'login' | 'register'
-  const [activeTab, setActiveTab] = useState<'guest' | 'login' | 'register'>('guest');
+  const initialTab = (params.mode as any) || (currentRoute === '/register' ? 'register' : currentRoute === '/auth' ? 'login' : 'guest');
+  const [activeTab, setActiveTab] = useState<'guest' | 'login' | 'register'>(initialTab);
 
   // Guest form state
   const [nickname, setNicknameState] = useState(user.nickname);
@@ -26,7 +28,7 @@ export const GuestEntryPage: React.FC = () => {
   const [gender, setGender] = useState<string>('prefer_not_to_say');
   const [age, setAge] = useState<string>('21');
   const [adultConfirmed, setAdultConfirmed] = useState(false);
-  const [safetyPledge, setSafetyPledge] = useState(true);
+  const [safetyPledge, setSafetyPledge] = useState(false);
   const [guestError, setGuestError] = useState<string | null>(null);
 
   // Account login/register state
@@ -35,6 +37,12 @@ export const GuestEntryPage: React.FC = () => {
   const [accountNickname, setAccountNickname] = useState('');
   const [accountError, setAccountError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Forgot password state
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetSuccess, setResetSuccess] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const handleRandomize = () => {
     setNicknameState(getRandomGuestNickname());
@@ -110,24 +118,38 @@ export const GuestEntryPage: React.FC = () => {
       setAccountError(language === 'bn' ? 'ইমেইল ও পাসওয়ার্ড দিন।' : 'Please provide email and password.');
       return;
     }
-    if (activeTab === 'register' && !accountNickname.trim()) {
-      setAccountError(language === 'bn' ? 'নিকনেম আবশ্যক।' : 'Permanent nickname is required.');
-      return;
-    }
 
-    if (!adultConfirmed) {
-      setAccountError(
-        language === 'bn'
-          ? 'চ্যাটলাস্টোরায় প্রবেশের পূর্বে আপনার বয়স ১৮ বা তার বেশি নিশ্চিত করে ঘোষণা দিন।'
-          : 'You must confirm you are 18 years of age or older to enter ChatLustora.'
-      );
-      return;
+    if (activeTab === 'register') {
+      if (!accountNickname.trim()) {
+        setAccountError(language === 'bn' ? 'নিকনেম আবশ্যক।' : 'Permanent nickname is required.');
+        return;
+      }
+      
+      const parsedAge = parseInt(age, 10);
+      if (isNaN(parsedAge) || parsedAge < 18) {
+        setAccountError(language === 'bn' ? 'রেজিস্ট্রেশনের জন্য আপনার বয়স কমপক্ষে ১৮ হতে হবে।' : 'You must be at least 18 years old to register.');
+        return;
+      }
+
+      if (!adultConfirmed) {
+        setAccountError(
+          language === 'bn'
+            ? 'চ্যাটলাস্টোরায় প্রবেশের পূর্বে আপনার বয়স ১৮ বা তার বেশি নিশ্চিত করে ঘোষণা দিন।'
+            : 'You must confirm you are 18 years of age or older to enter ChatLustora.'
+        );
+        return;
+      }
+
+      if (!safetyPledge) {
+        setAccountError(language === 'bn' ? 'আপনাকে কমিউনিটি আচরণবিধি মেনে চলতে হবে।' : 'Please accept the safety pledge.');
+        return;
+      }
     }
 
     setLoading(true);
     try {
       if (activeTab === 'register') {
-        const res = await registerWithAccount(email, password, accountNickname.trim());
+        const res = await registerWithAccount(email, password, accountNickname.trim(), gender);
         if (!res.success) {
           setAccountError(res.error || 'Registration failed');
           setLoading(false);
@@ -155,6 +177,24 @@ export const GuestEntryPage: React.FC = () => {
     } catch (err: any) {
       setLoading(false);
       setAccountError(err.message || 'Authentication error occurred.');
+    }
+  };
+
+  const handlePasswordResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetEmail.trim()) return;
+
+    setResetError(null);
+    const res = await requestPasswordReset(resetEmail.trim());
+    if (res.success) {
+      setResetSuccess(true);
+      setTimeout(() => {
+        setResetSuccess(false);
+        setResetModalOpen(false);
+        setResetEmail('');
+      }, 2500);
+    } else {
+      setResetError(res.error || 'Failed to send recovery email');
     }
   };
 
@@ -186,9 +226,13 @@ export const GuestEntryPage: React.FC = () => {
 
         {/* SEO & Header */}
         <SEOHead
-          title={language === 'bn' ? 'প্রবেশ ও ১৮+ নিশ্চিতকরণ – ChatLustora' : 'Entry & 18+ Age Gate – ChatLustora'}
+          title={
+            activeTab === 'register' ? (language === 'bn' ? 'অ্যাকাউন্ট তৈরি করুন – ChatLustora' : 'Create Account – ChatLustora') :
+            activeTab === 'login' ? (language === 'bn' ? 'সাইন ইন – ChatLustora' : 'Sign In – ChatLustora') :
+            (language === 'bn' ? 'প্রবেশ ও ১৮+ নিশ্চিতকরণ – ChatLustora' : 'Entry & 18+ Age Gate – ChatLustora')
+          }
           description="Enter ChatLustora Bangla & Desi adult chatrooms with instant guest access or user account."
-          canonicalPath="/guest-entry"
+          canonicalPath={activeTab === 'register' ? '/register' : activeTab === 'login' ? '/auth' : '/guest-entry'}
           noindex={true}
         />
         <div className="text-center space-y-2">
@@ -393,25 +437,73 @@ export const GuestEntryPage: React.FC = () => {
         {(activeTab === 'login' || activeTab === 'register') && (
           <form onSubmit={handleAccountSubmit} className="space-y-4">
             {activeTab === 'register' && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                  Permanent Nickname
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={accountNickname}
-                  onChange={(e) => setAccountNickname(e.target.value)}
-                  placeholder="e.g. Dhaka_Citizen"
-                  className="w-full bg-[#101728] border border-slate-800 rounded-lg px-3.5 py-2 text-xs text-white focus:outline-none focus:border-violet-500"
-                />
-              </div>
+              <>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                    Permanent Nickname
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={accountNickname}
+                    onChange={(e) => setAccountNickname(e.target.value)}
+                    placeholder="e.g. Dhaka_Citizen"
+                    className="w-full bg-[#101728] border border-slate-800 rounded-lg px-3.5 py-2 text-xs text-white focus:outline-none focus:border-violet-500"
+                  />
+                </div>
+
+                {/* Gender and Age for Registration */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                      {language === 'bn' ? 'লিঙ্গ' : 'Gender'}
+                    </label>
+                    <select
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value)}
+                      className="w-full bg-[#101728] border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-violet-500"
+                    >
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="other">Other / Non-binary</option>
+                      <option value="couple">Couple</option>
+                      <option value="prefer_not_to_say">Prefer not to say</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                      {language === 'bn' ? 'বয়স' : 'Age (Years)'}
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min={18}
+                      max={110}
+                      value={age}
+                      onChange={(e) => setAge(e.target.value)}
+                      className="w-full bg-[#101728] border border-slate-800 rounded-lg px-3 py-2.5 text-xs text-white focus:outline-none focus:border-violet-500"
+                    />
+                  </div>
+                </div>
+              </>
             )}
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                Email Address
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                  Email Address
+                </label>
+                {activeTab === 'login' && (
+                  <button
+                    type="button"
+                    onClick={() => setResetModalOpen(true)}
+                    className="text-[11px] text-cyan-400 hover:underline cursor-pointer"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
               <div className="relative">
                 <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
@@ -443,30 +535,52 @@ export const GuestEntryPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Adult Confirmation Checkbox (Always required for ChatLustora 18+ adult community) */}
-            <div className="p-3.5 rounded-xl border border-rose-950 bg-rose-950/20 space-y-2">
-              <div className="flex items-center gap-1.5 text-rose-300 text-xs font-semibold">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                <span>18+ Age Eligibility Requirement</span>
+            {/* Adult Confirmation Checkbox (Always required for ChatLustora 18+ adult community / Registration) */}
+            {(activeTab === 'register' || targetRoom?.is18Plus) && (
+              <div className="p-3.5 rounded-xl border border-rose-950 bg-rose-950/20 space-y-2">
+                <div className="flex items-center gap-1.5 text-rose-300 text-xs font-semibold">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>18+ Age Eligibility Requirement</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Self-reported age is required. You must be 18 or older to join ChatLustora adult community and chatrooms. Minors are strictly prohibited.
+                </p>
+                <label className="flex items-start gap-2.5 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={adultConfirmed}
+                    onChange={(e) => {
+                      setAdultConfirmed(e.target.checked);
+                      setAccountError(null);
+                    }}
+                    className="w-4 h-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-rose-600 focus:ring-rose-500"
+                  />
+                  <span className="text-xs text-slate-200">
+                    I confirm under penalty of platform ban that I am 18 years of age or older.
+                  </span>
+                </label>
               </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                Self-reported age is required. You must be 18 or older to join ChatLustora adult community and chatrooms. Minors are strictly prohibited.
-              </p>
-              <label className="flex items-start gap-2.5 cursor-pointer pt-1">
-                <input
-                  type="checkbox"
-                  checked={adultConfirmed}
-                  onChange={(e) => {
-                    setAdultConfirmed(e.target.checked);
-                    setAccountError(null);
-                  }}
-                  className="w-4 h-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-rose-600 focus:ring-rose-500"
-                />
-                <span className="text-xs text-slate-200">
-                  I confirm under penalty of platform ban that I am 18 years of age or older.
-                </span>
-              </label>
-            </div>
+            )}
+
+            {/* Safety Pledge for Registration */}
+            {activeTab === 'register' && (
+              <div className="p-3.5 rounded-xl border border-slate-800 bg-[#101728]/80 space-y-1.5">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={safetyPledge}
+                    onChange={(e) => {
+                      setSafetyPledge(e.target.checked);
+                      setAccountError(null);
+                    }}
+                    className="w-4 h-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-violet-600 focus:ring-violet-500"
+                  />
+                  <span className="text-xs text-slate-300 leading-relaxed">
+                    I agree to community safety guidelines, respectful conduct, and zero harassment rules.
+                  </span>
+                </label>
+              </div>
+            )}
 
             {accountError && (
               <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900 text-xs text-rose-300">
@@ -482,6 +596,54 @@ export const GuestEntryPage: React.FC = () => {
         )}
 
       </div>
+
+      {/* Password Reset Modal */}
+      {resetModalOpen && (
+        <Modal
+          isOpen={resetModalOpen}
+          onClose={() => setResetModalOpen(false)}
+          title="Password Recovery"
+          subtitle="Send password reset link via Supabase Auth"
+        >
+          {resetSuccess ? (
+            <div className="p-6 text-center space-y-2">
+              <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
+              <h3 className="font-bold text-white text-sm">Recovery Link Dispatched</h3>
+              <p className="text-xs text-slate-400">
+                If an account exists for {resetEmail}, instructions have been sent.
+              </p>
+            </div>
+          ) : (
+            <form onSubmit={handlePasswordResetSubmit} className="space-y-4">
+              <p className="text-xs text-slate-300">
+                Enter your registered account email to receive a secure recovery link.
+              </p>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Email</label>
+                <input
+                  type="email"
+                  required
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className="w-full bg-[#101728] border border-slate-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              {resetError && <div className="text-xs text-rose-400">{resetError}</div>}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="secondary" size="sm" onClick={() => setResetModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" size="sm">
+                  Send Recovery Link
+                </Button>
+              </div>
+            </form>
+          )}
+        </Modal>
+      )}
     </div>
   );
 };

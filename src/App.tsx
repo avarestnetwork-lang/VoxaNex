@@ -18,7 +18,6 @@ import { PublicChatPage } from './pages/PublicChatPage';
 import { PrivateMessagingPage } from './pages/PrivateMessagingPage';
 import { RandomMatchingPage } from './pages/RandomMatchingPage';
 import { VoiceWebcamPage } from './pages/VoiceWebcamPage';
-import { AuthPage } from './pages/AuthPage';
 import { MemberDashboardPage } from './pages/MemberDashboardPage';
 import { ProfileSettingsPage } from './pages/ProfileSettingsPage';
 import { SafetyCenterPage } from './pages/SafetyCenterPage';
@@ -57,11 +56,10 @@ const AppRoutes: React.FC = () => {
       case '/':
         return <LandingPage />;
       case '/age-gate':
-        return <GuestEntryPage />;
       case '/guest-entry':
-        return <GuestEntryPage />;
       case '/register':
-        return <AuthPage defaultMode="register" />;
+      case '/auth':
+        return <GuestEntryPage />;
       case '/dashboard':
         return <MemberDashboardPage />;
       case '/rooms':
@@ -84,7 +82,7 @@ const AppRoutes: React.FC = () => {
       case '/chat/video':
         return <VoiceWebcamPage />;
       case '/auth':
-        return <AuthPage />;
+        return <GuestEntryPage />;
       case '/profile':
         return <MemberDashboardPage />;
       case '/safety':
