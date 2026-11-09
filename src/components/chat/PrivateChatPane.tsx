@@ -104,7 +104,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             messagingService.sendConversationRead(verifiedConvId, currentUser.id, latest.id);
           }
         } else {
-          // Welcome message placeholder - ONLY if initialization AND fetch succeeded with 0 messages
+          // Welcome message placeholder
           setMessages([
             {
               id: `welcome_${Date.now()}`,
@@ -128,20 +128,17 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
       setLoading(false);
       setTimeout(() => scrollToBottom(false), 50);
 
-      // Subscribe ONLY AFTER successful initialization and history fetch
       if (!cancel && res.success) {
         unsubscribeFn = messagingService.subscribeToConversation(verifiedConvId, currentUser.id, {
           onMessage: (newMsg) => {
             setMessages((prev) => {
               if (prev.some((m) => m.id === newMsg.id)) return prev;
-              // Reconcile optimistic message by clientNonce or temp ID
               if (newMsg.clientNonce && prev.some((m) => m.clientNonce === newMsg.clientNonce)) {
                 return prev.map((m) => (m.clientNonce === newMsg.clientNonce ? newMsg : m));
               }
               return [...prev, newMsg];
             });
 
-            // Mark incoming message as read
             if (newMsg.senderId === partner.id) {
               messagingService.sendConversationRead(verifiedConvId, currentUser.id, newMsg.id);
             }
@@ -170,7 +167,6 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
   const isComposerDisabled = loading || Boolean(initError) || !activeConversationId;
 
-  // Handle typing input with debounce
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputText(e.target.value);
     if (isComposerDisabled || !activeConversationId) return;
@@ -185,7 +181,6 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
     }, 2500);
   };
 
-  // Send DM
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (isComposerDisabled || !activeConversationId) return;
@@ -247,26 +242,27 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
   return (
     <div className="flex-1 flex flex-col h-full bg-[#0a0f1d] overflow-hidden">
       {/* Conversation Top Header */}
-      <div className="p-3 bg-[#0d1424] border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="p-3 bg-[#0d1424] border-b border-slate-800 flex items-center justify-between gap-3 shrink-0 h-14 sm:h-16">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
           {onClose && !onMinimize && (
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
               title="Return to Public Chatroom"
+              aria-label="Back"
             >
               <ArrowLeft className="w-5 h-5 text-cyan-400" />
             </button>
           )}
-          <div className="flex items-center gap-2.5">
-            <span className="text-2xl select-none">{partner.avatar || '👤'}</span>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className={`font-bold text-sm tracking-tight ${partnerGender.textColor}`}>
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <span className="text-2xl select-none shrink-0">{partner.avatar || '👤'}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <h2 className={`font-bold text-sm tracking-tight truncate ${partnerGender.textColor}`}>
                   {partner.nickname}
                 </h2>
                 <span
-                  className="text-[10px] px-1.5 py-0.2 rounded border font-mono"
+                  className="text-[9px] px-1.5 py-0.2 rounded border font-mono shrink-0 hidden xs:inline-block"
                   style={{
                     color: partnerGender.colorHex,
                     borderColor: `${partnerGender.colorHex}50`,
@@ -275,26 +271,27 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
                 >
                   {partnerGender.icon} {partnerGender.label}
                 </span>
-                <span className="text-[10px] text-slate-400 border border-slate-700/80 px-1.5 py-0.2 rounded bg-slate-800/40">
+                <span className="text-[9px] text-slate-400 border border-slate-700/80 px-1 py-0.2 rounded bg-slate-800/40 shrink-0 hidden sm:inline-block">
                   {partner.isGuest ? 'Guest' : 'Member'}
                 </span>
               </div>
-              <div className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-emerald-400 font-medium">Direct 1-on-1 End-to-End Session</span>
+              <div className="text-[10px] text-slate-400 flex items-center gap-1.5 mt-0.5 truncate">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                <span className="text-emerald-400 font-medium truncate">Direct 1-on-1 Session</span>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {onMinimize && (
             <button
               onClick={onMinimize}
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
               title="Minimize"
+              aria-label="Minimize chat"
             >
-              <Minimize2 className="w-3.5 h-3.5" />
+              <Minimize2 className="w-4 h-4" />
             </button>
           )}
           {onMaximize && (
@@ -302,22 +299,24 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
               onClick={onMaximize}
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
               title="Maximize to large tab"
+              aria-label="Maximize chat"
             >
-              <Maximize2 className="w-3.5 h-3.5" />
+              <Maximize2 className="w-4 h-4" />
             </button>
           )}
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
             title="Close"
+            aria-label="Close chat"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-5 h-5" />
           </button>
         </div>
       </div>
 
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
         {initError ? (
           <div className="py-8 flex flex-col items-center justify-center text-center text-rose-400 p-6 bg-rose-950/20 rounded-xl border border-rose-900/50 m-4">
             <Shield className="w-8 h-8 mb-2 text-rose-500" />
@@ -325,7 +324,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             <p className="text-xs text-rose-300 font-mono">{initError}</p>
           </div>
         ) : loading ? (
-          <div className="py-12 text-center text-xs text-slate-400">Loading conversation history...</div>
+          <div className="py-12 text-center text-xs text-slate-400 animate-pulse">Loading conversation history...</div>
         ) : (
           messages.map((msg, idx) => {
             const isMe = msg.senderId === currentUser.id;
@@ -339,49 +338,48 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
                 key={`${msg.id}-${idx}`}
                 className={`flex items-start gap-2.5 max-w-xl ${isMe ? 'ml-auto flex-row-reverse' : ''}`}
               >
-                <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-sm shrink-0 select-none">
+                <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-sm shrink-0 select-none shadow-sm">
                   {msg.senderAvatar}
                 </div>
                 <div
-                  className={`rounded-2xl px-4 py-2.5 text-xs leading-relaxed max-w-sm sm:max-w-md ${
+                  className={`rounded-2xl px-3.5 py-2 text-xs leading-relaxed max-w-[85%] sm:max-w-md shadow-sm ${
                     isMe
                       ? 'bg-violet-600 text-white rounded-tr-none'
                       : 'bg-[#131c31] border border-slate-800 text-slate-200 rounded-tl-none'
                   }`}
                 >
                   <div
-                    className={`flex items-center justify-between gap-3 text-[10px] mb-1 ${
+                    className={`flex items-center justify-between gap-3 text-[9px] mb-0.5 ${
                       isMe ? 'text-violet-200' : 'text-slate-400'
                     }`}
                   >
-                    <span className="font-semibold">{msg.senderNickname}</span>
-                    <span className="font-mono">{formatDhakaTime(msg.timestamp, language)}</span>
+                    <span className="font-semibold truncate max-w-[80px]">{msg.senderNickname}</span>
+                    <span className="font-mono shrink-0">{formatDhakaTime(msg.timestamp, language)}</span>
                   </div>
 
                   {msg.content && <p className="break-words whitespace-pre-wrap">{msg.content}</p>}
 
                   {msg.mediaUrl && (
-                    <div className="mt-2 rounded-lg overflow-hidden border border-slate-700/60 max-w-xs">
-                      <img src={msg.mediaUrl} alt="Shared attachment" className="w-full max-h-48 object-cover" />
+                    <div className="mt-2 rounded-lg overflow-hidden border border-slate-700/60 max-w-full">
+                      <img src={msg.mediaUrl} alt="Shared attachment" className="w-full max-h-48 object-contain bg-black/20" />
                     </div>
                   )}
 
-                  {/* Read Receipts for Outgoing Messages */}
                   {isMe && (
-                    <div className="mt-1 flex items-center justify-end gap-1 text-[10px] font-mono">
+                    <div className="mt-1 flex items-center justify-end gap-1 text-[9px] font-mono">
                       {isSending && <span className="text-violet-300">Sending...</span>}
                       {isFailed && <span className="text-rose-300">Failed</span>}
                       {isDelivered && (
                         <span className="flex items-center gap-0.5" title={isRead ? 'Read by partner' : 'Delivered'}>
                           {isRead ? (
                             <>
-                              <CheckCheck className="w-3.5 h-3.5 text-cyan-300" />
-                              <span className="text-cyan-300 font-semibold">Read</span>
+                              <CheckCheck className="w-3 h-3 text-cyan-300" />
+                              <span className="text-cyan-300 font-semibold uppercase">Read</span>
                             </>
                           ) : (
                             <>
-                              <Check className="w-3.5 h-3.5 text-violet-200" />
-                              <span className="text-violet-200">Sent</span>
+                              <Check className="w-3 h-3 text-violet-200" />
+                              <span className="text-violet-200 uppercase">Sent</span>
                             </>
                           )}
                         </span>
@@ -398,14 +396,14 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
       {/* Typing Indicator */}
       {partnerTyping && !initError && (
-        <div className="px-4 py-1.5 bg-[#090d18] border-t border-slate-800/60 text-xs text-cyan-400 flex items-center gap-2 animate-pulse">
-          <span className="w-2 h-2 rounded-full bg-cyan-400" />
-          <span>{partner.nickname} is typing...</span>
+        <div className="px-4 py-1 bg-[#090d18] border-t border-slate-800/60 text-[10px] text-cyan-400 flex items-center gap-2 shrink-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-bounce" />
+          <span className="truncate">{partner.nickname} is typing...</span>
         </div>
       )}
 
       {/* Composer */}
-      <div className="p-3 border-t border-slate-800 bg-[#0c1222] shrink-0 relative">
+      <div className="p-2 sm:p-3 border-t border-slate-800 bg-[#0c1222] shrink-0 relative">
         {showEmojiPicker && (
           <EmojiPicker
             onSelectEmoji={(emoji) => {
@@ -425,8 +423,8 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
           />
         )}
 
-        <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-          <div className="flex items-center gap-1">
+        <form onSubmit={handleSendMessage} className="flex items-center gap-1.5 sm:gap-2">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
               disabled={isComposerDisabled}
@@ -434,7 +432,8 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
                 setShowEmojiPicker(!showEmojiPicker);
                 setShowGifPicker(false);
               }}
-              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              aria-label="Pick emoji"
             >
               <Smile className="w-4 h-4" />
             </button>
@@ -445,7 +444,8 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
                 setShowGifPicker(!showGifPicker);
                 setShowEmojiPicker(false);
               }}
-              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              aria-label="Pick GIF"
             >
               <ImageIcon className="w-4 h-4" />
             </button>
@@ -456,14 +456,18 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             disabled={isComposerDisabled}
             value={inputText}
             onChange={handleInputChange}
-            placeholder={loading ? 'Initializing conversation...' : initError ? 'Conversation initialization failed' : `Message ${partner.nickname}...`}
-            className="flex-1 min-w-0 bg-[#101729] border border-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            placeholder={loading ? 'Loading...' : initError ? 'Error' : `Message...`}
+            className="flex-1 min-w-0 bg-[#101729] border border-slate-800 rounded-lg px-3 py-2 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
           />
 
-          <Button type="submit" variant="primary" size="md" disabled={isComposerDisabled} className="shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
-            <Send className="w-4 h-4 mr-1.5" />
-            <span>Send</span>
-          </Button>
+          <button 
+            type="submit" 
+            disabled={isComposerDisabled} 
+            className="bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 text-white p-2 rounded-lg transition-all flex items-center justify-center shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Send message"
+          >
+            <Send className="w-4 h-4" />
+          </button>
         </form>
       </div>
     </div>
