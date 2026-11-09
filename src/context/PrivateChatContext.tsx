@@ -43,10 +43,11 @@ const PrivateChatContext = createContext<PrivateChatContextType | undefined>(und
 export function consolidateWindows(windows: FloatingChatWindow[]): FloatingChatWindow[] {
   const map = new Map<string, FloatingChatWindow>();
   for (const w of windows) {
-    if (!w || !w.conversationId) continue;
-    const key = w.conversationId;
+    if (!w || !w.partnerId) continue;
+    const key = w.partnerId; // Deduplicate by partner identity to prevent duplicate windows for the same pair
     const existing = map.get(key);
     if (existing) {
+      // Merge message collections
       const msgMap = new Map<string, ChatMessage>();
       existing.messages.forEach(m => { if (m && m.id) msgMap.set(m.id, m); });
       w.messages.forEach(m => { if (m && m.id) msgMap.set(m.id, m); });
@@ -55,6 +56,11 @@ export function consolidateWindows(windows: FloatingChatWindow[]): FloatingChatW
         const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
         return (isNaN(tA) ? 0 : tA) - (isNaN(tB) ? 0 : tB);
       });
+
+      // Prefer UUID conversationId over legacy conv_A_B format
+      const isNewUuid = /^[0-9a-f]{8}-[0-9a-f]{4}/.test(w.conversationId);
+      const isExistingUuid = /^[0-9a-f]{8}-[0-9a-f]{4}/.test(existing.conversationId);
+      const conversationId = isNewUuid ? w.conversationId : existing.conversationId;
 
       const draft = (w.draft !== undefined && w.draft !== '') ? w.draft : existing.draft;
       const unreadCount = Math.max(existing.unreadCount || 0, w.unreadCount || 0);
@@ -66,6 +72,7 @@ export function consolidateWindows(windows: FloatingChatWindow[]): FloatingChatW
 
       map.set(key, {
         ...existing,
+        conversationId,
         partnerId: w.partnerId || existing.partnerId,
         partnerNickname: w.partnerNickname || existing.partnerNickname,
         partnerAvatar: w.partnerAvatar || existing.partnerAvatar,
@@ -230,22 +237,25 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const openChat = useCallback(async (partner: { id: string; nickname: string; avatar: string; gender?: string }) => {
     if (!user.id || !partner.id || partner.id === user.id) return;
 
-    const sortedIds = [user.id, partner.id].sort();
-    const conversationId = `conv_${sortedIds[0]}_${sortedIds[1]}`;
+    // Use canonical UUID for the conversation
+    const conversationId = await databaseService.getDeterministicConvId(user.id, partner.id);
+    
     trackConversation(conversationId);
     closedConversationIdsRef.current.delete(conversationId);
 
     console.log('[DIAGNOSTIC] private_popup_opened', { conversationId, partnerId: partner.id });
 
     setOpenWindows((prev) => {
-      const existingIndex = prev.findIndex((w) => w.conversationId === conversationId);
+      // Search by either conversationId OR partnerId to handle legacy migration seamlessly
+      const existingIndex = prev.findIndex((w) => w.conversationId === conversationId || w.partnerId === partner.id);
+      
       let updated: FloatingChatWindow[];
       if (existingIndex >= 0) {
         updated = prev.map((w, idx) =>
-          idx === existingIndex || w.conversationId === conversationId
+          idx === existingIndex || w.partnerId === partner.id
             ? {
                 ...w,
-                conversationId,
+                conversationId, // Update to canonical ID if it was legacy
                 partnerId: partner.id,
                 partnerNickname: partner.nickname || w.partnerNickname,
                 partnerAvatar: partner.avatar || w.partnerAvatar,
@@ -471,16 +481,17 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const partnerGender = partnerInfo?.gender;
 
     setOpenWindows((prev) => {
-      const existingIndex = prev.findIndex((w) => w.conversationId === conversationId);
+      // Search by either conversationId OR partnerId to ensure robust reconciliation
+      const existingIndex = prev.findIndex((w) => w.conversationId === conversationId || w.partnerId === partnerId);
       const isFocused = existingIndex >= 0 && prev[existingIndex].isOpen && !prev[existingIndex].isMinimized;
 
       let updated: FloatingChatWindow[];
       if (existingIndex >= 0) {
         updated = prev.map((w, idx) =>
-          idx === existingIndex || w.conversationId === conversationId
+          idx === existingIndex || w.partnerId === partnerId
             ? {
                 ...w,
-                conversationId,
+                conversationId, // Update to current incoming ID (canonical UUID)
                 partnerId,
                 partnerNickname: partnerNickname || w.partnerNickname,
                 partnerAvatar: partnerAvatar || w.partnerAvatar,

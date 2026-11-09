@@ -47,6 +47,14 @@ class MockPersistence {
 
 const persistence = new MockPersistence();
 
+// Mock for databaseService.getDeterministicConvId
+const mockDatabaseService = {
+  getDeterministicConvId: async (u1: string, u2: string) => {
+    // Return a string that matches the production UUID regex: /^[0-9a-f]{8}-[0-9a-f]{4}/
+    return `dec0ded1-0000-0000-0000-000000000000`;
+  }
+};
+
 /**
  * State container replicating the exact behavior implemented in
  * PrivateChatContext.tsx
@@ -77,17 +85,18 @@ class ChatClientSimulation {
   async openChat(partner: { id: string; nickname: string; avatar: string; gender?: string }) {
     if (!this.userId || partner.id === this.userId) return;
 
-    const sortedIds = [this.userId, partner.id].sort();
-    const conversationId = `conv_${sortedIds[0]}_${sortedIds[1]}`;
+    const conversationId = await mockDatabaseService.getDeterministicConvId(this.userId, partner.id);
     this.closedConversationIds.delete(conversationId);
 
-    const existingIndex = this.openWindows.findIndex((w) => w.conversationId === conversationId);
+    // Search by both ID and partnerId to match production reconciliation
+    const existingIndex = this.openWindows.findIndex((w) => w.conversationId === conversationId || w.partnerId === partner.id);
     
     if (existingIndex >= 0) {
-      this.openWindows = this.openWindows.map((w) =>
-        w.conversationId === conversationId
+      this.openWindows = this.openWindows.map((w, idx) =>
+        idx === existingIndex || w.partnerId === partner.id
           ? {
               ...w,
+              conversationId, // Migrate to UUID if it was legacy
               isOpen: true,
               displayMode: 'floating' as ConversationDisplayMode,
               isMaximized: false,
@@ -98,7 +107,6 @@ class ChatClientSimulation {
       );
     } else {
       // Restore history from behavioral model persistence
-      // Note: Draft is explicitly initialized to '' matching Production openChat logic.
       const history = persistence.getMessages(conversationId);
       this.openWindows.push({
         conversationId,
@@ -178,7 +186,7 @@ class ChatClientSimulation {
     if (msg.senderId === this.userId) {
       this.openWindows = consolidateWindows(
         this.openWindows.map((w) => {
-          if (w.conversationId !== conversationId) return w;
+          if (w.conversationId !== conversationId && w.partnerId !== (partnerInfo?.id || msg.recipientId)) return w;
           if (w.messages.some(m => m.id === msg.id)) return w;
           const hasTemp = w.messages.some(m => m.id.startsWith('temp_') && m.content === msg.content);
           if (hasTemp) {
@@ -194,18 +202,19 @@ class ChatClientSimulation {
     this.seenMessageIds.add(msg.id);
     persistence.saveMessage(msg);
 
-    const existingIndex = this.openWindows.findIndex((w) => w.conversationId === conversationId);
     const partnerId = partnerInfo?.id || msg.senderId;
+    const existingIndex = this.openWindows.findIndex((w) => w.conversationId === conversationId || w.partnerId === partnerId);
     const partnerNickname = partnerInfo?.nickname || msg.senderNickname || 'Partner';
     const partnerAvatar = partnerInfo?.avatar || msg.senderAvatar || '👤';
 
     if (existingIndex >= 0) {
       const isFocused = this.openWindows[existingIndex].isOpen && !this.openWindows[existingIndex].isMinimized;
       this.openWindows = consolidateWindows(
-        this.openWindows.map((w) =>
-          w.conversationId === conversationId
+        this.openWindows.map((w, idx) =>
+          idx === existingIndex || w.partnerId === partnerId
             ? {
                 ...w,
+                conversationId, // Adopt canonical incoming ID
                 messages: w.messages.some(m => m.id === msg.id) ? w.messages : [...w.messages, msg],
                 unreadCount: isFocused ? 0 : w.unreadCount + 1,
                 isOpen: true,
@@ -312,6 +321,16 @@ function runConsolidationUnitTests() {
 
   const repeatedOpen = consolidateWindows([...consolidated, consolidated[0]]);
   assert(repeatedOpen.length === 1, 'Assertion 15: Repeated open/consolidation calls do not duplicate windows');
+
+  console.log('--- ID Migration & Legacy Support Unit Tests ---');
+  const legacyId = 'conv_1_2';
+  const uuidId = '12345678-1234-1234-1234-1234567890ab';
+  const legacyWin: FloatingChatWindow = { conversationId: legacyId, partnerId: '2', partnerNickname: 'U2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [], unreadCount: 0, draft: '', isOpen: true };
+  const uuidWin: FloatingChatWindow = { conversationId: uuidId, partnerId: '2', partnerNickname: 'U2', partnerAvatar: '👤', isMinimized: false, isMaximized: false, displayMode: 'floating', messages: [], unreadCount: 0, draft: '', isOpen: true };
+  
+  const merged = consolidateWindows([legacyWin, uuidWin]);
+  assert(merged.length === 1, 'Assertion 16: Legacy and UUID windows for same partnerId consolidate');
+  assert(merged[0].conversationId === uuidId, 'Assertion 17: Consolidation prefers UUID format over legacy');
 }
 
 async function runRegressionSuite() {
@@ -321,7 +340,7 @@ async function runRegressionSuite() {
 
   const idA = 'u_sender';
   const idB = 'u_partner';
-  const convId = `conv_${[idA, idB].sort().join('_')}`;
+  const convId = await mockDatabaseService.getDeterministicConvId(idA, idB);
 
   const clientA = new ChatClientSimulation(idA, 'Sender', '⚡');
   const clientB = new ChatClientSimulation(idB, 'Partner', '🌸');
@@ -391,6 +410,36 @@ async function runRegressionSuite() {
   // L21: Dual State Invariant (Global cross-check)
   const isBoth = clientA.floatingWindowsRendered.some(w => clientA.maximizedTabsRendered.some(mw => mw.conversationId === w.conversationId));
   assert(!isBoth, 'L21: Mutual exclusivity global invariant holds (No conversation in both collections simultaneously)');
+
+  console.log('\n--- Running Deduplication & ID Migration Regression Tests (3 Assertions) ---');
+  // L22: Legacy Open -> Incoming UUID DM
+  const clientC = new ChatClientSimulation('u_c', 'ClientC', 'C');
+  const partnerD = { id: 'u_d', nickname: 'PartnerD', avatar: 'D' };
+  const legacyConvId = `conv_${['u_c', 'u_d'].sort().join('_')}`;
+  const uuidConvId = await mockDatabaseService.getDeterministicConvId('u_c', 'u_d');
+
+  // Simulate manual open with legacy ID (e.g. from old state)
+  clientC.openWindows.push({
+    conversationId: legacyConvId,
+    partnerId: partnerD.id,
+    partnerNickname: partnerD.nickname,
+    partnerAvatar: partnerD.avatar,
+    isMinimized: false,
+    isMaximized: false,
+    displayMode: 'floating',
+    messages: [],
+    unreadCount: 0,
+    draft: 'Legacy draft',
+    isOpen: true,
+  });
+
+  // Receive DM with UUID
+  const msgD: ChatMessage = { id: 'msg_d_1', conversationId: uuidConvId, senderId: partnerD.id, senderNickname: partnerD.nickname, content: 'Hi from UUID', timestamp: new Date().toISOString() };
+  clientC.handleIncomingMessage(msgD, uuidConvId, partnerD);
+  
+  assert(clientC.openWindows.length === 1, 'L22: Legacy and UUID entries for the same partner are consolidated into one window');
+  assert(clientC.openWindows[0].conversationId === uuidConvId, 'L23: Window ID is migrated to canonical UUID');
+  assert(clientC.openWindows[0].messages.length === 1 && clientC.openWindows[0].messages[0].id === 'msg_d_1', 'L24: Messages are preserved during ID migration');
 
   console.log('\n--- Running Route & Source Regression Tests (4 Assertions) ---');
   // Reading actual production component source code for verification
