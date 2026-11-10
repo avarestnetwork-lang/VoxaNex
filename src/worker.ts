@@ -1,5 +1,6 @@
 import { databaseService } from './services/databaseService';
 import { getSupabaseClientFromEnv } from './lib/supabaseClient';
+import { ROOMS_CONFIG } from './config/voxanexConfig';
 
 /**
  * ChatLustora Cloudflare Workers Edge Entrypoint
@@ -50,6 +51,30 @@ interface GuestSession {
   ageDeclarationAccepted?: boolean;
   createdAt: number;
   expiresAt: number;
+}
+
+const ADULT_ROOM_IDENTIFIERS = new Set<string>(
+  ROOMS_CONFIG.filter((r) => r.is18Plus).flatMap((r) => [
+    r.slug.toLowerCase(),
+    r.id.toLowerCase(),
+    `room-${r.slug.toLowerCase()}`,
+  ])
+);
+
+function isAdultRoom(roomIdOrSlug: string): boolean {
+  if (!roomIdOrSlug) return false;
+  const clean = decodeURIComponent(roomIdOrSlug).trim().toLowerCase();
+  if (ADULT_ROOM_IDENTIFIERS.has(clean)) return true;
+  return clean === 'sex' || clean === 'adult' || clean.includes('adult');
+}
+
+function isAuthorizedForAdultRoom(authResult: { verifiedUserId: string; isGuestCaller: boolean; guestSession?: GuestSession }): boolean {
+  if (!authResult.isGuestCaller) {
+    // Registered member is authenticated
+    return true;
+  }
+  // Guest caller must have signed dec18 claim (ageDeclarationAccepted) or v18 claim (is18Verified)
+  return Boolean(authResult.guestSession?.ageDeclarationAccepted || authResult.guestSession?.is18Verified);
 }
 
 function getGuestSecret(env: any): { secret: string | null; isDevFallback: boolean } {
@@ -668,6 +693,13 @@ export default {
         return authResult.errorResponse;
       }
 
+      if (isAdultRoom(roomId) && !isAuthorizedForAdultRoom(authResult)) {
+        return jsonResponse({
+          success: false,
+          error: 'Forbidden: Age declaration or verification required for adult room operations.',
+        }, 403);
+      }
+
       let intervalId: any = null;
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
 
@@ -731,6 +763,30 @@ export default {
       if (request.method === 'GET') {
         const limitParam = parseInt(url.searchParams.get('limit') || '50', 10);
         const limit = Math.min(Math.max(limitParam, 1), 100);
+
+        if (isAdultRoom(roomId)) {
+          const guestTokenParam = url.searchParams.get('guestToken') || request.headers.get('x-guest-token');
+          const authResult = await authenticateRequest(
+            request,
+            url,
+            guestSecretInfo,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+            supabaseClient,
+            env,
+            guestTokenParam || undefined
+          );
+
+          if ('errorResponse' in authResult) {
+            return authResult.errorResponse;
+          }
+
+          if (!isAuthorizedForAdultRoom(authResult)) {
+            return jsonResponse({
+              success: false,
+              error: 'Forbidden: Age declaration or verification required for adult room operations.',
+            }, 403);
+          }
+        }
 
         if (baseSupabaseUrl && supabaseAnonKey) {
           try {
@@ -804,6 +860,13 @@ export default {
 
           if ('errorResponse' in authResult) {
             return authResult.errorResponse;
+          }
+
+          if (isAdultRoom(roomId) && !isAuthorizedForAdultRoom(authResult)) {
+            return jsonResponse({
+              success: false,
+              error: 'Forbidden: Age declaration or verification required for adult room operations.',
+            }, 403);
           }
 
           const { verifiedUserId, isGuestCaller, guestSession } = authResult;
@@ -984,6 +1047,13 @@ export default {
             return authResult.errorResponse;
           }
 
+          if (isAdultRoom(roomId) && !isAuthorizedForAdultRoom(authResult)) {
+            return jsonResponse({
+              success: false,
+              error: 'Forbidden: Age declaration or verification required for adult room operations.',
+            }, 403);
+          }
+
           // 2. Reject mismatched client ID
           if (id && id !== authResult.verifiedUserId) {
             return jsonResponse({
@@ -1055,6 +1125,30 @@ export default {
       }
 
       if (request.method === 'GET') {
+        if (isAdultRoom(roomId)) {
+          const guestTokenParam = url.searchParams.get('guestToken') || request.headers.get('x-guest-token');
+          const authResult = await authenticateRequest(
+            request,
+            url,
+            guestSecretInfo,
+            { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+            supabaseClient,
+            env,
+            guestTokenParam || undefined
+          );
+
+          if ('errorResponse' in authResult) {
+            return authResult.errorResponse;
+          }
+
+          if (!isAuthorizedForAdultRoom(authResult)) {
+            return jsonResponse({
+              success: false,
+              error: 'Forbidden: Age declaration or verification required for adult room operations.',
+            }, 403);
+          }
+        }
+
         const now = Date.now();
         const active = Array.from(membersMap.values()).filter((m) => now - m.lastSeen <= 45000);
         return jsonResponse({ success: true, members: active });
@@ -1084,6 +1178,13 @@ export default {
 
         if ('errorResponse' in authResult) {
           return authResult.errorResponse;
+        }
+
+        if (isAdultRoom(roomId) && !isAuthorizedForAdultRoom(authResult)) {
+          return jsonResponse({
+            success: false,
+            error: 'Forbidden: Age declaration or verification required for adult room operations.',
+          }, 403);
         }
 
         // 2. Reject mismatched member ID
