@@ -37,6 +37,30 @@ function toBase64Url(str: string): string {
   return Buffer.from(str).toString('base64url');
 }
 
+async function signGuestToken(payload: any, secret: string): Promise<string> {
+  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret.trim()),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sigBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(base64Payload));
+  const sigBytes = Array.from(new Uint8Array(sigBuffer));
+  const sigHex = sigBytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `vx_gst_${base64Payload}.${sigHex}`;
+}
+
+async function computeTokenHash(token: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 function createMockMemberJwt(userId: string): string {
   const header = toBase64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload = toBase64Url(JSON.stringify({
@@ -67,6 +91,7 @@ async function runAdultRoomAuthorizationTests() {
 
   const dbGuestSessions: any[] = [];
   const dbMessages: any[] = [];
+  const proxiedCalls: { url: string; method: string }[] = [];
 
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const urlStr = typeof input === 'string'
@@ -74,6 +99,11 @@ async function runAdultRoomAuthorizationTests() {
       : (input && typeof (input as any).url === 'string' ? (input as any).url : input.toString());
     const urlObj = new URL(urlStr);
     const method = init?.method || (input && (input as any).method ? (input as any).method : 'GET');
+
+    if (urlStr.startsWith('https://backend-proxy.test')) {
+      proxiedCalls.push({ url: urlStr, method });
+      return new Response(JSON.stringify({ success: true, proxied: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
 
     if (urlObj.pathname.includes('/rest/v1/guest_sessions')) {
       if (method === 'POST') {
@@ -353,23 +383,36 @@ async function runAdultRoomAuthorizationTests() {
       }), env, {} as any);
       assert(garbageTokenRes.status === 401, '6.2 Invalid guest token format is rejected (HTTP 401)');
 
-      // 6.3 Expired guest token
-      const expiredPayload = toBase64Url(JSON.stringify({
-        sid: '00000000-0000-0000-0000-000000000001',
-        nick: 'ExpiredUser',
+      // 6.3 Genuine HMAC-signed expired guest token test
+      const expiredSid = crypto.randomUUID();
+      const expiredPayload = {
+        sid: expiredSid,
+        nick: 'GenuineExpiredGuest',
+        av: '⌛',
         dec18: true,
-        iat: Date.now() - 100000,
-        exp: Date.now() - 1000, // Expired in past
-      }));
-      const expiredToken = `vx_gst_${expiredPayload}.0000000000000000000000000000000000000000000000000000000000000000`;
+        iat: Date.now() - 7200000, // Issued 2 hours ago
+        exp: Date.now() - 3600000, // Expired 1 hour ago
+      };
+      const genuineExpiredToken = await signGuestToken(expiredPayload, validSecret);
+      const genuineExpiredHash = await computeTokenHash(genuineExpiredToken);
+
+      // Register valid session in mock DB so HMAC signature and DB lookup pass, specifically testing timestamp expiry
+      dbGuestSessions.push({
+        id: expiredSid,
+        session_token_hash: genuineExpiredHash,
+        is_revoked: false,
+        is_18_verified: false,
+        expires_at: new Date(Date.now() - 3600000).toISOString(),
+        created_at: new Date(Date.now() - 7200000).toISOString(),
+      });
+
       const expiredRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${expiredToken}` },
+        headers: { 'Authorization': `Bearer ${genuineExpiredToken}` },
       }), env, {} as any);
-      assert(expiredRes.status === 401, '6.3 Expired guest token is rejected (HTTP 401)');
+      assert(expiredRes.status === 401, '6.3 Genuine HMAC-signed expired guest token is rejected (HTTP 401)');
 
       // 6.4 Revoked guest session
-      const revokedSessionId = '11111111-2222-3333-4444-555555555555';
       const revokedTokenRes = await worker.fetch(new Request('https://voxanex.test/api/guest/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -397,7 +440,7 @@ async function runAdultRoomAuthorizationTests() {
     }
 
     // =========================================================================
-    // SECTION 7: BACKEND_URL PROXY AUTHORIZATION GATE ENFORCEMENT
+    // SECTION 7: BACKEND_URL PROXY AUTHORIZATION GATE ENFORCEMENT & EXPLICIT COUNTERS
     // =========================================================================
     console.log('\n--- 7. BACKEND_URL proxy authorization gate enforcement ---');
     {
@@ -407,25 +450,31 @@ async function runAdultRoomAuthorizationTests() {
       };
 
       // 7.1 Undeclared guest attempting adult room access when BACKEND_URL is set MUST be rejected with HTTP 403
+      proxiedCalls.length = 0; // Reset recorder
       const proxyUndeclaredRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${undeclaredToken}` },
       }), proxyEnv, {} as any);
       assert(proxyUndeclaredRes.status === 403, '7.1 Undeclared guest accessing adult room with BACKEND_URL set is blocked (HTTP 403)');
+      assert(proxiedCalls.length === 0, '7.1.1 Verified ZERO upstream proxy calls generated for blocked adult room request');
 
       // 7.2 Declared guest accessing adult room when BACKEND_URL is set passes security gate and proxies (HTTP 200)
+      proxiedCalls.length = 0; // Reset recorder
       const proxyDeclaredRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${declaredToken}` },
       }), proxyEnv, {} as any);
       assert(proxyDeclaredRes.status === 200, '7.2 Declared guest accessing adult room with BACKEND_URL set passes gate (HTTP 200)');
+      assert(proxiedCalls.length === 1 && proxiedCalls[0].url.startsWith('https://backend-proxy.test'), '7.2.1 Verified EXACTLY 1 upstream proxy call generated for authorized adult room request');
 
       // 7.3 Ordinary public room with BACKEND_URL set passes gate (HTTP 200)
+      proxiedCalls.length = 0; // Reset recorder
       const proxyPublicRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/bangla/messages', {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${undeclaredToken}` },
       }), proxyEnv, {} as any);
       assert(proxyPublicRes.status === 200, '7.3 Ordinary public room with BACKEND_URL set passes gate (HTTP 200)');
+      assert(proxiedCalls.length === 1 && proxiedCalls[0].url.startsWith('https://backend-proxy.test'), '7.3.1 Verified EXACTLY 1 upstream proxy call generated for public room request');
     }
 
     // =========================================================================
