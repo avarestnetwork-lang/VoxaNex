@@ -336,12 +336,12 @@ class SafetyService {
     status: SafetyReport['status'],
     actionTaken?: SafetyReport['actionTaken'],
     moderatorNotes?: string,
-    role = 'admin'
+    _role = 'admin'
   ): Promise<boolean> {
     try {
-      const res = await fetch(`/api/admin/reports/${reportId}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-role': role },
+      const res = await fetch(`/api/admin/reports/${reportId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, actionTaken, moderatorNotes }),
       });
       const data = (await res.json()) as { success?: boolean };

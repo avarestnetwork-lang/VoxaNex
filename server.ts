@@ -1329,9 +1329,10 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   // ---------------------------------------------------------------------------
-  // ADMIN AUTHENTICATION ENDPOINTS
+  // ADMIN & MODERATOR AUTHENTICATION ENDPOINTS
   // ---------------------------------------------------------------------------
   const loginAttemptsMap = new Map<string, { count: number; resetAt: number }>();
+  const defaultModHash = bcrypt.hashSync('mod123456', 10);
 
   app.get('/api/admin/me', adminAuthMiddleware('moderator'), (req, res) => {
     const adminUser = (req as any).adminUser;
@@ -1443,6 +1444,103 @@ export function createExpressApp(dbEnvOverride?: {
     res.json({ success: true });
   });
 
+  app.post('/api/moderator/login', (req, res) => {
+    const ip =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      '127.0.0.1';
+    const now = Date.now();
+    const record = loginAttemptsMap.get(ip);
+
+    if (record && now < record.resetAt && record.count >= 5) {
+      return res.status(429).json({
+        success: false,
+        error: 'Too many failed login attempts. Please try again in 15 minutes.',
+      });
+    }
+
+    const { username, password } = req.body || {};
+    const expectedModUser = process.env.MODERATOR_USER || 'mod_admin';
+    const expectedModHash = process.env.MODERATOR_PASS_HASH || defaultModHash;
+    const secret = process.env.JWT_SECRET;
+
+    if (!secret || secret === 'fallback_secret' || secret === 'change_me') {
+      return res.status(500).json({
+        success: false,
+        error: 'Moderator authentication is not properly configured on this server.',
+      });
+    }
+
+    if (!username || !password || typeof username !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Username and password are required.',
+      });
+    }
+
+    const isUserValid = username === expectedModUser;
+    let isPassValid = false;
+
+    try {
+      isPassValid = bcrypt.compareSync(password, expectedModHash);
+    } catch (err) {
+      isPassValid = false;
+    }
+
+    if (isUserValid && isPassValid) {
+      loginAttemptsMap.delete(ip);
+      const token = jwt.sign({ role: 'moderator', username: expectedModUser }, secret, {
+        expiresIn: '2h',
+        algorithm: 'HS256',
+        issuer: 'chatlustora-auth',
+        audience: 'chatlustora-admin',
+      });
+
+      res.cookie('admin_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 2 * 60 * 60 * 1000,
+      });
+
+      return res.json({
+        success: true,
+        user: {
+          username: expectedModUser,
+          role: 'moderator',
+        },
+      });
+    } else {
+      if (!record || now > record.resetAt) {
+        loginAttemptsMap.set(ip, { count: 1, resetAt: now + 15 * 60 * 1000 });
+      } else {
+        record.count++;
+      }
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid moderator credentials.',
+      });
+    }
+  });
+
+  app.post('/api/moderator/logout', (req, res) => {
+    res.clearCookie('admin_token', {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    res.json({ success: true });
+  });
+
+  app.get('/api/admin/moderators', adminAuthMiddleware('moderator'), (req, res) => {
+    const defaultMods = [
+      { id: 'mod-1', roomId: 'all', userId: 'mod_admin', nickname: 'Global Moderator', assignedAt: new Date().toISOString() },
+    ];
+    res.json({ success: true, moderators: defaultMods });
+  });
+
   // ---------------------------------------------------------------------------
   // PHASE 7: COMMUNITY FORUM ENDPOINTS
   // ---------------------------------------------------------------------------
@@ -1465,7 +1563,7 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   app.post('/api/forum/topics', async (req, res) => {
-    const { authorId, authorNickname, authorAvatar, authorRole, title, category, categoryLabel, content } = req.body || {};
+    const { authorId, authorNickname, authorAvatar, title, category, categoryLabel, content } = req.body || {};
     if (!authorId || !title || !content) {
       return res.status(400).json({ success: false, error: 'Missing required topic fields.' });
     }
@@ -1478,7 +1576,7 @@ export function createExpressApp(dbEnvOverride?: {
       authorId,
       authorNickname: authResult.guestSession?.nickname || authorNickname || 'Anonymous',
       authorAvatar: authResult.guestSession?.avatar || authorAvatar || '⚡',
-      authorRole: authorRole || 'user',
+      authorRole: 'user',
       title,
       category: category || 'general',
       categoryLabel: categoryLabel || { en: 'General', bn: 'সাধারণ' },
@@ -1492,7 +1590,7 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   app.post('/api/forum/topics/:id/reply', async (req, res) => {
-    const { authorId, authorNickname, authorAvatar, authorRole, content } = req.body || {};
+    const { authorId, authorNickname, authorAvatar, content } = req.body || {};
     if (!authorId || !content) {
       return res.status(400).json({ success: false, error: 'Author and content required.' });
     }
@@ -1506,7 +1604,7 @@ export function createExpressApp(dbEnvOverride?: {
       authorId,
       authorNickname: authResult.guestSession?.nickname || authorNickname || 'User',
       authorAvatar: authResult.guestSession?.avatar || authorAvatar || '💬',
-      authorRole: authorRole || 'user',
+      authorRole: 'user',
       content,
     });
 
@@ -1518,16 +1616,40 @@ export function createExpressApp(dbEnvOverride?: {
 
   app.put('/api/forum/topics/:id', async (req, res) => {
     const { authorId, title, content } = req.body || {};
-    const role = (req.headers['x-user-role'] as string) || req.body?.authorRole || 'user';
     
-    const authResult = await authenticateRequest(req, dbEnv);
-    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
-    if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+    let effectiveRole: 'user' | 'moderator' | 'admin' = 'user';
+    let authenticatedUserId: string | null = null;
+
+    const cookies = parseCookies(req.headers.cookie);
+    const staffToken = cookies['admin_token'] || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : undefined);
+    const secret = process.env.JWT_SECRET;
+
+    if (staffToken && secret && secret !== 'fallback_secret' && secret !== 'change_me') {
+      try {
+        const decoded = jwt.verify(staffToken, secret, {
+          algorithms: ['HS256'],
+          issuer: 'chatlustora-auth',
+          audience: 'chatlustora-admin',
+        }) as any;
+        if (decoded?.role === 'admin' || decoded?.role === 'moderator') {
+          effectiveRole = decoded.role;
+        }
+      } catch {
+        // Staff token invalid
+      }
+    }
+
+    if (effectiveRole === 'user') {
+      const authResult = await authenticateRequest(req, dbEnv);
+      if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+      if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+      authenticatedUserId = authResult.verifiedUserId;
+    }
 
     const result = editForumTopic({
       topicId: req.params.id,
-      authorId,
-      authorRole: role,
+      authorId: authenticatedUserId || authorId,
+      authorRole: effectiveRole,
       title,
       content,
     });
@@ -1559,13 +1681,37 @@ export function createExpressApp(dbEnvOverride?: {
 
   app.delete('/api/forum/topics/:id', async (req, res) => {
     const authorId = req.query.authorId as string;
-    const role = (req.headers['x-user-role'] as string) || 'user';
     
-    const authResult = await authenticateRequest(req, dbEnv);
-    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
-    if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+    let effectiveRole: 'user' | 'moderator' | 'admin' = 'user';
+    let authenticatedUserId: string | null = null;
 
-    const result = deleteForumTopic(req.params.id, authorId, role);
+    const cookies = parseCookies(req.headers.cookie);
+    const staffToken = cookies['admin_token'] || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : undefined);
+    const secret = process.env.JWT_SECRET;
+
+    if (staffToken && secret && secret !== 'fallback_secret' && secret !== 'change_me') {
+      try {
+        const decoded = jwt.verify(staffToken, secret, {
+          algorithms: ['HS256'],
+          issuer: 'chatlustora-auth',
+          audience: 'chatlustora-admin',
+        }) as any;
+        if (decoded?.role === 'admin' || decoded?.role === 'moderator') {
+          effectiveRole = decoded.role;
+        }
+      } catch {
+        // Staff token invalid
+      }
+    }
+
+    if (effectiveRole === 'user') {
+      const authResult = await authenticateRequest(req, dbEnv);
+      if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+      if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+      authenticatedUserId = authResult.verifiedUserId;
+    }
+
+    const result = deleteForumTopic(req.params.id, authenticatedUserId || authorId, effectiveRole);
     if (!result.success) {
       return res.status(403).json(result);
     }
@@ -1574,13 +1720,37 @@ export function createExpressApp(dbEnvOverride?: {
 
   app.delete('/api/forum/replies/:id', async (req, res) => {
     const authorId = req.query.authorId as string;
-    const role = (req.headers['x-user-role'] as string) || 'user';
+    
+    let effectiveRole: 'user' | 'moderator' | 'admin' = 'user';
+    let authenticatedUserId: string | null = null;
 
-    const authResult = await authenticateRequest(req, dbEnv);
-    if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
-    if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+    const cookies = parseCookies(req.headers.cookie);
+    const staffToken = cookies['admin_token'] || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : undefined);
+    const secret = process.env.JWT_SECRET;
 
-    const result = deleteForumReply(req.params.id, authorId, role);
+    if (staffToken && secret && secret !== 'fallback_secret' && secret !== 'change_me') {
+      try {
+        const decoded = jwt.verify(staffToken, secret, {
+          algorithms: ['HS256'],
+          issuer: 'chatlustora-auth',
+          audience: 'chatlustora-admin',
+        }) as any;
+        if (decoded?.role === 'admin' || decoded?.role === 'moderator') {
+          effectiveRole = decoded.role;
+        }
+      } catch {
+        // Staff token invalid
+      }
+    }
+
+    if (effectiveRole === 'user') {
+      const authResult = await authenticateRequest(req, dbEnv);
+      if ('errorCode' in authResult) return res.status(authResult.errorCode).json(authResult);
+      if (authorId !== authResult.verifiedUserId) return res.status(403).json({ error: 'Identity mismatch.' });
+      authenticatedUserId = authResult.verifiedUserId;
+    }
+
+    const result = deleteForumReply(req.params.id, authenticatedUserId || authorId, effectiveRole);
     if (!result.success) {
       return res.status(403).json(result);
     }

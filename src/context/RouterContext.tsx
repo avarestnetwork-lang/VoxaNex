@@ -22,6 +22,10 @@ export type AppRoute =
   | '/blog'
   | '/admin'
   | '/admin/login'
+  | '/admin/dashboard'
+  | '/moderator'
+  | '/moderator/login'
+  | '/moderator/dashboard'
   | '/privacy'
   | '/terms'
   | '/about'
@@ -50,11 +54,12 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
     path = '/';
   }
 
-  // Legacy Redirects
+  // Legacy & Alias Redirects
   if (path === '/register') return { route: '/user/register', params: {} };
   if (path === '/guest-entry') return { route: '/user/guest-entry', params: {} };
   if (path === '/auth' || path === '/login') return { route: '/user/login', params: {} };
   if (path === '/dashboard' || path === '/profile') return { route: '/user/dashboard', params: {} };
+  if (path === '/moderator') return { route: '/moderator/dashboard', params: {} };
 
   // Handle /chat/:roomId
   if (path.startsWith('/chat/')) {
@@ -105,6 +110,10 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
     '/blog',
     '/admin',
     '/admin/login',
+    '/admin/dashboard',
+    '/moderator',
+    '/moderator/login',
+    '/moderator/dashboard',
     '/privacy',
     '/terms',
     '/about',

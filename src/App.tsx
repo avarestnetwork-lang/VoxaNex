@@ -26,6 +26,9 @@ import { BlogPage } from './pages/BlogPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminLoginPage } from './pages/AdminLoginPage';
 import { AdminRouteGuard } from './components/auth/AdminRouteGuard';
+import { ModeratorLoginPage } from './pages/ModeratorLoginPage';
+import { ModeratorDashboardPage } from './pages/ModeratorDashboardPage';
+import { ModeratorRouteGuard } from './components/auth/ModeratorRouteGuard';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { TermsOfServicePage } from './pages/TermsOfServicePage';
 import { AboutPage } from './pages/AboutPage';
@@ -95,10 +98,20 @@ const AppRoutes: React.FC = () => {
       case '/admin/login':
         return <AdminLoginPage />;
       case '/admin':
+      case '/admin/dashboard':
         return (
           <AdminRouteGuard>
             <AdminDashboardPage />
           </AdminRouteGuard>
+        );
+      case '/moderator/login':
+        return <ModeratorLoginPage />;
+      case '/moderator':
+      case '/moderator/dashboard':
+        return (
+          <ModeratorRouteGuard>
+            <ModeratorDashboardPage />
+          </ModeratorRouteGuard>
         );
       case '/privacy':
         return <PrivacyPolicyPage />;
