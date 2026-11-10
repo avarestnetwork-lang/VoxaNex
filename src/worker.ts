@@ -61,11 +61,21 @@ const ADULT_ROOM_IDENTIFIERS = new Set<string>(
   ])
 );
 
+function safeDecodeURIComponent(str: string): string {
+  if (!str) return '';
+  try {
+    return decodeURIComponent(str);
+  } catch {
+    return str;
+  }
+}
+
 function isAdultRoom(roomIdOrSlug: string): boolean {
   if (!roomIdOrSlug) return false;
-  const clean = decodeURIComponent(roomIdOrSlug).trim().toLowerCase();
+  const clean = safeDecodeURIComponent(roomIdOrSlug).trim().toLowerCase();
+  if (!clean) return false;
   if (ADULT_ROOM_IDENTIFIERS.has(clean)) return true;
-  return clean === 'sex' || clean === 'adult' || clean.includes('adult');
+  return clean === 'sex' || clean === 'adult' || clean === 'adults' || clean.startsWith('adult-') || clean.startsWith('adult_') || clean.endsWith('-adult') || clean.endsWith('_adult');
 }
 
 function isAuthorizedForAdultRoom(authResult: { verifiedUserId: string; isGuestCaller: boolean; guestSession?: GuestSession }): boolean {
@@ -563,6 +573,51 @@ export default {
       });
     }
 
+    // -------------------------------------------------------------------------
+    // 0. ADULT ROOM SECURITY GATE (Enforced regardless of BACKEND_URL proxy)
+    // -------------------------------------------------------------------------
+    const roomPathMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)/);
+    if (roomPathMatch) {
+      const rawRoomId = safeDecodeURIComponent(roomPathMatch[1]);
+
+      if (isAdultRoom(rawRoomId)) {
+        const guestTokenParam = url.searchParams.get('guestToken') || request.headers.get('x-guest-token');
+        let bodyGuestToken: string | undefined = undefined;
+
+        if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+          try {
+            const bodyCopy: any = await request.clone().json();
+            if (bodyCopy && typeof bodyCopy.guestToken === 'string') {
+              bodyGuestToken = bodyCopy.guestToken;
+            }
+          } catch {
+            // Ignore JSON parse error; authenticateRequest handles malformed/missing payloads safely
+          }
+        }
+
+        const authResult = await authenticateRequest(
+          request,
+          url,
+          guestSecretInfo,
+          { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+          supabaseClient,
+          env,
+          bodyGuestToken || guestTokenParam || undefined
+        );
+
+        if ('errorResponse' in authResult) {
+          return authResult.errorResponse;
+        }
+
+        if (!isAuthorizedForAdultRoom(authResult)) {
+          return jsonResponse({
+            success: false,
+            error: 'Forbidden: Age declaration or verification required for adult room operations.',
+          }, 403);
+        }
+      }
+    }
+
     // Optional proxy to external backend if configured
     if (env?.BACKEND_URL && url.pathname.startsWith('/api/')) {
       try {
@@ -679,7 +734,7 @@ export default {
     // -------------------------------------------------------------------------
     const sseMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)\/events\/?$/);
     if (sseMatch && request.method === 'GET') {
-      const roomId = decodeURIComponent(sseMatch[1]);
+      const roomId = safeDecodeURIComponent(sseMatch[1]);
 
       const authResult = await authenticateRequest(
         request,
@@ -757,7 +812,7 @@ export default {
     // -------------------------------------------------------------------------
     const messagesMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)\/messages$/);
     if (messagesMatch) {
-      const roomId = decodeURIComponent(messagesMatch[1]);
+      const roomId = safeDecodeURIComponent(messagesMatch[1]);
 
       // GET: Retrieve message history
       if (request.method === 'GET') {
@@ -1020,7 +1075,7 @@ export default {
     // -------------------------------------------------------------------------
     const presenceMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)\/presence$/);
     if (presenceMatch) {
-      const roomId = decodeURIComponent(presenceMatch[1]);
+      const roomId = safeDecodeURIComponent(presenceMatch[1]);
 
       if (!roomPresence.has(roomId)) {
         roomPresence.set(roomId, new Map());
@@ -1160,7 +1215,7 @@ export default {
     // -------------------------------------------------------------------------
     const typingMatch = url.pathname.match(/^\/api\/chat\/rooms\/([^/]+)\/typing$/);
     if (typingMatch && request.method === 'POST') {
-      const roomId = decodeURIComponent(typingMatch[1]);
+      const roomId = safeDecodeURIComponent(typingMatch[1]);
       try {
         const body: any = await request.json().catch(() => ({}));
         const { memberId, isTyping, guestToken: bodyGuestToken } = body || {};

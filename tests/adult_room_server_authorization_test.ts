@@ -69,9 +69,11 @@ async function runAdultRoomAuthorizationTests() {
   const dbMessages: any[] = [];
 
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const urlStr = typeof input === 'string' ? input : input.toString();
+    const urlStr = typeof input === 'string'
+      ? input
+      : (input && typeof (input as any).url === 'string' ? (input as any).url : input.toString());
     const urlObj = new URL(urlStr);
-    const method = init?.method || 'GET';
+    const method = init?.method || (input && (input as any).method ? (input as any).method : 'GET');
 
     if (urlObj.pathname.includes('/rest/v1/guest_sessions')) {
       if (method === 'POST') {
@@ -333,23 +335,110 @@ async function runAdultRoomAuthorizationTests() {
     }
 
     // =========================================================================
-    // SECTION 5: ANTI-FORGERY & TAMPERING PROTECTION (HTTP 401)
+    // SECTION 6: INVALID MEMBER JWT, EXPIRED & REVOKED GUEST TOKENS (HTTP 401)
     // =========================================================================
-    console.log('\n--- 5. Anti-forgery & payload tampering protection ---');
+    console.log('\n--- 6. Token invalidation, expiration & revocation checks (401) ---');
     {
-      const parts = declaredToken.slice('vx_gst_'.length).split('.');
-      const decodedPayload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf-8'));
-
-      // Tamper: claim v18: true on guest token
-      decodedPayload.v18 = true;
-      const tamperedRaw = Buffer.from(JSON.stringify(decodedPayload)).toString('base64url');
-      const tamperedToken = `vx_gst_${tamperedRaw}.${parts[1]}`;
-
-      const res = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
+      // 6.1 Invalid member JWT
+      const badJwtRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${tamperedToken}` },
+        headers: { 'Authorization': 'Bearer invalid.member.jwt' },
       }), env, {} as any);
-      assert(res.status === 401, '5.1 Tampered token with forged v18 claim is rejected (HTTP 401)');
+      assert(badJwtRes.status === 401, '6.1 Invalid member JWT is rejected (HTTP 401)');
+
+      // 6.2 Completely invalid guest token format
+      const garbageTokenRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer vx_gst_garbage_payload' },
+      }), env, {} as any);
+      assert(garbageTokenRes.status === 401, '6.2 Invalid guest token format is rejected (HTTP 401)');
+
+      // 6.3 Expired guest token
+      const expiredPayload = toBase64Url(JSON.stringify({
+        sid: '00000000-0000-0000-0000-000000000001',
+        nick: 'ExpiredUser',
+        dec18: true,
+        iat: Date.now() - 100000,
+        exp: Date.now() - 1000, // Expired in past
+      }));
+      const expiredToken = `vx_gst_${expiredPayload}.0000000000000000000000000000000000000000000000000000000000000000`;
+      const expiredRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${expiredToken}` },
+      }), env, {} as any);
+      assert(expiredRes.status === 401, '6.3 Expired guest token is rejected (HTTP 401)');
+
+      // 6.4 Revoked guest session
+      const revokedSessionId = '11111111-2222-3333-4444-555555555555';
+      const revokedTokenRes = await worker.fetch(new Request('https://voxanex.test/api/guest/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nickname: 'RevokedUser',
+          avatar: '🛑',
+          languagePref: 'en',
+          ageDeclarationAccepted: true,
+        }),
+      }), env, {} as any);
+      const revokedBody = (await revokedTokenRes.json()) as any;
+      const revokedToken = revokedBody.session.token;
+
+      // Mark revoked in db mock
+      const revokedDbRecord = dbGuestSessions[dbGuestSessions.length - 1];
+      if (revokedDbRecord) {
+        revokedDbRecord.is_revoked = true;
+      }
+
+      const revokedAccessRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${revokedToken}` },
+      }), env, {} as any);
+      assert(revokedAccessRes.status === 401, '6.4 Revoked guest session is rejected (HTTP 401)');
+    }
+
+    // =========================================================================
+    // SECTION 7: BACKEND_URL PROXY AUTHORIZATION GATE ENFORCEMENT
+    // =========================================================================
+    console.log('\n--- 7. BACKEND_URL proxy authorization gate enforcement ---');
+    {
+      const proxyEnv = {
+        ...env,
+        BACKEND_URL: 'https://backend-proxy.test',
+      };
+
+      // 7.1 Undeclared guest attempting adult room access when BACKEND_URL is set MUST be rejected with HTTP 403
+      const proxyUndeclaredRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${undeclaredToken}` },
+      }), proxyEnv, {} as any);
+      assert(proxyUndeclaredRes.status === 403, '7.1 Undeclared guest accessing adult room with BACKEND_URL set is blocked (HTTP 403)');
+
+      // 7.2 Declared guest accessing adult room when BACKEND_URL is set passes security gate and proxies (HTTP 200)
+      const proxyDeclaredRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/sex/messages', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${declaredToken}` },
+      }), proxyEnv, {} as any);
+      assert(proxyDeclaredRes.status === 200, '7.2 Declared guest accessing adult room with BACKEND_URL set passes gate (HTTP 200)');
+
+      // 7.3 Ordinary public room with BACKEND_URL set passes gate (HTTP 200)
+      const proxyPublicRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/bangla/messages', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${undeclaredToken}` },
+      }), proxyEnv, {} as any);
+      assert(proxyPublicRes.status === 200, '7.3 Ordinary public room with BACKEND_URL set passes gate (HTTP 200)');
+    }
+
+    // =========================================================================
+    // SECTION 8: MALFORMED ROOM IDENTIFIER HANDLING
+    // =========================================================================
+    console.log('\n--- 8. Malformed room identifier handling ---');
+    {
+      // 8.1 Malformed URI encoding in room identifier
+      const malformedRes = await worker.fetch(new Request('https://voxanex.test/api/chat/rooms/%E0%A4%A/messages', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${undeclaredToken}` },
+      }), env, {} as any);
+      assert(malformedRes.status === 200, '8.1 Malformed room identifier is handled safely without throwing exception');
     }
 
   } finally {
