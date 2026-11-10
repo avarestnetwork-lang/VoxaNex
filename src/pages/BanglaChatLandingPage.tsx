@@ -64,13 +64,13 @@ export const BanglaChatLandingPage: React.FC = () => {
       <SEOHead
         title={
           language === 'bn'
-            ? 'বাংলা চ্যাট রুম ও প্রাপ্তবয়স্কদের আড্ডা – ChatLustora'
-            : 'Bangla Adult Chat, Dating & Bengali Community Room – ChatLustora'
+            ? 'বাংলা চ্যাট রুম - দেশি ও আন্তর্জাতিক বাঙালি প্রাপ্তবয়স্ক আড্ডা – ChatLustora'
+            : 'Bangla Chat Room – Desi & International Bengali Adult Chat | ChatLustora'
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরায় বাংলা চ্যাট রুমে যুক্ত হোন। প্রাপ্তবয়স্ক বাঙালি সিঙ্গল ও বন্ধুদের সাথে সম্মানজনক আড্ডা, মিষ্টি ফ্লার্টিং এবং সুরক্ষিত ১-অন-১ প্রাইভেট মেসেজিং।'
-            : 'Join the Bangla adult chat room on ChatLustora. Meet Bengali singles and adults for friendly conversation, dating, and private messaging in a respectful 18+ space.'
+            ? 'চ্যাটলাস্টোরার সেরা বাংলা চ্যাট রুমে যুক্ত হোন। বাংলাদেশ, ভারত এবং আন্তর্জাতিক প্রবাসীদের সাথে ডেটিং, ফ্লার্টিং এবং বন্ধুত্বপূর্ণ আড্ডা দিন।'
+            : 'Join the top Bangla chat room on ChatLustora. Connect with Bengali adults from Bangladesh, India, and the international diaspora for dating, flirting, and friendly chat.'
         }
         canonicalPath="/chat/bangla"
         jsonLd={{

@@ -26,21 +26,21 @@ export const DatingLandingPage: React.FC = () => {
       <SEOHead
         title={
           language === 'bn'
-            ? 'বাংলা ও দেশি প্রাপ্তবয়স্ক ডেটিং এবং ফ্লার্টিং চ্যাট – ChatLustora'
-            : 'Bangla & Desi Adult Dating, Flirting & Romantic Chat – ChatLustora'
+            ? 'বাংলা, দেশি ও আন্তর্জাতিক প্রাপ্তবয়স্ক ডেটিং এবং ফ্লার্টিং চ্যাট – ChatLustora'
+            : 'Bangla, Desi & International Adult Dating, Flirting & Romantic Chat – ChatLustora'
         }
         description={
           language === 'bn'
-            ? '১৮+ প্রাপ্তবয়স্কদের জন্য সম্মানজনক বাংলা ডেটিং, মিষ্টি ফ্লার্টিং এবং ১-অন-১ প্রাইভেট চ্যাট। বিশ্বজুড়ে বাঙালি ও দেশি প্রাপ্তবয়স্কদের সাথে পরিচয় ও নিরাপদ বন্ধুত্ব।'
-            : 'Explore adult Bangla dating, respectful flirting, and private 1-on-1 messaging for adults aged 18+. Connect with Bengali and Desi adults across Bangladesh, India, and worldwide.'
+            ? '১৮+ প্রাপ্তবয়স্কদের জন্য সম্মানজনক বাংলা ও দেশি ডেটিং, মিষ্টি ফ্লার্টিং এবং আন্তর্জাতিক চ্যাট। বাংলাদেশ, ভারত ও বিশ্বজুড়ে বাঙালি ও দেশি সিঙ্গেলদের সাথে চ্যাট করুন।'
+            : 'Join ChatLustora for adult Bangla dating, Desi flirting, and international romantic chat. Connect with Bengali and South Asian singles in Bangladesh, India, UK, USA and worldwide.'
         }
         canonicalPath="/dating"
         jsonLd={{
           '@context': 'https://schema.org',
           '@type': 'WebPage',
-          name: 'Bangla & Desi Adult Dating and Flirting Chat',
+          name: 'Bangla, Desi & International Adult Dating and Flirting Chat',
           description:
-            'A respectful, 18+ online environment for Bengali and Desi adults interested in dating, flirting, and private conversations.',
+            'A respectful, 18+ online environment for Bengali, Desi, and International adults interested in dating, flirting, and private conversations.',
           publisher: {
             '@type': 'Organization',
             name: 'ChatLustora',

@@ -52,8 +52,8 @@ export const RoomLandingPage: React.FC<RoomLandingPageProps> = ({ roomSlug }) =>
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 py-10 px-4 sm:px-6 lg:px-8 transition-colors">
       <SEOHead
-        title={`${room.name.en} – Adult Chat & Conversations | ChatLustora`}
-        description={`${room.description.en} Connect respectfully and explore private direct messaging on ChatLustora.`}
+        title={`${room.name.en} – Bangla, Desi & International Chat | ChatLustora`}
+        description={`Join the ${room.name.en} for Bangla, Desi, and international conversations. Connect with adults worldwide for real-time chat and private messaging on ChatLustora.`}
         canonicalPath={canonicalPath}
         jsonLd={{
           '@context': 'https://schema.org',

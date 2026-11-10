@@ -276,15 +276,15 @@ export const LandingPage: React.FC = () => {
   return (
     <div className="bg-[#F8FAFC] dark:bg-slate-950 text-[#0F172A] dark:text-slate-100 min-h-screen font-sans selection:bg-rose-500 selection:text-white transition-colors">
       <SEOHead
-        title="ChatLustora – Bangla & Desi Adult Chat, Dating and Private Messaging"
-        description="ChatLustora is an online chat community where you can meet new people, join chat rooms, and discover conversations with people around the world."
+        title="ChatLustora – Bangla, Desi & International Chat Rooms"
+        description="Join ChatLustora for Bangla, Bengali, Desi and international chat rooms. Meet new people, make friends and enjoy global conversations in a welcoming 18+ online community."
         canonicalPath="/"
         jsonLd={{
           '@context': 'https://schema.org',
           '@type': 'WebSite',
           name: 'ChatLustora',
           url: 'https://chatlustora.com',
-          description: 'ChatLustora is an online chat community where you can meet new people, join chat rooms, and discover conversations with people around the world.',
+          description: 'Join ChatLustora for Bangla, Bengali, Desi and international chat rooms. Meet new people, make friends and enjoy global conversations in a welcoming 18+ online community.',
         }}
       />
 

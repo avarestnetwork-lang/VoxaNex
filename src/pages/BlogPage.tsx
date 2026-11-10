@@ -201,14 +201,18 @@ export const BlogPage: React.FC = () => {
             ? `${activeArticle.title[language]} | ChatLustora Blog`
             : activeGuide
             ? `${activeGuide.title[language]} | ChatLustora Safety Guide`
-            : 'Community Knowledge & Safety Center | ChatLustora'
+            : language === 'bn'
+            ? 'বাংলা, দেশি ও আন্তর্জাতিক চ্যাট ব্লগ এবং নিরাপত্তা গাইড – ChatLustora'
+            : 'Bangla, Desi & International Chat Blog & Safety Guides – ChatLustora'
         }
         description={
           activeArticle
             ? activeArticle.summary[language]
             : activeGuide
             ? activeGuide.summary[language]
-            : 'Explore safety guides, chat tips, and community guidelines for ChatLustora users.'
+            : language === 'bn'
+            ? 'বাংলা চ্যাট টিপস, দেশি কমিউনিটি খবর এবং আন্তর্জাতিক অনলাইন নিরাপত্তা গাইড সম্পর্কে আপ-টু-ডেট থাকুন।'
+            : 'Stay updated with the latest Bangla chat tips, Desi community news, and international online safety guides. Your trusted resource for global ChatLustora updates.'
         }
         canonicalPath={
           activeArticle

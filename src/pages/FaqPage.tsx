@@ -36,8 +36,16 @@ export const FaqPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-12 px-4 sm:px-6 lg:px-8 transition-colors">
       <SEOHead
-        title={language === 'bn' ? 'সাধারণ জিজ্ঞাসা (FAQ) – ChatLustora' : 'Frequently Asked Questions (FAQ) – ChatLustora'}
-        description="Frequently asked questions about ChatLustora 18+ adult chat, dating, private messaging, safety rules, and guest sessions."
+        title={
+          language === 'bn'
+            ? 'জিজ্ঞাসা - বাংলা, দেশি ও আন্তর্জাতিক চ্যাট সহায়তা – ChatLustora'
+            : 'FAQ – Bangla, Desi & International Adult Chat Help | ChatLustora'
+        }
+        description={
+          language === 'bn'
+            ? 'চ্যাটলাস্টোরায় বাংলা, দেশি ও আন্তর্জাতিক চ্যাট সম্পর্কিত সাধারণ প্রশ্নের উত্তর খুঁজুন। নিরাপত্তা, প্রাইভেট মেসেজিং এবং ডেটিং নিয়মাবলী সম্পর্কে জানুন।'
+            : 'Find answers to common questions about Bangla, Desi, and international adult chat on ChatLustora. Learn about safety, private messaging, and dating rules.'
+        }
         canonicalPath="/faq"
       />
       <div className="max-w-4xl mx-auto space-y-10">

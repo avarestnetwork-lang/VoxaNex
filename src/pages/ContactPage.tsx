@@ -30,13 +30,13 @@ export const ContactPage: React.FC = () => {
       <SEOHead
         title={
           language === 'bn'
-            ? 'যোগাযোগ ও সহায়তা – ChatLustora'
-            : 'Contact & Support – ChatLustora'
+            ? 'যোগাযোগ ও সহায়তা - বাংলা, দেশি ও আন্তর্জাতিক সাপোর্ট – ChatLustora'
+            : 'Contact ChatLustora – Bangla, Desi & International Support'
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরা সহায়তা টিম। সাধারণ জিজ্ঞাসা, নিরাপত্তা রিপোর্ট ও কমিউনিটি সহায়তার জন্য বার্তা পাঠান।'
-            : 'Get in touch with the ChatLustora support and trust team. Send inquiries, report safety concerns, or request platform support.'
+            ? 'বাংলা, দেশি ও আন্তর্জাতিক সাপোর্টের জন্য চ্যাটলাস্টোরার সাথে যোগাযোগ করুন। চ্যাট, নিরাপত্তা বা কমিউনিটি জিজ্ঞাসায় সহায়তার জন্য আমাদের গ্লোবাল টিমের সাথে যোগাযোগ করুন।'
+            : 'Get in touch with ChatLustora for Bangla, Desi, and international support. Reach out to our global team for help with chat, safety, or community inquiries.'
         }
         canonicalPath="/contact"
       />

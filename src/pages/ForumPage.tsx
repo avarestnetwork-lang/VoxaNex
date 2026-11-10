@@ -206,8 +206,16 @@ export const ForumPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-12 px-4 sm:px-6 lg:px-8 transition-colors">
       <SEOHead
-        title={language === 'bn' ? 'কমিউনিটি ফোরাম ও আলোচনা – ChatLustora' : 'Community Forum & Discussions – ChatLustora'}
-        description="Join community discussions, share experiences, and explore topic threads in the ChatLustora adult community forum."
+        title={
+          language === 'bn'
+            ? 'বাংলা, দেশি ও আন্তর্জাতিক কমিউনিটি ফোরাম – ChatLustora'
+            : 'Bangla, Desi & International Community Forum – ChatLustora'
+        }
+        description={
+          language === 'bn'
+            ? 'চ্যাটলাস্টোরা গ্লোবাল ডিসকাশনে যোগ দিন। আমাদের মডারেটেড কমিউনিটি ফোরামে বাংলা, দেশি এবং আন্তর্জাতিক ব্যবহারকারীদের সাথে চ্যাট করুন।'
+            : 'Join global discussions on ChatLustora. Connect with Bangla, Desi, and international users in our moderated community forum. Share tips, stories, and experiences.'
+        }
         canonicalPath="/forum"
       />
       <div className="max-w-6xl mx-auto space-y-8">

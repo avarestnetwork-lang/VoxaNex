@@ -19,13 +19,13 @@ export const IndianChatLandingPage: React.FC = () => {
       <SEOHead
         title={
           language === 'bn'
-            ? 'ভারতীয় ও হিন্দি প্রাপ্তবয়স্ক চ্যাট রুম – ChatLustora'
-            : 'Desi, Hindi & Indian Adult Chat Rooms – ChatLustora'
+            ? 'ভারতীয় ও দেশি চ্যাট - হিন্দি, তামিল ও আন্তর্জাতিক প্রাপ্তবয়স্ক রুম – ChatLustora'
+            : 'Indian & Desi Chat – Hindi, Tamil & International Adult Rooms | ChatLustora'
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরায় ভারতীয়, হিন্দি এবং পশ্চিমবঙ্গের বাংলা চ্যাট রুমে যুক্ত হোন। ১৮+ প্রাপ্তবয়স্কদের জন্য নিরাপদ দেশি চ্যাট ও কথোপকথন।'
-            : 'Join Indian, Hindi, and West Bengal adult chat rooms on ChatLustora. Connect with Desi singles and adults in a respectful 18+ community.'
+            ? 'চ্যাটলাস্টোরায় ভারতীয়, হিন্দি এবং দেশি প্রাপ্তবয়স্ক চ্যাট রুমে যুক্ত হোন। ডেটিং, ফ্লার্টিং এবং আন্তর্জাতিক আড্ডার জন্য ভারতীয় সিঙ্গলদের সাথে যুক্ত হোন।'
+            : 'Explore Indian, Hindi, and Desi adult chat rooms on ChatLustora. Connect with Indian singles and South Asian diaspora for dating, flirting, and international chat.'
         }
         canonicalPath="/chat/indian"
       />

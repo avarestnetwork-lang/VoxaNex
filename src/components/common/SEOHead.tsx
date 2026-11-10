@@ -10,9 +10,9 @@ export interface SEOHeadProps {
   noindex?: boolean;
 }
 
-const DEFAULT_TITLE = 'ChatLustora – Bangla & Desi Adult Chat, Dating and Private Messaging';
+const DEFAULT_TITLE = 'ChatLustora – Bangla, Desi & International Chat Rooms';
 const DEFAULT_DESC =
-  'ChatLustora is an online chat community where you can meet new people, join chat rooms, and discover conversations with people around the world.';
+  'Join ChatLustora for Bangla, Bengali, Desi and international chat rooms. Meet new people, make friends and enjoy global conversations in a welcoming 18+ online community.';
 const BASE_DOMAIN = 'https://chatlustora.com';
 const DEFAULT_OG_IMAGE = 'https://chatlustora.com/logo.png';
 

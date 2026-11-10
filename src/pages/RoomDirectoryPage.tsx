@@ -127,20 +127,20 @@ export const RoomDirectoryPage: React.FC = () => {
       <SEOHead
         title={
           language === 'bn'
-            ? 'বাংলা ও দেশি চ্যাট রুম ডিরেক্টরি – ChatLustora'
-            : 'Bengali & Desi Chat Rooms – Adult Community Directory | ChatLustora'
+            ? 'বাংলা, দেশি এবং আন্তর্জাতিক চ্যাট রুম | ChatLustora'
+            : 'Bangla, Desi & International Chat Rooms'
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরার উন্মুক্ত চ্যাট রুম ডিরেক্টরি। বাংলা চ্যাট রুম, সেক্স চ্যাট, প্রাপ্তবয়স্ক আড্ডা, হিন্দি চ্যাট ও বাংলাদেশি আঞ্চলিক কমিউনিটি।'
-            : 'Explore public adult chat rooms on ChatLustora. Join Bengali chat room, Bangla chat community, Desi chat rooms, Hindi chat, and online chat in Bangladesh.'
+            ? 'চ্যাটলাস্টোরায় বাংলা, বাঙালি, দেশি এবং আন্তর্জাতিক চ্যাট রুমগুলি অন্বেষণ করুন। বিশ্বজুড়ে মানুষের সাথে সংযোগ করুন, বন্ধু তৈরি করুন এবং বিভিন্ন সংস্কৃতির সাথে আলাপচারিতায় যোগ দিন।'
+            : 'Explore Bangla, Bengali, Desi and international chat rooms on ChatLustora. Connect with people worldwide, make friends and join conversations across cultures.'
         }
         canonicalPath="/rooms"
         jsonLd={{
           '@context': 'https://schema.org',
           '@type': 'ItemList',
           name: 'ChatLustora Public Chat Rooms',
-          description: 'Catalog of 18+ adult chatrooms and language lounges.',
+          description: 'Explore Bangla, Bengali, Desi and international chat rooms on ChatLustora. Connect with people worldwide, make friends and join conversations across cultures.',
           numberOfItems: rooms.length,
         }}
       />
@@ -154,7 +154,7 @@ export const RoomDirectoryPage: React.FC = () => {
             <span>{language === 'bn' ? 'উন্মুক্ত কমিউনিটি ও আন্তর্জাতিক চ্যানেল' : 'Public & International Lounges'}</span>
           </div>
           <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            Bengali & Desi Chat Rooms Directory
+            Bangla, Desi & International Chat Rooms
           </h1>
           <p className="text-base text-slate-600 dark:text-slate-400 max-w-2xl leading-relaxed">
             {t.rooms.subtitle}

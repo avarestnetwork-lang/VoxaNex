@@ -11,8 +11,16 @@ export const HelpPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-12 px-4 sm:px-6 lg:px-8 transition-colors">
       <SEOHead
-        title={language === 'bn' ? 'সহায়তা ও নির্দেশিকা – ChatLustora' : 'Help Center & Community Guides – ChatLustora'}
-        description="Comprehensive guides on navigating ChatLustora adult chatrooms, initiating private 1-on-1 chats, dating etiquette, and safety tools."
+        title={
+          language === 'bn'
+            ? 'সহায়তা কেন্দ্র - বাংলা, দেশি ও আন্তর্জাতিক চ্যাট গাইড – ChatLustora'
+            : 'Help Center – Bangla, Desi & International Chat Guides | ChatLustora'
+        }
+        description={
+          language === 'bn'
+            ? 'বাংলা, দেশি ও আন্তর্জাতিক চ্যাট সম্পর্কে আমাদের বিস্তারিত সহায়তা গাইড দেখুন। চ্যাটরুম নেভিগেশন, নিরাপত্তা সরঞ্জাম এবং ডেটিং নিয়মাবলী সম্পর্কে জানুন।'
+            : 'Explore our comprehensive help guides for Bangla, Desi, and international adult chat. Learn about chatroom navigation, safety tools, and dating etiquette on ChatLustora.'
+        }
         canonicalPath="/help"
       />
       <div className="max-w-4xl mx-auto space-y-10">

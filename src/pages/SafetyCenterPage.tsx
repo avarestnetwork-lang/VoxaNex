@@ -59,13 +59,13 @@ export const SafetyCenterPage: React.FC = () => {
       <SEOHead
         title={
           language === 'bn'
-            ? 'প্রাপ্তবয়স্ক সুরক্ষা, ১৮+ নীতিমালা ও অভিযোগ কেন্দ্র – ChatLustora'
-            : 'Adult Community Safety Center, Age Policy & Incident Reporting – ChatLustora'
+            ? 'সুরক্ষা কেন্দ্র - বাংলা, দেশি ও আন্তর্জাতিক প্রাপ্তবয়স্ক চ্যাট নীতিমালা – ChatLustora'
+            : 'Safety Center – Bangla, Desi & International Adult Chat Policy | ChatLustora'
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরা ১৮+ প্রাপ্তবয়স্ক কমিউনিটির নিরাপত্তা কেন্দ্র। আচরণবিধি, জরুরি হেল্পলাইন, ব্লক নির্দেশিকা এবং সিএসএএম ও হয়রানির বিরুদ্ধে জিরো টলারেন্স নীতি।'
-            : 'ChatLustora 18+ adult community safety center. Community guidelines, anonymous report filing, emergency contacts, blocking tools, and zero tolerance policies.'
+            ? 'চ্যাটলাস্টোরায় নিরাপদে থাকুন। বাংলা, দেশি ও আন্তর্জাতিক প্রাপ্তবয়স্ক চ্যাটের জন্য আমাদের সুরক্ষা নির্দেশিকা দেখুন। আমাদের গ্লোবাল কমিউনিটির জন্য রিপোর্টিং টুলস এবং জরুরি যোগাযোগ অ্যাক্সেস করুন।'
+            : 'Stay safe on ChatLustora. Review our safety guidelines for Bangla, Desi, and international adult chat. Access reporting tools and emergency contacts for our global community.'
         }
         canonicalPath="/safety"
       />
