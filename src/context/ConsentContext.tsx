@@ -20,28 +20,30 @@ export const ConsentProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     try {
       const newStatus = localStorage.getItem('cookie_consent_status');
-      const legacyStatus = localStorage.getItem('cookie_consent');
       
-      let status: ConsentStatus = 'unset';
-      const isNewValid = (newStatus === 'accepted' || newStatus === 'rejected');
-
-      if (isNewValid) {
-        status = newStatus as ConsentStatus;
-      } else {
-        // New status is missing, empty or invalid. Inspect legacy.
-        if (legacyStatus === 'granted') {
-          status = 'accepted';
-          localStorage.setItem('cookie_consent_status', 'accepted');
-          localStorage.removeItem('cookie_consent');
-        } else if (legacyStatus === 'denied') {
-          status = 'rejected';
-          localStorage.setItem('cookie_consent_status', 'rejected');
-          localStorage.removeItem('cookie_consent');
-        }
+      // If valid new status exists, use it immediately and do not touch legacy key
+      if (newStatus === 'accepted' || newStatus === 'rejected') {
+        setConsentStatus(newStatus as ConsentStatus);
+        setIsBannerOpen(false);
+        return;
       }
 
-      setConsentStatus(status);
-      setIsBannerOpen(status === 'unset');
+      // New status missing/invalid, check legacy
+      const legacyStatus = localStorage.getItem('cookie_consent');
+      if (legacyStatus === 'granted' || legacyStatus === 'denied') {
+        const status = legacyStatus === 'granted' ? 'accepted' : 'rejected';
+        try {
+          localStorage.setItem('cookie_consent_status', status);
+          localStorage.removeItem('cookie_consent');
+        } catch (e) {
+          console.warn('Storage migration failed', e);
+        }
+        setConsentStatus(status);
+        setIsBannerOpen(false);
+      } else {
+        setConsentStatus('unset');
+        setIsBannerOpen(true);
+      }
     } catch (e) {
       console.warn('Storage access failed', e);
       setConsentStatus('unset');
