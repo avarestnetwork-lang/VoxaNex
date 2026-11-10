@@ -273,7 +273,7 @@ async function verifyGuestToken(
       avatar: p.av || p.avatar || '⚡',
       gender: p.gen || p.gender,
       languagePref: p.lng || p.languagePref || 'en',
-      is18Verified: Boolean(p.v18 || p.is18Verified),
+      is18Verified: Boolean(canonicalRow.is_18_verified),
       createdAt: p.iat,
       expiresAt: p.exp,
     };
@@ -2367,13 +2367,15 @@ async function authorizeConversationAccess(
         const issuedAt = Date.now();
         const expiresAt = issuedAt + 24 * 60 * 60 * 1000;
 
+        // Age-assurance fail-closed: client-supplied is18Verified is a client-side declaration only
+        // and must NOT forge a trusted is_18_verified database record or signed token claim.
         const payload = {
           sid: sessionId,
           nick: (nickname || 'Guest_User').slice(0, 24),
           av: avatar || '⚡',
           gen: gender || 'prefer_not_to_say',
           lng: languagePref || 'en',
-          v18: Boolean(is18Verified),
+          v18: false,
           iat: issuedAt,
           exp: expiresAt,
         };
@@ -2402,8 +2404,8 @@ async function authorizeConversationAccess(
           nickname: payload.nick,
           avatar: payload.av,
           language_pref: payload.lng,
-          is_18_verified: payload.v18,
-          verified_at: payload.v18 ? new Date(issuedAt).toISOString() : null,
+          is_18_verified: false,
+          verified_at: null,
           expires_at: new Date(expiresAt).toISOString(),
           is_revoked: false,
         };
@@ -2480,7 +2482,7 @@ async function authorizeConversationAccess(
           avatar: payload.av,
           gender: payload.gen,
           languagePref: payload.lng,
-          is18Verified: payload.v18,
+          is18Verified: false,
           createdAt: issuedAt,
           expiresAt: expiresAt,
         };

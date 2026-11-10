@@ -128,33 +128,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user, hasActiveSession]);
 
   const verify18 = () => {
-    setUser(prev => {
-      const updated = {
-        ...prev,
-        is18Verified: true,
-        verifiedAt: new Date().toISOString(),
-        verificationMethod: 'self_declaration' as const,
-      };
-      if (!prev.isGuest && isSupabaseActive) {
-        authService.updateProfile(prev.id, { is18Verified: true });
-      }
-      return updated;
-    });
+    setUser(prev => ({
+      ...prev,
+      is18Verified: true,
+      verifiedAt: new Date().toISOString(),
+      verificationMethod: 'self_declaration' as const,
+    }));
   };
 
   const revoke18 = () => {
-    setUser(prev => {
-      const updated = {
-        ...prev,
-        is18Verified: false,
-        verifiedAt: undefined,
-        verificationMethod: 'pending' as const,
-      };
-      if (!prev.isGuest && isSupabaseActive) {
-        authService.updateProfile(prev.id, { is18Verified: false });
-      }
-      return updated;
-    });
+    setUser(prev => ({
+      ...prev,
+      is18Verified: false,
+      verifiedAt: undefined,
+      verificationMethod: 'pending' as const,
+    }));
   };
 
   const setNickname = (nickname: string) => {

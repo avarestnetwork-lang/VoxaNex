@@ -294,7 +294,7 @@ export const authService = {
    */
   async updateProfile(userId: string, updates: Partial<UserProfile>): Promise<boolean> {
     const supabase = getSupabaseClient();
-    if (!supabase) return true;
+    if (!supabase) return false;
 
     try {
       // Resolve active session token for authoritative audit

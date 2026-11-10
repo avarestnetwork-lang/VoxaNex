@@ -218,7 +218,7 @@ async function runGuestSecretHardeningTests() {
       assert(body.session?.token.startsWith('vx_gst_'), '4.4 Token conforms to vx_gst_ namespace standard');
       assert(body.session?.nickname === 'PadmaGuest', '4.5 Returned nickname matches');
       assert(body.session?.avatar === '🌊', '4.6 Returned avatar matches');
-      assert(body.session?.is18Verified === true, '4.7 Returned is18Verified matches');
+      assert(body.session?.is18Verified === false, '4.7 Returned is18Verified fails closed (false) to prevent client forgery');
 
       validToken = body.session.token;
       validSessionId = body.session.id;
@@ -266,8 +266,9 @@ async function runGuestSecretHardeningTests() {
       assert(persistedRecord?.nickname === 'PadmaGuest', '6.3 Persisted nickname matches');
       assert(persistedRecord?.avatar === '🌊', '6.4 Persisted avatar matches');
       assert(persistedRecord?.language_pref === 'bn', '6.5 Persisted language_pref matches');
-      assert(persistedRecord?.is_18_verified === true, '6.6 Persisted is_18_verified matches');
-      assert(persistedRecord?.is_revoked === false, '6.7 Persisted is_revoked is false');
+      assert(persistedRecord?.is_18_verified === false, '6.6 Persisted is_18_verified fails closed (false) to prevent client forgery');
+      assert(persistedRecord?.verified_at === null, '6.7 Persisted verified_at is null');
+      assert(persistedRecord?.is_revoked === false, '6.8 Persisted is_revoked is false');
     }
 
     // =========================================================================
