@@ -742,7 +742,7 @@ export const PublicChatPage: React.FC = () => {
   );
 
   return (
-    <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 py-4 h-[calc(100vh-5.5rem)] min-h-[580px] flex flex-col">
+    <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 py-4 h-[calc(100vh-5.5rem)] min-h-[580px] flex flex-col" data-ad-page>
       <SEOHead
         title={`${activeRoom.name[language] || activeRoom.name.en} – ChatLustora`}
         description={`Real-time adult public group chat and live conversations in ${activeRoom.name[language] || activeRoom.name.en} on ChatLustora.`}
@@ -750,20 +750,13 @@ export const PublicChatPage: React.FC = () => {
         noindex={true}
       />
 
-      {/* Top Ad Slot */}
-      <div className="mb-2.5 shrink-0">
-        <AdPlacementBox slotId="public-chatroom-top" label="Top Ad Slot" />
-      </div>
+      <AdPlacementBox slotId="public-chatroom-top" />
 
-      {/* Outer Workspace with Left and Right Side Ads */}
-      <div className="flex-1 flex gap-3 overflow-hidden min-h-0">
-        {/* Left Ad Slot (Desktop / Large Screens only) */}
-        <div className="hidden lg:flex shrink-0">
-          <AdPlacementBox slotId="public-chatroom-left" label="Left Ad" isVertical={true} />
-        </div>
-
+      {/* Central Chatroom Workspace */}
+      <div className="flex-1 flex gap-3 overflow-hidden min-h-0" data-ad-workspace>
+        <AdPlacementBox slotId="public-chatroom-left" />
         {/* Center Chatroom & Maximized Panes Container */}
-        <div className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0">
+        <div className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0" data-chatroom-core>
         {/* Left: Brand/Room info & Switcher tabs */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-x-auto no-scrollbar">
           <button
@@ -1494,16 +1487,10 @@ export const PublicChatPage: React.FC = () => {
         </div>
       </div>
 
-        {/* Right Ad Slot (Desktop / Large Screens only) */}
-        <div className="hidden lg:flex shrink-0">
-          <AdPlacementBox slotId="public-chatroom-right" label="Right Ad" isVertical={true} />
-        </div>
+        <AdPlacementBox slotId="public-chatroom-right" />
       </div>
 
-      {/* Bottom Ad Slot */}
-      <div className="mt-2.5 shrink-0">
-        <AdPlacementBox slotId="public-chatroom-bottom" label="Bottom Ad Slot" />
-      </div>
+      <AdPlacementBox slotId="public-chatroom-bottom" />
 
       {/* Mobile Backdrop */}
       {showMobileSidebar && (
