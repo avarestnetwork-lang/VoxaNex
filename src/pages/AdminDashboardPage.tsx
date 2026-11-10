@@ -230,6 +230,15 @@ export const AdminDashboardPage: React.FC = () => {
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/admin/logout', { method: 'POST' });
+      navigate('/admin/login');
+    } catch {
+      navigate('/admin/login');
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Header */}
@@ -251,6 +260,11 @@ export const AdminDashboardPage: React.FC = () => {
           <Button variant="outline" size="sm" onClick={loadData} disabled={loading}>
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
             <span>Sync Live Data</span>
+          </Button>
+
+          <Button variant="outline" size="sm" onClick={handleLogout} className="text-rose-400 border-rose-900/50 hover:bg-rose-950/30">
+            <X className="w-3.5 h-3.5 mr-1.5" />
+            <span>End Session</span>
           </Button>
 
           <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 bg-emerald-950/20 px-3 py-1.5 rounded-lg border border-emerald-800/40">

@@ -21,7 +21,7 @@ export const AdminRouteGuard: React.FC<AdminRouteGuardProps> = ({ children }) =>
 
         if (res.ok) {
           const data = (await res.json()) as { success?: boolean; user?: { role?: string } };
-          if (data.success && (data.user?.role === 'admin' || data.user?.role === 'moderator')) {
+          if (data.success && data.user?.role === 'admin') {
             setAuthorized(true);
           } else {
             setAuthorized(false);

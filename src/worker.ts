@@ -1,6 +1,7 @@
 import { databaseService } from './services/databaseService';
 import { getSupabaseClientFromEnv } from './lib/supabaseClient';
 import { ROOMS_CONFIG } from './config/voxanexConfig';
+import bcrypt from 'bcryptjs';
 
 /**
  * ChatLustora Cloudflare Workers Edge Entrypoint
@@ -321,6 +322,78 @@ async function verifyGuestToken(
   }
 }
 
+async function signAdminToken(payload: any, secret: string): Promise<string> {
+  if (!secret || typeof secret !== 'string' || secret.trim().length < 32) {
+    throw new Error('JWT_SECRET must be at least 32 characters.');
+  }
+  const base64Payload = toBase64Url(JSON.stringify(payload));
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sigBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(base64Payload));
+  const sigBytes = Array.from(new Uint8Array(sigBuffer));
+  const sigHex = sigBytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `vx_adm_${base64Payload}.${sigHex}`;
+}
+
+async function verifyAdminToken(
+  token: string | undefined,
+  secret: string | undefined
+): Promise<{ valid: boolean; payload?: any; reason?: string }> {
+  if (!secret || secret.trim().length === 0) {
+    return { valid: false, reason: 'Server configuration error: JWT_SECRET missing.' };
+  }
+  if (!token || !token.startsWith('vx_adm_')) {
+    return { valid: false, reason: 'Missing or invalid token prefix.' };
+  }
+
+  const raw = token.slice('vx_adm_'.length);
+  const dotIdx = raw.indexOf('.');
+  if (dotIdx === -1) return { valid: false, reason: 'Invalid token structure.' };
+
+  const base64Payload = raw.slice(0, dotIdx);
+  const signatureHex = raw.slice(dotIdx + 1);
+
+  if (!/^[0-9a-f]{64}$/i.test(signatureHex)) {
+    return { valid: false, reason: 'Malformed signature.' };
+  }
+
+  const sigBytes = new Uint8Array(signatureHex.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
+  const encoder = new TextEncoder();
+
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify']
+    );
+
+    const valid = await crypto.subtle.verify('HMAC', key, sigBytes, encoder.encode(base64Payload));
+    if (!valid) return { valid: false, reason: 'Invalid signature.' };
+
+    const payload = JSON.parse(fromBase64Url(base64Payload));
+    
+    if (!payload.exp || Date.now() >= payload.exp) {
+      return { valid: false, reason: 'Session expired.' };
+    }
+    
+    if (payload.role !== 'admin') {
+      return { valid: false, reason: 'Incorrect role.' };
+    }
+
+    return { valid: true, payload };
+  } catch (err) {
+    return { valid: false, reason: 'Token verification failed.' };
+  }
+}
+
 async function authenticateRequest(
   request: Request,
   url: URL,
@@ -466,6 +539,7 @@ const roomPresence = new Map<string, Map<string, PresenceMember>>();
 const roomTyping = new Map<string, Map<string, { nickname: string; expiresAt: number }>>();
 const guestSessions = new Map<string, GuestSession>();
 const activeAccountDeletions = new Set<string>();
+const adminLoginAttempts = new Map<string, { attempts: number; lastAttempt: number }>();
 
 // Active SSE client streams per room & conversation (using ReadableStreamDefaultController for synchronous non-promise enqueuing)
 const roomStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
@@ -616,6 +690,105 @@ export default {
           }, 403);
         }
       }
+    }
+
+    // -------------------------------------------------------------------------
+    // ADMIN AUTHENTICATION
+    // -------------------------------------------------------------------------
+    
+    // POST /api/admin/login
+    if (url.pathname === '/api/admin/login' && request.method === 'POST') {
+      try {
+        const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+        const now = Date.now();
+        const record = adminLoginAttempts.get(ip);
+        
+        if (record && record.attempts >= 5 && now - record.lastAttempt < 15 * 60 * 1000) {
+          return jsonResponse({ success: false, error: 'Too many login attempts. Please try again in 15 minutes.' }, 429);
+        }
+
+        const body: any = await request.json().catch(() => ({}));
+        const { username, password } = body;
+
+        if (typeof username !== 'string' || typeof password !== 'string') {
+          return jsonResponse({ success: false, error: 'Invalid input types.' }, 400);
+        }
+
+        if (username.length > 100 || password.length > 256) {
+           return jsonResponse({ success: false, error: 'Credential length limit exceeded.' }, 400);
+        }
+
+        const configUser = env.ADMIN_USER;
+        const configHash = env.ADMIN_PASS_HASH;
+        const jwtSecret = env.JWT_SECRET;
+
+        if (!configUser || !configHash || !jwtSecret) {
+          console.error('[Admin] Missing server-side credentials configuration.');
+          return jsonResponse({ success: false, error: 'Authentication service unavailable.' }, 503);
+        }
+
+        const isUserValid = username === configUser;
+        const isPassValid = isUserValid && bcrypt.compareSync(password, configHash);
+
+        if (!isUserValid || !isPassValid) {
+          adminLoginAttempts.set(ip, {
+            attempts: (record?.attempts || 0) + 1,
+            lastAttempt: now
+          });
+          return jsonResponse({ success: false, error: 'Invalid administrator credentials.' }, 401);
+        }
+
+        // Success: reset attempts
+        adminLoginAttempts.delete(ip);
+
+        const sessionDuration = 8 * 60 * 60 * 1000; // 8 hours
+        const payload = {
+          sub: username,
+          role: 'admin',
+          iat: now,
+          exp: now + sessionDuration
+        };
+
+        const token = await signAdminToken(payload, jwtSecret);
+        
+        // Secure cookie: HttpOnly, Secure (in production), SameSite=Strict, Path=/
+        const cookie = `admin_token=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${8 * 3600}`;
+        
+        return jsonResponse({ success: true }, 200, { 'Set-Cookie': cookie });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: 'Internal server error during authentication.' }, 500);
+      }
+    }
+
+    // GET /api/admin/me
+    if (url.pathname === '/api/admin/me' && request.method === 'GET') {
+      const cookieHeader = request.headers.get('Cookie') || '';
+      const cookieObj: Record<string, string> = {};
+      cookieHeader.split(';').forEach(c => {
+        const [k, v] = c.trim().split('=');
+        if (k && v) cookieObj[k] = v;
+      });
+      const token = cookieObj['admin_token'];
+
+      const verify = await verifyAdminToken(token, env.JWT_SECRET);
+      
+      if (!verify.valid) {
+        return jsonResponse({ success: false, error: verify.reason || 'Unauthorized' }, 401);
+      }
+
+      return jsonResponse({
+        success: true,
+        user: {
+          username: verify.payload.sub,
+          role: 'admin'
+        }
+      });
+    }
+
+    // POST /api/admin/logout
+    if (url.pathname === '/api/admin/logout' && request.method === 'POST') {
+      const cookie = `admin_token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+      return jsonResponse({ success: true }, 200, { 'Set-Cookie': cookie });
     }
 
     // Optional proxy to external backend if configured
