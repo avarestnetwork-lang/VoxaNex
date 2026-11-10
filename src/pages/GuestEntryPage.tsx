@@ -19,8 +19,30 @@ export const GuestEntryPage: React.FC = () => {
   const targetRoom: Room | undefined = ROOMS_CONFIG.find((r) => r.slug === targetRoomSlug);
 
   // Mode tabs: 'guest' | 'login' | 'register'
-  const initialTab = (params.mode as any) || (currentRoute === '/user/register' ? 'register' : currentRoute === '/user/login' ? 'login' : 'guest');
-  const [activeTab, setActiveTab] = useState<'guest' | 'login' | 'register'>(initialTab);
+  const getTabFromRoute = (route: string): 'guest' | 'login' | 'register' => {
+    if (route === '/user/register') return 'register';
+    if (route === '/user/login') return 'login';
+    if (route === '/user/guest-entry' || route === '/guest-entry' || route === '/age-gate') return 'guest';
+    return 'guest';
+  };
+
+  const [activeTab, setActiveTab] = useState<'guest' | 'login' | 'register'>(() => getTabFromRoute(currentRoute));
+
+  // Sync activeTab when currentRoute changes (e.g. browser back/forward or direct navigation)
+  React.useEffect(() => {
+    setActiveTab(getTabFromRoute(currentRoute));
+  }, [currentRoute]);
+
+  const handleTabChange = (tab: 'guest' | 'login' | 'register') => {
+    setActiveTab(tab);
+    if (tab === 'register') {
+      navigate('/user/register');
+    } else if (tab === 'login') {
+      navigate('/user/login');
+    } else {
+      navigate('/user/guest-entry');
+    }
+  };
 
   // Guest form state
   const [nickname, setNicknameState] = useState(user.nickname);
@@ -254,8 +276,15 @@ export const GuestEntryPage: React.FC = () => {
           noindex={true}
         />
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-xl bg-rose-950/60 border border-rose-800/40 flex items-center justify-center text-rose-400 mx-auto">
-            <User className="w-6 h-6" />
+          <div className="w-14 h-14 mx-auto flex items-center justify-center select-none">
+            <img
+              src="/logo.png"
+              alt="ChatLustora Logo"
+              className="w-12 h-12 object-contain drop-shadow-[0_2px_12px_rgba(236,72,153,0.4)] hover:scale-105 transition-transform"
+              width={48}
+              height={48}
+              loading="eager"
+            />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
             {language === 'bn' ? 'চ্যাটলাস্টোরায় স্বাগতম' : 'Welcome to ChatLustora'}
@@ -271,7 +300,7 @@ export const GuestEntryPage: React.FC = () => {
         <div className="flex p-1 bg-[#101728] rounded-xl border border-slate-800">
           <button
             type="button"
-            onClick={() => setActiveTab('guest')}
+            onClick={() => handleTabChange('guest')}
             className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
               activeTab === 'guest'
                 ? 'bg-violet-600 text-white shadow-sm'
@@ -282,7 +311,7 @@ export const GuestEntryPage: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab('login')}
+            onClick={() => handleTabChange('login')}
             className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
               activeTab === 'login'
                 ? 'bg-violet-600 text-white shadow-sm'
@@ -293,7 +322,7 @@ export const GuestEntryPage: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab('register')}
+            onClick={() => handleTabChange('register')}
             className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
               activeTab === 'register'
                 ? 'bg-violet-600 text-white shadow-sm'

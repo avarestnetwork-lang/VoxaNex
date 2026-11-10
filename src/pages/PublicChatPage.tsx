@@ -20,6 +20,7 @@ import { safetyService } from '../services/safetyService';
 import { Button } from '../components/ui/Button';
 import { SEOHead } from '../components/common/SEOHead';
 import { PrivateChatPane } from '../components/chat/PrivateChatPane';
+import { AdPlacementBox } from '../components/ads/AdPlacementBox';
 import {
   messagingService,
   RealtimePresenceMember,
@@ -748,8 +749,21 @@ export const PublicChatPage: React.FC = () => {
         canonicalPath="/chat"
         noindex={true}
       />
-      {/* Top Navigation & Channel Header Bar */}
-      <div className="p-3 rounded-t-2xl border border-slate-800 bg-[#0c1222] flex items-center justify-between gap-3 shrink-0 shadow-lg">
+
+      {/* Top Ad Slot */}
+      <div className="mb-2.5 shrink-0">
+        <AdPlacementBox slotId="public-chatroom-top" label="Top Ad Slot" />
+      </div>
+
+      {/* Outer Workspace with Left and Right Side Ads */}
+      <div className="flex-1 flex gap-3 overflow-hidden min-h-0">
+        {/* Left Ad Slot (Desktop / Large Screens only) */}
+        <div className="hidden lg:flex shrink-0">
+          <AdPlacementBox slotId="public-chatroom-left" label="Left Ad" isVertical={true} />
+        </div>
+
+        {/* Center Chatroom & Maximized Panes Container */}
+        <div className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0">
         {/* Left: Brand/Room info & Switcher tabs */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-x-auto no-scrollbar">
           <button
@@ -1478,15 +1492,26 @@ export const PublicChatPage: React.FC = () => {
             </div>
           </div>
         </div>
-
-        {/* Mobile Backdrop */}
-        {showMobileSidebar && (
-          <div
-            onClick={() => setShowMobileSidebar(false)}
-            className="fixed inset-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden"
-          />
-        )}
       </div>
+
+        {/* Right Ad Slot (Desktop / Large Screens only) */}
+        <div className="hidden lg:flex shrink-0">
+          <AdPlacementBox slotId="public-chatroom-right" label="Right Ad" isVertical={true} />
+        </div>
+      </div>
+
+      {/* Bottom Ad Slot */}
+      <div className="mt-2.5 shrink-0">
+        <AdPlacementBox slotId="public-chatroom-bottom" label="Bottom Ad Slot" />
+      </div>
+
+      {/* Mobile Backdrop */}
+      {showMobileSidebar && (
+        <div
+          onClick={() => setShowMobileSidebar(false)}
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden"
+        />
+      )}
 
       {/* Contextual User Action Menu */}
       {userActionMenu && (

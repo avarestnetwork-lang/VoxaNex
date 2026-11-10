@@ -1953,6 +1953,9 @@ async function startServer() {
   app.get('/sitemap.xml', (req, res) => {
     res.type('application/xml').sendFile(path.resolve(__dirname, 'public', 'sitemap.xml'));
   });
+  app.get('/ads.txt', (req, res) => {
+    res.type('text/plain').sendFile(path.resolve(__dirname, 'public', 'ads.txt'));
+  });
 
   // ---------------------------------------------------------------------------
   // VITE DEV MIDDLEWARE
