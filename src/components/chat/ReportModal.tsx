@@ -227,8 +227,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               </div>
               <p>
                 {language === 'bn'
-                  ? 'ভক্সানেক্স অভিযোগসমূহ মডারেটরদের সক্রিয় ডিউটি শিডিউল অনুযায়ী মানবীয় পর্যালোচনার মাধ্যমে সমাধান করে। মিথ্যা বা আক্রোশমূলক অভিযোগ দায়ের প্ল্যাটফর্মের নীতিমালা লঙ্ঘন।'
-                  : 'VoxaNex investigates reports with human moderators during active operational hours. For urgent physical threats in Bangladesh, contact 999 or CID Cyber Police (+880 1769691522).'}
+                  ? 'চ্যাটলুস্টোরা অভিযোগসমূহ মডারেটরদের সক্রিয় ডিউটি শিডিউল অনুযায়ী মানবীয় পর্যালোচনার মাধ্যমে সমাধান করে। মিথ্যা বা আক্রোশমূলক অভিযোগ দায়ের প্ল্যাটফর্মের নীতিমালা লঙ্ঘন।'
+                  : 'ChatLustora investigates reports with human moderators during active operational hours. For urgent physical threats in Bangladesh, contact 999 or CID Cyber Police (+880 1769691522).'}
               </p>
             </div>
 

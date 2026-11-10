@@ -129,7 +129,7 @@ const __dirname = path.dirname(__filename);
 
 /**
  * Robustly authenticate a request, supporting both registered members (Supabase JWT)
- * and guests (VoxaNex cryptographic tokens).
+ * and guests (ChatLustora cryptographic tokens).
  */
 async function computeTokenHash(token: string): Promise<string> {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -311,7 +311,7 @@ export function createExpressApp(dbEnvOverride?: {
   app.get('/api/health', (req, res) => {
     res.json({
       status: 'healthy',
-      app: 'VoxaNex',
+      app: 'ChatLustora',
       phase: 'Phase 3 Real-Time Public & Private Chat',
       timestamp: new Date().toISOString(),
       supabaseConfigured: Boolean(
@@ -1292,7 +1292,7 @@ export function createExpressApp(dbEnvOverride?: {
     if (!username || username.length < 3) {
       return res.status(400).json({ available: false, error: 'Username must be at least 3 characters.' });
     }
-    const reserved = ['admin', 'moderator', 'system', 'root', 'voxanex', 'official', 'support', 'help'];
+    const reserved = ['admin', 'moderator', 'system', 'root', 'chatlustora', 'official', 'support', 'help'];
     if (reserved.includes(username)) {
       return res.json({ available: false, error: 'Username is reserved by platform.' });
     }

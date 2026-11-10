@@ -166,14 +166,14 @@ export const translations = {
     },
     safety: {
       title: 'Safety, Consent & Trust Center',
-      subtitle: 'VoxaNex is committed to providing a secure, respectful environment with transparent moderation and strict privacy protection.',
+      subtitle: 'ChatLustora is committed to providing a secure, respectful environment with transparent moderation and strict privacy protection.',
       reportHeading: 'Submit an Urgent Incident Report',
       emergencyTitle: 'Emergency Helplines & Support (Bangladesh & Global)',
       guidelinesTitle: 'Core Community Conduct Standard',
       guidelinesDesc: 'We prohibit hate speech, cyber-bullying, harassment, non-consensual sexual content, and sharing another person’s private data (doxxing).',
     },
     forum: {
-      title: 'VoxaNex Community Forum',
+      title: 'ChatLustora Community Forum',
       subtitle: 'Discuss tech, culture, Banglish language nuances, regional meetups, and platform suggestions.',
       newTopicBtn: 'New Discussion',
       searchPlaceholder: 'Search discussions...',

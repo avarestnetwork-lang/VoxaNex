@@ -364,7 +364,7 @@ export const BlogPage: React.FC = () => {
           </div>
 
           <div className="pt-6 border-t border-slate-800 flex items-center justify-between text-xs text-slate-500">
-            <span>VoxaNex Verified Community Safety Guide</span>
+            <span>ChatLustora Verified Community Safety Guide</span>
             <Button size="sm" variant="secondary" onClick={() => setActiveGuide(null)}>
               Back to Guide Index
             </Button>

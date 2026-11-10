@@ -707,8 +707,8 @@ export const LandingPage: React.FC = () => {
               <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">{t.landing.editorialTitle1}</h3>
               <p>
                 {language === 'bn' 
-                  ? 'ভক্সানেক্স একটি ফ্রি এডাল্ট চ্যাট কমিউনিটি যা একটি সাধারণ ধারণার উপর নির্মিত: আপনি পেজ খোলার ৩০ সেকেন্ডের মধ্যে কারো সাথে কথা বলতে পারবেন। এখানে কোনো রেজিস্ট্রেশন ওয়াল বা ডাউনলোড নেই।'
-                  : 'VoxaNex is a free adult chat community built around one idea: you should be able to open a page and be talking to somebody thirty seconds later. There is no registration wall, no email confirmation and no download. Enter a nickname and the room is there.'}
+                  ? 'চ্যাটলুস্টোরা একটি ফ্রি এডাল্ট চ্যাট কমিউনিটি যা একটি সাধারণ ধারণার উপর নির্মিত: আপনি পেজ খোলার ৩০ সেকেন্ডের মধ্যে কারো সাথে কথা বলতে পারবেন। এখানে কোনো রেজিস্ট্রেশন ওয়াল বা ডাউনলোড নেই।'
+                  : 'ChatLustora is a free adult chat community built around one idea: you should be able to open a page and be talking to somebody thirty seconds later. There is no registration wall, no email confirmation and no download. Enter a nickname and the room is there.'}
               </p>
               <p>
                 {language === 'bn' ? 'রুমগুলোতে রয়েছে বৈচিত্র্য।' : 'The rooms cover a wide range. The '}

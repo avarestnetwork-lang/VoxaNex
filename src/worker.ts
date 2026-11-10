@@ -873,7 +873,7 @@ export default {
     if (url.pathname === '/api/health') {
       return jsonResponse({
         status: 'healthy',
-        app: 'VoxaNex',
+        app: 'ChatLustora',
         platform: 'Cloudflare Workers (Edge)',
         timestamp: new Date().toISOString(),
       });

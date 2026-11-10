@@ -117,7 +117,7 @@ export const PrivateMessagingPage: React.FC = () => {
               senderId: currentConv.partnerId,
               senderNickname: currentConv.partnerNickname,
               senderAvatar: currentConv.partnerAvatar,
-              content: 'Hi! Let’s keep in touch here on VoxaNex.',
+              content: 'Hi! Let’s keep in touch here on ChatLustora.',
               timestamp: new Date().toISOString(),
               isDirect: true,
             },

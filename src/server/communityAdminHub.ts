@@ -32,11 +32,11 @@ const forumRateLimits = new Map<string, { lastPostTime: number; count: number; w
 const INITIAL_FORUM_TOPICS: ForumTopic[] = [
   {
     id: 'top-1',
-    title: 'VoxaNex Launch Roadmap & Community Guidelines for Bangladesh',
+    title: 'ChatLustora Launch Roadmap & Community Guidelines for Bangladesh',
     category: 'general',
     categoryLabel: { en: 'Announcements', bn: 'ঘোষণা' },
     authorId: 'admin_sys',
-    author: 'VoxaNex_Admin',
+    author: 'ChatLustora_Admin',
     authorAvatar: '🛡️',
     authorRole: 'admin',
     repliesCount: 3,
@@ -46,7 +46,7 @@ const INITIAL_FORUM_TOPICS: ForumTopic[] = [
     pinned: true,
     isLocked: false,
     content:
-      'Welcome to VoxaNex! Our platform is dedicated to respectful, open conversations across Bangladesh and global communities. Please review our safety guidelines regarding camera etiquette, mutual respect, and zero tolerance for harassment.',
+      'Welcome to ChatLustora! Our platform is dedicated to respectful, open conversations across Bangladesh and global communities. Please review our safety guidelines regarding camera etiquette, mutual respect, and zero tolerance for harassment.',
   },
   {
     id: 'top-2',
@@ -129,7 +129,7 @@ const INITIAL_REPLIES: Record<string, ForumReply[]> = {
       id: 'rep-103',
       topicId: 'top-1',
       authorId: 'admin_sys',
-      authorNickname: 'VoxaNex_Admin',
+      authorNickname: 'ChatLustora_Admin',
       authorAvatar: '🛡️',
       authorRole: 'admin',
       content: 'Thank you everyone! Phase 7 community tools are now online.',
@@ -213,12 +213,12 @@ const INITIAL_BLOG_ARTICLES: BlogArticle[] = [
     tags: ['Banglish', 'Bengali Culture', 'Chat Etiquette', 'Linguistics'],
     readTime: '4 min read',
     publishedAt: '2026-03-20',
-    author: 'VoxaNex Editorial',
+    author: 'ChatLustora Editorial',
     authorRole: 'editor',
     status: 'published',
     content: {
-      en: `Banglish—the transliteration of the Bengali language into the Latin (English) alphabet—originated during the early days of mobile SMS when Bengali font support was limited on feature phones. Over the past two decades, it evolved from a technological workaround into a vibrant, expressive conversational dialect for millions of digital natives in Bangladesh and across the diaspora.\n\nOn VoxaNex, we celebrate Banglish alongside formal Bangla. When typing quickly on mobile devices, Banglish offers rapid expression. However, clarity and respect remain essential:\n\n1. Phonetic Consistency: Spellings like "kmn acho?", "valo achi", and "kothay jabe?" are widely recognized.\n2. Respectful Boundaries: Because Latin text lacks visual honorifics, always clarify tone when speaking to new partners.\n3. Zero Tolerance for Verbal Abuse: Abusive slurs in Banglish violate platform terms just as severely as English or Bengali insults.`,
-      bn: `বাংলিশ—অর্থাৎ ইংরেজি হরফে বাংলা লেখার প্রচলন শুরু হয়েছিল প্রথম দিকের মোবাইল এসএমএসের যুগে, যখন ফিচার ফোনে বাংলা ফন্টের সমর্থন ছিল না। গত দুই দশকে এটি প্রযুক্তিগত সীমাবদ্ধতার সমাধান থেকে শুরু করে তরুণ প্রজন্মের প্রাণবন্ত ভাষায় রূপান্তরিত হয়েছে।\n\nভক্সানেক্সে আমরা আনুষ্ঠানিক বাংলার পাশাপাশি বাংলিশকেও গুরুত্ব দিই। মোবাইলে দ্রুত টাইপ করার ক্ষেত্রে এটি অত্যন্ত সহায়ক:\n\n১. সাধারণ ফোনেটিক রীতি: "kmn acho?", "valo achi", "ki khobor?" ইত্যাদি সহজেই বোধগম্য।\n২. সম্মানজনক স্বর: অনলাইন লেখায় শারীরিক অভিব্যক্তি থাকে না, তাই অপরিচিতদের সাথে কথা বলার সময় সংযত থাকা বাঞ্ছনীয়।\n৩. গালিগালাজ সম্পূর্ণ নিষিদ্ধ: বাংলিশে লেখা যেকোনো অশ্লীল কটূক্তি বা উত্ত্যক্তকরণ প্ল্যাটফর্মের নীতিমালার সরাসরি লঙ্ঘন।`,
+      en: `Banglish—the transliteration of the Bengali language into the Latin (English) alphabet—originated during the early days of mobile SMS when Bengali font support was limited on feature phones. Over the past two decades, it evolved from a technological workaround into a vibrant, expressive conversational dialect for millions of digital natives in Bangladesh and across the diaspora.\n\nOn ChatLustora, we celebrate Banglish alongside formal Bangla. When typing quickly on mobile devices, Banglish offers rapid expression. However, clarity and respect remain essential:\n\n1. Phonetic Consistency: Spellings like "kmn acho?", "valo achi", and "kothay jabe?" are widely recognized.\n2. Respectful Boundaries: Because Latin text lacks visual honorifics, always clarify tone when speaking to new partners.\n3. Zero Tolerance for Verbal Abuse: Abusive slurs in Banglish violate platform terms just as severely as English or Bengali insults.`,
+      bn: `বাংলিশ—অর্থাৎ ইংরেজি হরফে বাংলা লেখার প্রচলন শুরু হয়েছিল প্রথম দিকের মোবাইল এসএমএসের যুগে, যখন ফিচার ফোনে বাংলা ফন্টের সমর্থন ছিল না। গত দুই দশকে এটি প্রযুক্তিগত সীমাবদ্ধতার সমাধান থেকে শুরু করে তরুণ প্রজন্মের প্রাণবন্ত ভাষায় রূপান্তরিত হয়েছে।\n\nচ্যাটলুস্টোরাে আমরা আনুষ্ঠানিক বাংলার পাশাপাশি বাংলিশকেও গুরুত্ব দিই। মোবাইলে দ্রুত টাইপ করার ক্ষেত্রে এটি অত্যন্ত সহায়ক:\n\n১. সাধারণ ফোনেটিক রীতি: "kmn acho?", "valo achi", "ki khobor?" ইত্যাদি সহজেই বোধগম্য।\n২. সম্মানজনক স্বর: অনলাইন লেখায় শারীরিক অভিব্যক্তি থাকে না, তাই অপরিচিতদের সাথে কথা বলার সময় সংযত থাকা বাঞ্ছনীয়।\n৩. গালিগালাজ সম্পূর্ণ নিষিদ্ধ: বাংলিশে লেখা যেকোনো অশ্লীল কটূক্তি বা উত্ত্যক্তকরণ প্ল্যাটফর্মের নীতিমালার সরাসরি লঙ্ঘন।`,
     },
     comments: [
       {
@@ -251,8 +251,8 @@ const INITIAL_BLOG_ARTICLES: BlogArticle[] = [
     authorRole: 'admin',
     status: 'published',
     content: {
-      en: `Online anonymity should bring freedom, not vulnerability. Over recent years, bad actors have targeted internet users through screenshot extortion, impersonation, and doxxing.\n\nHere are the critical security practices enforced on VoxaNex:\n\n- Never Share Phone Numbers Early: Meeting an interesting person in a random room does not require immediate WhatsApp contact. Continue chatting securely in the platform's direct messages.\n- Beware of Video Screenshot Traps: Never display identifiable government documents, school uniforms, or office badges on camera.\n- Immediate Reporting: If someone attempts to threaten you with a recorded video or private chat, do not pay money or give in to demands. Take evidence snapshots and immediately report via the Safety Center or call the CID Cyber Police Centre at +880 1769691522.`,
-      bn: `অনলাইন বেনামী আড্ডা আপনার স্বাধীনতা দেবে, দুর্বলতা নয়। সাম্প্রতিক বছরগুলোতে অনলাইন ব্যবহারকারীদের লক্ষ্য করে ব্ল্যাকমেইল ও ব্যক্তিগত তথ্য ফাঁসের মতো ঘটনা ঘটছে।\n\nভক্সানেক্সের গুরুত্বপূর্ণ নিরাপত্তা পরামর্শসমূহ:\n\n- শুরুতেই ফোন নম্বর দেবেন না: র‍্যান্ডম রুমে পরিচিত হলেই হোয়াটসঅ্যাপ বা ফেসবুক শেয়ার করার প্রয়োজন নেই। প্ল্যাটফর্মের সুরক্ষিত ডিরেক্ট মেসেজ ব্যবহার করুন।\n- ক্যামেরায় নিজের গোপনীয়তা রাখুন: অফিস আইডি, শিক্ষাপ্রতিষ্ঠানের ইউনিফর্ম বা বাড়ির ঠিকানা দৃশ্যমান রাখবেন না।\n- তাৎক্ষণিক অভিযোগ করুন: কেউ আপত্তিকর ছবি বা চ্যাট দিয়ে ব্ল্যাকমেইল করার চেষ্টা করলে কখনই টাকা দেবেন না। দ্রুত সেফটি সেন্টারে জানান অথবা পুলিশের সাইবার ইউনিটে যোগাযোগ করুন।`,
+      en: `Online anonymity should bring freedom, not vulnerability. Over recent years, bad actors have targeted internet users through screenshot extortion, impersonation, and doxxing.\n\nHere are the critical security practices enforced on ChatLustora:\n\n- Never Share Phone Numbers Early: Meeting an interesting person in a random room does not require immediate WhatsApp contact. Continue chatting securely in the platform's direct messages.\n- Beware of Video Screenshot Traps: Never display identifiable government documents, school uniforms, or office badges on camera.\n- Immediate Reporting: If someone attempts to threaten you with a recorded video or private chat, do not pay money or give in to demands. Take evidence snapshots and immediately report via the Safety Center or call the CID Cyber Police Centre at +880 1769691522.`,
+      bn: `অনলাইন বেনামী আড্ডা আপনার স্বাধীনতা দেবে, দুর্বলতা নয়। সাম্প্রতিক বছরগুলোতে অনলাইন ব্যবহারকারীদের লক্ষ্য করে ব্ল্যাকমেইল ও ব্যক্তিগত তথ্য ফাঁসের মতো ঘটনা ঘটছে।\n\nচ্যাটলুস্টোরাের গুরুত্বপূর্ণ নিরাপত্তা পরামর্শসমূহ:\n\n- শুরুতেই ফোন নম্বর দেবেন না: র‍্যান্ডম রুমে পরিচিত হলেই হোয়াটসঅ্যাপ বা ফেসবুক শেয়ার করার প্রয়োজন নেই। প্ল্যাটফর্মের সুরক্ষিত ডিরেক্ট মেসেজ ব্যবহার করুন।\n- ক্যামেরায় নিজের গোপনীয়তা রাখুন: অফিস আইডি, শিক্ষাপ্রতিষ্ঠানের ইউনিফর্ম বা বাড়ির ঠিকানা দৃশ্যমান রাখবেন না।\n- তাৎক্ষণিক অভিযোগ করুন: কেউ আপত্তিকর ছবি বা চ্যাট দিয়ে ব্ল্যাকমেইল করার চেষ্টা করলে কখনই টাকা দেবেন না। দ্রুত সেফটি সেন্টারে জানান অথবা পুলিশের সাইবার ইউনিটে যোগাযোগ করুন।`,
     },
     comments: [
       {
@@ -268,10 +268,10 @@ const INITIAL_BLOG_ARTICLES: BlogArticle[] = [
   },
   {
     id: 'art-3',
-    slug: 'voxanex-architecture-roadmap',
+    slug: 'chatlustora-architecture-roadmap',
     title: {
-      en: 'The VoxaNex Technical Architecture: Full Real-Time Stack',
-      bn: 'ভক্সানেক্স টেকনিক্যাল আর্কিটেকচার: রিয়েল-টাইম সিস্টেম ডিজাইন',
+      en: 'The ChatLustora Technical Architecture: Full Real-Time Stack',
+      bn: 'চ্যাটলুস্টোরা টেকনিক্যাল আর্কিটেকচার: রিয়েল-টাইম সিস্টেম ডিজাইন',
     },
     summary: {
       en: 'An architectural deep dive into our engineering choices: Express backend, WebRTC media relay, SSE real-time events, and moderation controls.',
@@ -285,8 +285,8 @@ const INITIAL_BLOG_ARTICLES: BlogArticle[] = [
     authorRole: 'admin',
     status: 'published',
     content: {
-      en: `VoxaNex is designed with zero-pill anti-slop visual discipline, server-authoritative matchmaking, client-safe SSE messaging, and STUN/TURN WebRTC relays.\n\nKey architectural pillars:\n1. Server-authoritative state: No client claims arbitrary matches or reads unauthorized channels.\n2. Granular moderation: Instant server-side mutes, suspensions, bans, and room shutdowns.\n3. Honest telemetry: Real active session counts with zero fabricated counters.`,
-      bn: `ভক্সানেক্স তৈরি হয়েছে আধুনিক ডার্ক ইন্টারফেস, সার্ভার-নিয়ন্ত্রিত ম্যাচমেকিং, এসএসই রিয়েল-টাইম মেসেজিং এবং সুরক্ষিত ওয়েবআরটিসি সংযোগের মাধ্যমে।\n\nপ্রধান নীতিসমূহ:\n১. শতভাগ সার্ভার নিয়ন্ত্রণ ও সুরক্ষা।\n২. ক্ষতিকর কনটেন্ট বা হয়রানি দমনে কঠোর মডারেশন।\n৩. সততাপূর্ণ পরিসংখ্যান ও নির্ভরযোগ্য সংযোগ।`,
+      en: `ChatLustora is designed with zero-pill anti-slop visual discipline, server-authoritative matchmaking, client-safe SSE messaging, and STUN/TURN WebRTC relays.\n\nKey architectural pillars:\n1. Server-authoritative state: No client claims arbitrary matches or reads unauthorized channels.\n2. Granular moderation: Instant server-side mutes, suspensions, bans, and room shutdowns.\n3. Honest telemetry: Real active session counts with zero fabricated counters.`,
+      bn: `চ্যাটলুস্টোরা তৈরি হয়েছে আধুনিক ডার্ক ইন্টারফেস, সার্ভার-নিয়ন্ত্রিত ম্যাচমেকিং, এসএসই রিয়েল-টাইম মেসেজিং এবং সুরক্ষিত ওয়েবআরটিসি সংযোগের মাধ্যমে।\n\nপ্রধান নীতিসমূহ:\n১. শতভাগ সার্ভার নিয়ন্ত্রণ ও সুরক্ষা।\n২. ক্ষতিকর কনটেন্ট বা হয়রানি দমনে কঠোর মডারেশন।\n৩. সততাপূর্ণ পরিসংখ্যান ও নির্ভরযোগ্য সংযোগ।`,
     },
     comments: [],
   },
@@ -319,8 +319,8 @@ export const COMMUNITY_GUIDES: CommunityGuide[] = [
           bn: 'সঠিক চ্যানেল নির্বাচন',
         },
         body: {
-          en: 'VoxaNex categorizes public lounges by language and topic (Bangla Adult 18+, Bangladesh Random, Banglish, Regional hubs, and International exchange). Join rooms matching your current conversational interests.',
-          bn: 'ভক্সানেক্সে বিভিন্ন ভাষার ও বিষয়ের রুম রয়েছে (যেমন বাংলা ১৮+, বাংলাদেশ আড্ডা, বাংলিশ, আঞ্চলিক হাব এবং আন্তর্জাতিক বিনিময়)। আপনার আগ্রহ অনুযায়ী রুমে যোগ দিন।',
+          en: 'ChatLustora categorizes public lounges by language and topic (Bangla Adult 18+, Bangladesh Random, Banglish, Regional hubs, and International exchange). Join rooms matching your current conversational interests.',
+          bn: 'চ্যাটলুস্টোরাে বিভিন্ন ভাষার ও বিষয়ের রুম রয়েছে (যেমন বাংলা ১৮+, বাংলাদেশ আড্ডা, বাংলিশ, আঞ্চলিক হাব এবং আন্তর্জাতিক বিনিময়)। আপনার আগ্রহ অনুযায়ী রুমে যোগ দিন।',
         },
         doList: {
           en: ['Verify the room topic and language before chatting', 'Greet others politely upon entering'],
@@ -399,8 +399,8 @@ export const COMMUNITY_GUIDES: CommunityGuide[] = [
           bn: 'গোপনীয়তার সীমা ও নিরাপত্তা নিরীক্ষা',
         },
         body: {
-          en: 'While VoxaNex does not sell user data or expose IP addresses in client frontend code, anonymity is not a license for criminal harassment, cyber extortion, child exploitation, or terrorism. Server incident logs are retained strictly for safety investigations.',
-          bn: 'ভক্সানেক্স কোনো বিজ্ঞাপনদাতার কাছে তথ্য বিক্রি করে না এবং ফ্রন্টএন্ডে কারো আইপি প্রকাশ করে না। তবে ব্ল্যাকমেইল, সাইবার চাঁদাবাজি বা গুরুতর অপরাধে নিরাপত্তা অডিট প্রযোজ্য হয়।',
+          en: 'While ChatLustora does not sell user data or expose IP addresses in client frontend code, anonymity is not a license for criminal harassment, cyber extortion, child exploitation, or terrorism. Server incident logs are retained strictly for safety investigations.',
+          bn: 'চ্যাটলুস্টোরা কোনো বিজ্ঞাপনদাতার কাছে তথ্য বিক্রি করে না এবং ফ্রন্টএন্ডে কারো আইপি প্রকাশ করে না। তবে ব্ল্যাকমেইল, সাইবার চাঁদাবাজি বা গুরুতর অপরাধে নিরাপত্তা অডিট প্রযোজ্য হয়।',
         },
       },
     ],
@@ -488,18 +488,18 @@ export const COMMUNITY_GUIDES: CommunityGuide[] = [
           bn: 'অফিসিয়াল টিম চেনার উপায়',
         },
         body: {
-          en: 'VoxaNex staff will NEVER ask for your password, verification codes, bKash/Nagad transfers, or external Telegram links. Real staff carry verified 🛡️ Admin badges.',
-          bn: 'ভক্সানেক্সের কোনো মডারেটর কখনো আপনার পাসওয়ার্ড, বিকাশ/নগদ পিন নম্বর বা টাকা চাইবে না। প্রকৃত অ্যাডমিনদের সাথে যাচাইকৃত 🛡️ ব্যাজ থাকে।',
+          en: 'ChatLustora staff will NEVER ask for your password, verification codes, bKash/Nagad transfers, or external Telegram links. Real staff carry verified 🛡️ Admin badges.',
+          bn: 'চ্যাটলুস্টোরাের কোনো মডারেটর কখনো আপনার পাসওয়ার্ড, বিকাশ/নগদ পিন নম্বর বা টাকা চাইবে না। প্রকৃত অ্যাডমিনদের সাথে যাচাইকৃত 🛡️ ব্যাজ থাকে।',
         },
       },
     ],
   },
   {
     id: 'guide-community-rules',
-    slug: 'voxanex-community-rules',
+    slug: 'chatlustora-community-rules',
     title: {
-      en: 'Official VoxaNex Community Code of Conduct',
-      bn: 'ভক্সানেক্স অফিশিয়াল আচরণবিধি ও কমিউনিটি নীতিমালা',
+      en: 'Official ChatLustora Community Code of Conduct',
+      bn: 'চ্যাটলুস্টোরা অফিশিয়াল আচরণবিধি ও কমিউনিটি নীতিমালা',
     },
     summary: {
       en: 'Comprehensive platform standards on respect, non-discrimination, lawful content, and appeal procedures.',
@@ -511,8 +511,8 @@ export const COMMUNITY_GUIDES: CommunityGuide[] = [
     sections: [
       {
         heading: {
-          en: 'The Golden Rule of VoxaNex',
-          bn: 'ভক্সানেক্সের মূলনীতি',
+          en: 'The Golden Rule of ChatLustora',
+          bn: 'চ্যাটলুস্টোরাের মূলনীতি',
         },
         body: {
           en: 'Treat every participant with dignity. Harassment based on gender, religion, regional dialect, ethnicity, or sexual orientation results in immediate suspension or permanent bans.',
@@ -725,7 +725,7 @@ const SEED_RESTRICTION: UserRestrictionRecord = {
   type: 'banned_permanent',
   scope: 'all',
   reason: 'Posting automated commercial gambling links and scraping public chat.',
-  imposedBy: 'VoxaNex_Admin',
+  imposedBy: 'ChatLustora_Admin',
   imposedAt: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
   active: true,
 };
@@ -746,7 +746,7 @@ moderationAppeals.set(SEED_APPEAL.id, SEED_APPEAL);
 moderationAuditLogs.push({
   id: 'aud_seed_01',
   actorId: 'admin_sys',
-  actorNickname: 'VoxaNex_Admin',
+  actorNickname: 'ChatLustora_Admin',
   actorRole: 'admin',
   action: 'impose_restriction',
   targetType: 'user',
@@ -793,7 +793,7 @@ const reportsList: SafetyReport[] = [
     timestamp: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
     status: 'resolved',
     actionTaken: 'banned_permanent',
-    reviewedBy: 'VoxaNex_Admin',
+    reviewedBy: 'ChatLustora_Admin',
     reviewedAt: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
     moderatorNotes: 'Confirmed commercial spam bot. Imposed permanent ban.',
   },
@@ -1532,7 +1532,7 @@ export function updateReportStatus(
   status: SafetyReport['status'],
   actionTaken?: SafetyReport['actionTaken'],
   moderatorNotes?: string,
-  reviewer = 'VoxaNex_Admin'
+  reviewer = 'ChatLustora_Admin'
 ) {
   const r = reportsList.find((rep) => rep.id === reportId);
   if (r) {
@@ -1651,7 +1651,7 @@ export function checkUserRestriction(userId: string): {
 /**
  * Lift a user restriction manually
  */
-export function liftUserRestriction(userId: string, reason: string, actor = 'VoxaNex_Admin'): boolean {
+export function liftUserRestriction(userId: string, reason: string, actor = 'ChatLustora_Admin'): boolean {
   const record = userRestrictions.get(userId);
   if (!record) return false;
 
@@ -1727,7 +1727,7 @@ export function reviewAppeal(
   appealId: string,
   status: 'accepted' | 'rejected',
   notes?: string,
-  reviewer = 'VoxaNex_Admin'
+  reviewer = 'ChatLustora_Admin'
 ) {
   const appeal = moderationAppeals.get(appealId);
   if (!appeal) return null;
@@ -1880,7 +1880,7 @@ export function initiateAgeProviderSession(params: {
     sessionId,
     provider,
     redirectUrl,
-    disclaimer: 'Third-party verification handles identity attributes without storing government IDs on VoxaNex servers.',
+    disclaimer: 'Third-party verification handles identity attributes without storing government IDs on ChatLustora servers.',
   };
 }
 
@@ -1931,7 +1931,7 @@ export function completeAgeProviderVerification(params: {
 /**
  * Revoke adult eligibility when violation or minority discovered
  */
-export function revokeAgeVerification(userId: string, reason: string, actor = 'VoxaNex_Admin'): boolean {
+export function revokeAgeVerification(userId: string, reason: string, actor = 'ChatLustora_Admin'): boolean {
   const record = ageAssuranceRecords.get(userId) || { userId, status: 'unverified', method: 'none' };
   record.status = 'revoked';
   record.notes = `Revoked by ${actor}: ${reason}`;
@@ -2125,7 +2125,7 @@ export function exportUserData(userId: string) {
     blockedUsers: blocks,
     connections,
     privacyDisclaimer:
-      'VoxaNex retains minimal data. Real-time media streams and P2P calls are ephemeral and zero-knowledge.',
+      'ChatLustora retains minimal data. Real-time media streams and P2P calls are ephemeral and zero-knowledge.',
   };
 }
 
@@ -2156,7 +2156,7 @@ export function purgeUserData(userId: string, actor = 'user'): { success: boolea
 
   return {
     success: true,
-    message: 'All associated profile data, tokens, and records have been purged from VoxaNex servers.',
+    message: 'All associated profile data, tokens, and records have been purged from ChatLustora servers.',
   };
 }
 

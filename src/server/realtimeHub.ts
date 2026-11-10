@@ -680,7 +680,7 @@ export async function fetchSafeLinkPreview(rawUrl: string): Promise<{
 
     const response = await fetch(parsed.href, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'VoxaNex-LinkPreview-Bot/1.0' },
+      headers: { 'User-Agent': 'ChatLustora-LinkPreview-Bot/1.0' },
     });
     clearTimeout(timeout);
 

@@ -1,5 +1,5 @@
 /**
- * Core type definitions for VoxaNex platform.
+ * Core type definitions for ChatLustora platform.
  * Phase 1: UI/UX, routing, client-side state, and Phase 2 backend preparation.
  */
 

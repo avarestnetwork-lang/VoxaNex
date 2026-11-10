@@ -272,7 +272,7 @@ export const PublicChatPage: React.FC = () => {
               id: 'sys-welcome',
               roomId: activeRoom.id,
               senderId: 'system',
-              senderNickname: 'VoxaNex Guard',
+              senderNickname: 'ChatLustora Guard',
               senderAvatar: '🛡️',
               content:
                 language === 'bn'
@@ -1488,7 +1488,7 @@ export const PublicChatPage: React.FC = () => {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 <span>Multi-Transport Realtime</span>
               </span>
-              <span>VoxaNex Edge</span>
+              <span>ChatLustora Edge</span>
             </div>
           </div>
         </div>

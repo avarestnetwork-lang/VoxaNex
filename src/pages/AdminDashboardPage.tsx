@@ -112,7 +112,7 @@ export const AdminDashboardPage: React.FC = () => {
       status,
       actionTaken,
       notes,
-      'VoxaNex_Admin'
+      'ChatLustora_Admin'
     );
     if (success) {
       setActionFeedback(`Report ${reportId} updated to ${status}.`);
@@ -122,7 +122,7 @@ export const AdminDashboardPage: React.FC = () => {
   };
 
   const handleLiftRestriction = async (userId: string) => {
-    const success = await safetyService.liftRestriction(userId, 'Sanction overturned by admin review', 'VoxaNex_Admin');
+    const success = await safetyService.liftRestriction(userId, 'Sanction overturned by admin review', 'ChatLustora_Admin');
     if (success) {
       setActionFeedback(`Restriction lifted for ${userId}.`);
       loadData();
@@ -131,7 +131,7 @@ export const AdminDashboardPage: React.FC = () => {
   };
 
   const handleReviewAppeal = async (appealId: string, status: 'accepted' | 'rejected') => {
-    const success = await safetyService.reviewAppeal(appealId, status, 'Reviewed in admin console', 'VoxaNex_Admin');
+    const success = await safetyService.reviewAppeal(appealId, status, 'Reviewed in admin console', 'ChatLustora_Admin');
     if (success) {
       setActionFeedback(`Appeal ${appealId} marked as ${status}.`);
       loadData();

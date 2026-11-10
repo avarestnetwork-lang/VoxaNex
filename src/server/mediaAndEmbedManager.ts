@@ -275,7 +275,7 @@ export const EXTERNAL_PROVIDERS_DOCUMENTATION = {
       'Complies with YouTube Developer Policies. Autoplay is disabled by default; cookies blocked prior to user playback.',
   },
   gifProvider: {
-    name: 'VoxaNex Curated Safe GIF Service (Giphy / Internal Proxy)',
+    name: 'ChatLustora Curated Safe GIF Service (Giphy / Internal Proxy)',
     credentialType: 'Server-Side API Proxy (Never exposed to client)',
     cost: 'Standard Developer Tier',
     quota: '10,000 API calls/day cached locally',

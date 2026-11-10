@@ -171,7 +171,7 @@ export const RandomMatchingPage: React.FC = () => {
         id: `sys_${Date.now()}`,
         conversationId: match.conversationId,
         senderId: 'system',
-        senderNickname: 'VoxaNex Guard',
+        senderNickname: 'ChatLustora Guard',
         senderAvatar: '🛡️',
         content:
           language === 'bn'
