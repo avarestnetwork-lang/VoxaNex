@@ -50,8 +50,10 @@ const RouterContext = createContext<RouterContextType | undefined>(undefined);
 
 function parsePath(pathname: string): { route: AppRoute; params: Record<string, string> } {
   let path = pathname;
-  if (!path || path === '') {
+  if (!path || path === '' || path === '/') {
     path = '/';
+  } else if (path.endsWith('/')) {
+    path = path.slice(0, -1);
   }
 
   // Legacy & Alias Redirects
