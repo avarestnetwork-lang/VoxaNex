@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import worker, { verifyAdminToken } from '../src/worker';
+import worker from '../src/worker';
 
 /**
  * Custom signer for tests to allow generating tokens with invalid claims
@@ -28,7 +28,7 @@ async function signTestToken(payload: any, secret: string): Promise<string> {
 }
 
 async function runTests() {
-  console.log('--- Running Final Admin Auth Acceptance Tests ---');
+  console.log('--- Running Final Admin Auth Reliability & Acceptance Tests ---');
 
   const TEST_USER = 'admin_test';
   const TEST_PASS = 'secure_password_123';
@@ -60,34 +60,34 @@ async function runTests() {
     if (!condition) throw new Error(`Assertion failed: ${message}`);
   };
 
-  // 1. Missing/Weak Secrets
-  console.log('Test 1: Missing or Weak Secrets fails closed (503)');
-  const t1_1 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), { ...mockEnv, ADMIN_USER: '' }, {});
-  assert(t1_1.status === 503, 'Missing ADMIN_USER should return 503');
+  // 1. Missing/Weak Secrets (Acceptance)
+  console.log('Scenario 1: Missing or Weak Secrets fails closed (503)');
+  const s1_1 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), { ...mockEnv, ADMIN_USER: '' }, {});
+  assert(s1_1.status === 503, 'Missing ADMIN_USER should return 503');
   
-  const t1_2 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), { ...mockEnv, ADMIN_PASS_HASH: '' }, {});
-  assert(t1_2.status === 503, 'Missing ADMIN_PASS_HASH should return 503');
+  const s1_2 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), { ...mockEnv, ADMIN_PASS_HASH: '' }, {});
+  assert(s1_2.status === 503, 'Missing ADMIN_PASS_HASH should return 503');
   
-  const t1_3 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), { ...mockEnv, JWT_SECRET: '' }, {});
-  assert(t1_3.status === 503, 'Missing JWT_SECRET should return 503');
+  const s1_3 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), { ...mockEnv, JWT_SECRET: '' }, {});
+  assert(s1_3.status === 503, 'Missing JWT_SECRET should return 503');
   
-  const t1_4 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), { ...mockEnv, JWT_SECRET: 'too_short' }, {});
-  assert(t1_4.status === 503, 'Weak JWT_SECRET (< 32 chars) should return 503');
+  const s1_4 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), { ...mockEnv, JWT_SECRET: 'too_short' }, {});
+  assert(s1_4.status === 503, 'Weak JWT_SECRET (< 32 chars) should return 503');
   console.log('✅ [PASSED] Missing/Weak secrets handled correctly');
 
-  // 2. Invalid Credentials
-  console.log('Test 2: Invalid Username/Password returns 401');
-  const t2_1 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: 'wrong', password: TEST_PASS }), mockEnv, {});
-  assert(t2_1.status === 401, 'Invalid username should return 401');
+  // 2. Invalid Credentials (Acceptance)
+  console.log('Scenario 2: Invalid Username/Password returns 401');
+  const s2_1 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: 'wrong', password: TEST_PASS }), mockEnv, {});
+  assert(s2_1.status === 401, 'Invalid username should return 401');
   
-  const t2_2 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: 'wrong_password' }), mockEnv, {});
-  assert(t2_2.status === 401, 'Invalid password should return 401');
+  const s2_2 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: 'wrong_password' }), mockEnv, {});
+  assert(s2_2.status === 401, 'Invalid password should return 401');
   console.log('✅ [PASSED] Invalid credentials rejection');
 
-  // 3. Cookie Attributes
-  console.log('Test 3: Login response cookie attributes');
-  const t3_res = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), mockEnv, {});
-  const cookie = t3_res.headers.get('Set-Cookie') || '';
+  // 3. Cookie Attributes (Acceptance)
+  console.log('Scenario 3: Login response cookie attributes');
+  const s3_res = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), mockEnv, {});
+  const cookie = s3_res.headers.get('Set-Cookie') || '';
   assert(cookie.includes('HttpOnly'), 'Cookie missing HttpOnly');
   assert(cookie.includes('Secure'), 'Cookie missing Secure');
   assert(cookie.includes('SameSite=Strict'), 'Cookie missing SameSite=Strict');
@@ -97,54 +97,108 @@ async function runTests() {
 
   const validToken = cookie.split(';')[0].split('=')[1];
 
-  // 4. Logout verification
-  console.log('Test 4: Logout returns clearing cookie');
-  const t4_res = await worker.fetch(createRequest('/api/admin/logout', 'POST'), mockEnv, {});
-  const logoutCookie = t4_res.headers.get('Set-Cookie') || '';
+  // 4. Successful Session Verification (Restored)
+  console.log('Scenario 4: Successful login and session verification');
+  const s4_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${validToken}` }), mockEnv, {});
+  assert(s4_res.status === 200, 'Session verification failed for valid token');
+  const s4_data = await s4_res.json() as any;
+  assert(s4_data.success === true && s4_data.user.username === TEST_USER, 'Session data mismatch');
+  console.log('✅ [PASSED] Valid session lifecycle');
+
+  // 5. Logout verification (Acceptance)
+  console.log('Scenario 5: Logout returns clearing cookie');
+  const s5_res = await worker.fetch(createRequest('/api/admin/logout', 'POST'), mockEnv, {});
+  const logoutCookie = s5_res.headers.get('Set-Cookie') || '';
   assert(logoutCookie.includes('Max-Age=0'), 'Logout cookie missing Max-Age=0');
   assert(logoutCookie.includes('Expires=Thu, 01 Jan 1970 00:00:00 GMT'), 'Logout cookie missing Expired Expires attribute');
   console.log('✅ [PASSED] Logout clears session correctly');
 
-  // 5. Generic unauthorized response
-  console.log('Test 5: Generic unauthorized response (exactly "Unauthorized")');
-  const t5_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': 'admin_token=invalid' }), mockEnv, {});
-  const t5_data = await t5_res.json() as any;
-  assert(t5_res.status === 401, 'Invalid session should return 401');
-  assert(t5_data.error === 'Unauthorized', 'Error message should be exactly "Unauthorized"');
-  console.log('✅ [PASSED] Unauthorized responses are generic');
+  // 6. Generic unauthorized response (Acceptance + Strengthened)
+  console.log('Scenario 6: Generic unauthorized response (Full JSON Match)');
+  const s6_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': 'admin_token=invalid' }), mockEnv, {});
+  const s6_text = await s6_res.text();
+  assert(s6_res.status === 401, 'Invalid session should return 401');
+  assert(s6_text === JSON.stringify({ success: false, error: 'Unauthorized' }), 'Response body must be exact generic JSON');
+  console.log('✅ [PASSED] Unauthorized responses are generic and exact');
 
-  // 6. Empty/Whitespace Subject rejection
-  console.log('Test 6: Reject empty or whitespace sub');
-  const t6_token = await signTestToken({ sub: '   ', role: 'admin', iat: Date.now(), exp: Date.now() + 10000, iss: 'chatlustora-admin-auth', aud: 'chatlustora-admin-console' }, TEST_SECRET);
-  const t6_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${t6_token}` }), mockEnv, {});
-  assert(t6_res.status === 401, 'Whitespace subject should return 401');
+  // 7. Empty/Whitespace Subject rejection (Acceptance)
+  console.log('Scenario 7: Reject empty or whitespace sub');
+  const s7_token = await signTestToken({ sub: '   ', role: 'admin', iat: Date.now(), exp: Date.now() + 10000, iss: 'chatlustora-admin-auth', aud: 'chatlustora-admin-console' }, TEST_SECRET);
+  const s7_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${s7_token}` }), mockEnv, {});
+  assert(s7_res.status === 401, 'Whitespace subject should return 401');
   console.log('✅ [PASSED] Whitespace sub rejected');
 
-  // 7. Rate-Limit Reset Test
-  console.log('Test 7: Rate-limit reset on successful login');
-  const IP_1 = { 'CF-Connecting-IP': '1.1.1.1' };
-  // 4 failed attempts
+  // 8. Invalid Issuer Rejection (Restored)
+  console.log('Scenario 8: Reject invalid issuer');
+  const s8_token = await signTestToken({ sub: TEST_USER, role: 'admin', iat: Date.now(), exp: Date.now() + 10000, iss: 'evil-iss', aud: 'chatlustora-admin-console' }, TEST_SECRET);
+  const s8_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${s8_token}` }), mockEnv, {});
+  assert(s8_res.status === 401, 'Invalid issuer should return 401');
+  console.log('✅ [PASSED] Invalid issuer rejected');
+
+  // 9. Invalid Audience Rejection (Restored)
+  console.log('Scenario 9: Reject invalid audience');
+  const s9_token = await signTestToken({ sub: TEST_USER, role: 'admin', iat: Date.now(), exp: Date.now() + 10000, iss: 'chatlustora-admin-auth', aud: 'wrong-aud' }, TEST_SECRET);
+  const s9_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${s9_token}` }), mockEnv, {});
+  assert(s9_res.status === 401, 'Invalid audience should return 401');
+  console.log('✅ [PASSED] Invalid audience rejected');
+
+  // 10. Invalid Role Rejection (Restored)
+  console.log('Scenario 10: Reject invalid role (including moderator)');
+  const s10_token = await signTestToken({ sub: TEST_USER, role: 'moderator', iat: Date.now(), exp: Date.now() + 10000, iss: 'chatlustora-admin-auth', aud: 'chatlustora-admin-console' }, TEST_SECRET);
+  const s10_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${s10_token}` }), mockEnv, {});
+  assert(s10_res.status === 401, 'Moderator role should return 401 for admin API');
+  console.log('✅ [PASSED] Invalid role rejected');
+
+  // 11. Lifetime Enforcement Rejection (Restored)
+  console.log('Scenario 11: Reject token lifetime > 8 hours');
+  const s11_token = await signTestToken({ sub: TEST_USER, role: 'admin', iat: Date.now(), exp: Date.now() + (9 * 60 * 60 * 1000), iss: 'chatlustora-admin-auth', aud: 'chatlustora-admin-console' }, TEST_SECRET);
+  const s11_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${s11_token}` }), mockEnv, {});
+  assert(s11_res.status === 401, 'Excessive lifetime should return 401');
+  console.log('✅ [PASSED] Excessive lifetime rejected');
+
+  // 12. Future iat Rejection (Restored)
+  console.log('Scenario 12: Reject future iat');
+  const s12_token = await signTestToken({ sub: TEST_USER, role: 'admin', iat: Date.now() + 120000, exp: Date.now() + 300000, iss: 'chatlustora-admin-auth', aud: 'chatlustora-admin-console' }, TEST_SECRET);
+  const s12_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${s12_token}` }), mockEnv, {});
+  assert(s12_res.status === 401, 'Future iat should return 401');
+  console.log('✅ [PASSED] Future iat rejected');
+
+  // 13. Expired Token Rejection (Restored)
+  console.log('Scenario 13: Reject expired token');
+  const s13_token = await signTestToken({ sub: TEST_USER, role: 'admin', iat: Date.now() - 20000, exp: Date.now() - 10000, iss: 'chatlustora-admin-auth', aud: 'chatlustora-admin-console' }, TEST_SECRET);
+  const s13_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${s13_token}` }), mockEnv, {});
+  assert(s13_res.status === 401, 'Expired token should return 401');
+  console.log('✅ [PASSED] Expired token rejected');
+
+  // 14. Tampered Signature Rejection (Restored)
+  console.log('Scenario 14: Reject tampered signature');
+  const s14_tampered = validToken.slice(0, -5) + 'abcde';
+  const s14_res = await worker.fetch(createRequest('/api/admin/me', 'GET', null, { 'Cookie': `admin_token=${s14_tampered}` }), mockEnv, {});
+  assert(s14_res.status === 401, 'Tampered signature should return 401');
+  console.log('✅ [PASSED] Tampered signature rejected');
+
+  // 15. Rate-Limit Reset Test (Acceptance)
+  console.log('Scenario 15: Rate-limit reset on successful login');
+  const IP_RESET = { 'CF-Connecting-IP': '192.168.1.1' };
   for (let i = 0; i < 4; i++) {
-    await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: 'bad' }), mockEnv, IP_1);
+    await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: 'bad' }), mockEnv, IP_RESET);
   }
-  // 1 successful login
-  const t7_res = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), mockEnv, IP_1);
-  assert(t7_res.status === 200, 'Login should succeed after 4 failures');
+  const s15_res1 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), mockEnv, IP_RESET);
+  assert(s15_res1.status === 200, 'Login should succeed after 4 failures');
   
-  // 1 more failure should NOT trigger 429 yet if counter was reset
-  await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: 'bad' }), mockEnv, IP_1);
-  const t7_res2 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), mockEnv, IP_1);
-  assert(t7_res2.status === 200, 'Login should succeed after 1 more failure if counter was reset');
+  await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: 'bad' }), mockEnv, IP_RESET);
+  const s15_res2 = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), mockEnv, IP_RESET);
+  assert(s15_res2.status === 200, 'Counter should have reset, allowing another failure without 429');
   console.log('✅ [PASSED] Successful login resets failure counter');
 
-  // 8. Rate-Limit Lockout Test
-  console.log('Test 8: Rate-limit lockout (5 attempts)');
-  const IP_2 = { 'CF-Connecting-IP': '2.2.2.2' };
+  // 16. Rate-Limit Lockout Test (Acceptance)
+  console.log('Scenario 16: Rate-limit lockout (5 attempts)');
+  const IP_LOCKOUT = { 'CF-Connecting-IP': '192.168.1.2' };
   for (let i = 0; i < 5; i++) {
-    await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: 'bad' }), mockEnv, IP_2);
+    await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: 'bad' }), mockEnv, IP_LOCKOUT);
   }
-  const t8_res = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), mockEnv, IP_2);
-  assert(t8_res.status === 429, 'Expected 429 after 5 failures');
+  const s16_res = await worker.fetch(createRequest('/api/admin/login', 'POST', { username: TEST_USER, password: TEST_PASS }), mockEnv, IP_LOCKOUT);
+  assert(s16_res.status === 429, 'Expected 429 after 5 failures');
   console.log('✅ [PASSED] Lockout enforced after 5 failures');
 
   console.log(`\n--- All ${totalAssertions} assertions PASSED! ---`);
@@ -155,3 +209,4 @@ runTests().catch(err => {
   if (err.stack) console.error(err.stack);
   process.exit(1);
 });
+
