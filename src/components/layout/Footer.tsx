@@ -3,11 +3,13 @@ import { useRouter } from '../../context/RouterContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { MessageSquare, Globe, Shield, Lock, Sun, Moon, Monitor, Facebook, Mail, Users } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
+import { useConsent } from '../../context/ConsentContext';
 
 export const Footer: React.FC = () => {
   const { navigate } = useRouter();
   const { language, toggleLanguage } = useLanguage();
   const { theme, setTheme } = useTheme();
+  const { openConsentBanner } = useConsent();
 
   return (
     <footer className="w-full bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 text-xs mt-auto border-t border-slate-200 dark:border-slate-800 shadow-inner transition-colors">
@@ -151,6 +153,14 @@ export const Footer: React.FC = () => {
               <li><button onClick={() => navigate('/terms')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'ব্যবহারের শর্তাবলী' : 'Terms of Use'}</button></li>
               <li><button onClick={() => navigate('/privacy')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'গোপনীয়তা নীতি' : 'Privacy Policy'}</button></li>
               <li><button onClick={() => navigate('/safety')} className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer">{language === 'bn' ? 'দায়মুক্তি ঘোষণা' : 'Disclaimer'}</button></li>
+              <li>
+                <button 
+                  onClick={openConsentBanner}
+                  className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer"
+                >
+                  {language === 'bn' ? 'কুকি সেটিংস' : 'Cookie Settings'}
+                </button>
+              </li>
               <li className="pt-2">
                 {/* Language Switch Button */}
                 <button
