@@ -57,15 +57,25 @@ export const CookieConsent: React.FC = () => {
   if (!isBannerOpen) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shadow-lg p-4 sm:flex sm:items-center sm:justify-between sm:px-6">
-      <div className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 mb-4 sm:mb-0 sm:mr-6">
+    <div className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900 text-white border-t border-slate-700 shadow-2xl p-4 sm:flex sm:items-center sm:justify-between sm:px-8 lg:px-12 py-5">
+      <div className="text-sm text-slate-200 mb-5 sm:mb-0 sm:mr-8 max-w-4xl font-medium leading-relaxed">
         {language === 'bn' 
           ? 'আমরা আমাদের ওয়েবসাইট উন্নত করতে এবং প্রাসঙ্গিক বিজ্ঞাপন দেখাতে কুকি ব্যবহার করি।' 
-          : 'We use cookies to improve our website and show relevant advertisements.'}
+          : 'We use cookies to improve our website and show relevant advertisements to enhance your experience.'}
       </div>
-      <div className="flex gap-2 shrink-0">
-        <Button variant="outline" size="sm" onClick={() => handleConsent(false)}>{language === 'bn' ? 'প্রত্যাখ্যান করুন' : 'Reject'}</Button>
-        <Button size="sm" onClick={() => handleConsent(true)}>{language === 'bn' ? 'গ্রহণ করুন' : 'Accept'}</Button>
+      <div className="flex gap-3 shrink-0">
+        <button 
+          onClick={() => handleConsent(false)}
+          className="px-6 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 font-semibold text-sm transition-all shadow-sm focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900 cursor-pointer min-h-[44px] min-w-[100px]"
+        >
+          {language === 'bn' ? 'প্রত্যাখ্যান' : 'Reject'}
+        </button>
+        <button 
+          onClick={() => handleConsent(true)}
+          className="px-6 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-sm transition-all shadow-sm hover:shadow-rose-900/40 focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 focus:ring-offset-slate-900 cursor-pointer min-h-[44px] min-w-[100px]"
+        >
+          {language === 'bn' ? 'গ্রহণ করুন' : 'Accept'}
+        </button>
       </div>
     </div>
   );
