@@ -322,11 +322,16 @@ async function verifyGuestToken(
   }
 }
 
-async function signAdminToken(payload: any, secret: string): Promise<string> {
+export async function signAdminToken(payload: any, secret: string): Promise<string> {
   if (!secret || typeof secret !== 'string' || secret.trim().length < 32) {
     throw new Error('JWT_SECRET must be at least 32 characters.');
   }
-  const base64Payload = toBase64Url(JSON.stringify(payload));
+  const fullPayload = {
+    ...payload,
+    iss: 'chatlustora-admin-auth',
+    aud: 'chatlustora-admin-console',
+  };
+  const base64Payload = toBase64Url(JSON.stringify(fullPayload));
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     'raw',
@@ -341,12 +346,12 @@ async function signAdminToken(payload: any, secret: string): Promise<string> {
   return `vx_adm_${base64Payload}.${sigHex}`;
 }
 
-async function verifyAdminToken(
+export async function verifyAdminToken(
   token: string | undefined,
   secret: string | undefined
 ): Promise<{ valid: boolean; payload?: any; reason?: string }> {
-  if (!secret || secret.trim().length === 0) {
-    return { valid: false, reason: 'Server configuration error: JWT_SECRET missing.' };
+  if (!secret || secret.trim().length < 32) {
+    return { valid: false, reason: 'Server configuration error: Invalid JWT_SECRET.' };
   }
   if (!token || !token.startsWith('vx_adm_')) {
     return { valid: false, reason: 'Missing or invalid token prefix.' };
@@ -379,13 +384,39 @@ async function verifyAdminToken(
     if (!valid) return { valid: false, reason: 'Invalid signature.' };
 
     const payload = JSON.parse(fromBase64Url(base64Payload));
+    const now = Date.now();
     
-    if (!payload.exp || Date.now() >= payload.exp) {
+    if (typeof payload.sub !== 'string' || payload.sub.trim().length === 0) {
+      return { valid: false, reason: 'Invalid subject.' };
+    }
+
+    if (payload.role !== 'admin') {
+      return { valid: false, reason: 'Incorrect role.' };
+    }
+
+    if (payload.iss !== 'chatlustora-admin-auth') {
+      return { valid: false, reason: 'Invalid issuer.' };
+    }
+
+    if (payload.aud !== 'chatlustora-admin-console') {
+      return { valid: false, reason: 'Invalid audience.' };
+    }
+
+    if (!Number.isFinite(payload.iat) || !Number.isFinite(payload.exp)) {
+      return { valid: false, reason: 'Invalid timestamps.' };
+    }
+
+    if (payload.iat > now + 60000) {
+      return { valid: false, reason: 'Token issued in the future.' };
+    }
+
+    if (now >= payload.exp) {
       return { valid: false, reason: 'Session expired.' };
     }
     
-    if (payload.role !== 'admin') {
-      return { valid: false, reason: 'Incorrect role.' };
+    const maxLife = 8 * 60 * 60 * 1000;
+    if (payload.exp - payload.iat > maxLife + 5000) { // 5s grace
+      return { valid: false, reason: 'Session lifetime exceeds limit.' };
     }
 
     return { valid: true, payload };
@@ -539,7 +570,7 @@ const roomPresence = new Map<string, Map<string, PresenceMember>>();
 const roomTyping = new Map<string, Map<string, { nickname: string; expiresAt: number }>>();
 const guestSessions = new Map<string, GuestSession>();
 const activeAccountDeletions = new Set<string>();
-const adminLoginAttempts = new Map<string, { attempts: number; lastAttempt: number }>();
+const adminLoginAttempts = new Map<string, { attempts: number; windowStart: number }>();
 
 // Active SSE client streams per room & conversation (using ReadableStreamDefaultController for synchronous non-promise enqueuing)
 const roomStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
@@ -701,41 +732,67 @@ export default {
       try {
         const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
         const now = Date.now();
-        const record = adminLoginAttempts.get(ip);
+        const windowMs = 15 * 60 * 1000;
         
-        if (record && record.attempts >= 5 && now - record.lastAttempt < 15 * 60 * 1000) {
-          return jsonResponse({ success: false, error: 'Too many login attempts. Please try again in 15 minutes.' }, 429);
+        // NOTE: This rate limiting is per-isolate (local to the current edge instance).
+        // It provides protection against rapid-fire brute force but is not globally synchronized.
+        // For production-grade global rate limiting, Cloudflare WAF or Rate Limiting rules should be used.
+        
+        // Per-isolate stale entry cleanup
+        if (Math.random() < 0.1) {
+          for (const [entryIp, entry] of adminLoginAttempts.entries()) {
+            if (now - entry.windowStart > windowMs) adminLoginAttempts.delete(entryIp);
+          }
+        }
+
+        let record = adminLoginAttempts.get(ip);
+        if (record && now - record.windowStart > windowMs) {
+          adminLoginAttempts.delete(ip);
+          record = undefined;
+        }
+        
+        if (record && record.attempts >= 5) {
+          return jsonResponse({ success: false, error: 'Too many login attempts. Please try again later.' }, 429);
         }
 
         const body: any = await request.json().catch(() => ({}));
         const { username, password } = body;
 
         if (typeof username !== 'string' || typeof password !== 'string') {
-          return jsonResponse({ success: false, error: 'Invalid input types.' }, 400);
+          return jsonResponse({ success: false, error: 'Invalid input.' }, 400);
         }
 
         if (username.length > 100 || password.length > 256) {
-           return jsonResponse({ success: false, error: 'Credential length limit exceeded.' }, 400);
+           return jsonResponse({ success: false, error: 'Input too long.' }, 400);
         }
 
         const configUser = env.ADMIN_USER;
         const configHash = env.ADMIN_PASS_HASH;
         const jwtSecret = env.JWT_SECRET;
 
-        if (!configUser || !configHash || !jwtSecret) {
-          console.error('[Admin] Missing server-side credentials configuration.');
-          return jsonResponse({ success: false, error: 'Authentication service unavailable.' }, 503);
+        if (!configUser || !configHash || !jwtSecret || jwtSecret.length < 32) {
+          console.error('[Admin] Missing or weak server-side credentials configuration.');
+          return jsonResponse({ success: false, error: 'Authentication unavailable.' }, 503);
         }
 
         const isUserValid = username === configUser;
-        const isPassValid = isUserValid && bcrypt.compareSync(password, configHash);
+        let isPassValid = false;
+        
+        if (isUserValid) {
+          try {
+            isPassValid = await bcrypt.compare(password, configHash);
+          } catch (err) {
+            console.error('[Admin] Password comparison error:', err);
+          }
+        }
 
         if (!isUserValid || !isPassValid) {
+          const current = adminLoginAttempts.get(ip) || { attempts: 0, windowStart: now };
           adminLoginAttempts.set(ip, {
-            attempts: (record?.attempts || 0) + 1,
-            lastAttempt: now
+            attempts: current.attempts + 1,
+            windowStart: current.windowStart
           });
-          return jsonResponse({ success: false, error: 'Invalid administrator credentials.' }, 401);
+          return jsonResponse({ success: false, error: 'Invalid credentials.' }, 401);
         }
 
         // Success: reset attempts
@@ -750,13 +807,11 @@ export default {
         };
 
         const token = await signAdminToken(payload, jwtSecret);
-        
-        // Secure cookie: HttpOnly, Secure (in production), SameSite=Strict, Path=/
         const cookie = `admin_token=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${8 * 3600}`;
         
         return jsonResponse({ success: true }, 200, { 'Set-Cookie': cookie });
       } catch (err: any) {
-        return jsonResponse({ success: false, error: 'Internal server error during authentication.' }, 500);
+        return jsonResponse({ success: false, error: 'Internal error.' }, 500);
       }
     }
 

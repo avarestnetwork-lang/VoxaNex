@@ -230,12 +230,24 @@ export const AdminDashboardPage: React.FC = () => {
     }
   };
 
+  const [loggingOut, setLoggingOut] = useState(false);
+
   const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
     try {
-      await fetch('/api/admin/logout', { method: 'POST' });
-      navigate('/admin/login');
+      const res = await fetch('/api/admin/logout', { method: 'POST' });
+      if (res.ok) {
+        navigate('/admin/login');
+      } else {
+        setActionFeedback('Logout failed. Please try again.');
+        setTimeout(() => setActionFeedback(null), 3000);
+      }
     } catch {
-      navigate('/admin/login');
+      setActionFeedback('Network error during logout.');
+      setTimeout(() => setActionFeedback(null), 3000);
+    } finally {
+      setLoggingOut(false);
     }
   };
 
@@ -262,9 +274,19 @@ export const AdminDashboardPage: React.FC = () => {
             <span>Sync Live Data</span>
           </Button>
 
-          <Button variant="outline" size="sm" onClick={handleLogout} className="text-rose-400 border-rose-900/50 hover:bg-rose-950/30">
-            <X className="w-3.5 h-3.5 mr-1.5" />
-            <span>End Session</span>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleLogout} 
+            disabled={loggingOut}
+            className="text-rose-400 border-rose-900/50 hover:bg-rose-950/30"
+          >
+            {loggingOut ? (
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <X className="w-3.5 h-3.5 mr-1.5" />
+            )}
+            <span>{loggingOut ? 'Ending...' : 'End Session'}</span>
           </Button>
 
           <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 bg-emerald-950/20 px-3 py-1.5 rounded-lg border border-emerald-800/40">
