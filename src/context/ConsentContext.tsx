@@ -18,18 +18,38 @@ export const ConsentProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [isBannerOpen, setIsBannerOpen] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem('cookie_consent_status') as ConsentStatus;
-    if (saved === 'accepted' || saved === 'rejected') {
-      setConsentStatus(saved);
-      setIsBannerOpen(false);
-    } else {
+    try {
+      const newStatus = localStorage.getItem('cookie_consent_status');
+      const legacyStatus = newStatus ? null : localStorage.getItem('cookie_consent');
+      
+      let status: ConsentStatus = 'unset';
+      if (newStatus === 'accepted' || newStatus === 'rejected') {
+        status = newStatus as ConsentStatus;
+      } else if (legacyStatus === 'granted') {
+        status = 'accepted';
+        localStorage.setItem('cookie_consent_status', 'accepted');
+        localStorage.removeItem('cookie_consent');
+      } else if (legacyStatus === 'denied') {
+        status = 'rejected';
+        localStorage.setItem('cookie_consent_status', 'rejected');
+        localStorage.removeItem('cookie_consent');
+      }
+
+      setConsentStatus(status);
+      setIsBannerOpen(status === 'unset');
+    } catch (e) {
+      console.warn('Storage access failed', e);
       setConsentStatus('unset');
       setIsBannerOpen(true);
     }
   }, []);
 
   const saveConsent = (status: ConsentStatus) => {
-    localStorage.setItem('cookie_consent_status', status);
+    try {
+      localStorage.setItem('cookie_consent_status', status);
+    } catch (e) {
+      console.warn('Failed to save consent', e);
+    }
     setConsentStatus(status);
     setIsBannerOpen(false);
   };
