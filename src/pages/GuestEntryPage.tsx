@@ -99,8 +99,8 @@ export const GuestEntryPage: React.FC = () => {
       return;
     }
 
-    // Perform guest login with verified age & gender
-    const loginRes = await loginGuest(cleanNick, language, gender);
+    // Perform guest login with declared age consent & gender
+    const loginRes = await loginGuest(cleanNick, language, gender, adultConfirmed);
     if (loginRes && !loginRes.success) {
       setGuestError(loginRes.error || (language === 'bn' ? 'অতিথি সেশন তৈরি করতে ব্যর্থ হয়েছে।' : 'Failed to create guest session on server.'));
       return;

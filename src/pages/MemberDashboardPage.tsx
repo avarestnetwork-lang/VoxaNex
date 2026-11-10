@@ -434,7 +434,7 @@ export const MemberDashboardPage: React.FC = () => {
                   {user.isGuest ? 'Guest Session' : 'Registered Member'}
                 </span>
 
-                {is18Verified && (
+                {(is18Verified || user.ageDeclarationAccepted) && (
                   <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800 flex items-center gap-1">
                     <ShieldCheck className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
                     <span>{user.verificationMethod === 'third_party_id' ? '18+ Verified' : '18+ Confirmed'}</span>

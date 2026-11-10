@@ -62,6 +62,7 @@ export interface UserProfile {
   email?: string;
   isGuest: boolean;
   is18Verified: boolean;
+  ageDeclarationAccepted?: boolean;
   verifiedAt?: string;
   verificationMethod?: 'self_declaration' | 'third_party_id' | 'pending';
   ageVerificationStatus?: AgeVerificationStatus;

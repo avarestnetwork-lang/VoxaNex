@@ -9,11 +9,12 @@ interface AuthContextType {
   hasActiveSession: boolean;
   isLoading: boolean;
   is18Verified: boolean;
+  ageDeclarationAccepted: boolean;
   verify18: () => void;
   revoke18: () => void;
   setNickname: (nickname: string) => void;
   setAvatar: (avatar: string) => void;
-  loginGuest: (nickname?: string, lang?: AppLanguage, gender?: string) => Promise<{ success: boolean; error?: string }>;
+  loginGuest: (nickname?: string, lang?: AppLanguage, gender?: string, ageDeclarationAccepted?: boolean) => Promise<{ success: boolean; error?: string }>;
   loginWithAccount: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   registerWithAccount: (email: string, password: string, nickname: string, gender?: string) => Promise<{ success: boolean; error?: string }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
@@ -69,6 +70,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       nickname: 'Visitor',
       isGuest: true,
       is18Verified: false,
+      ageDeclarationAccepted: false,
       avatar: '',
       languagePreference: 'en',
       safeFilterEnabled: true,
@@ -103,14 +105,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             nickname: check.session?.nickname || prev.nickname,
             avatar: check.session?.avatar || prev.avatar,
             is18Verified: Boolean(check.session?.is18Verified),
+            ageDeclarationAccepted: Boolean(check.session?.ageDeclarationAccepted),
             gender: check.session?.gender as UserGender,
           }));
           setHasActiveSession(true);
         } else {
           setHasActiveSession(false);
+          setUser({
+            id: '',
+            nickname: 'Visitor',
+            isGuest: true,
+            is18Verified: false,
+            ageDeclarationAccepted: false,
+            avatar: '',
+            languagePreference: 'en',
+            safeFilterEnabled: true,
+            notificationSounds: true,
+            createdAt: new Date().toISOString(),
+          });
+          try {
+            localStorage.removeItem('voxanex_user_profile');
+          } catch {
+            // ignore
+          }
         }
       } else {
         setHasActiveSession(false);
+        setUser(prev => ({
+          ...prev,
+          ageDeclarationAccepted: prev.isGuest ? false : prev.ageDeclarationAccepted,
+        }));
       }
     }
     restore();
@@ -130,15 +154,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const verify18 = () => {
     setUser(prev => ({
       ...prev,
-      is18Verified: true,
-      verifiedAt: new Date().toISOString(),
-      verificationMethod: 'self_declaration' as const,
+      ageDeclarationAccepted: true,
+      is18Verified: prev.isGuest ? false : prev.is18Verified,
+      verifiedAt: prev.isGuest ? undefined : prev.verifiedAt,
+      verificationMethod: prev.isGuest ? ('self_declaration' as const) : prev.verificationMethod,
     }));
   };
 
   const revoke18 = () => {
     setUser(prev => ({
       ...prev,
+      ageDeclarationAccepted: false,
       is18Verified: false,
       verifiedAt: undefined,
       verificationMethod: 'pending' as const,
@@ -167,7 +193,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const loginGuest = async (nickname?: string, lang: AppLanguage = 'en', gender?: string): Promise<{ success: boolean; error?: string }> => {
+  const loginGuest = async (
+    nickname?: string, 
+    lang: AppLanguage = 'en', 
+    gender?: string, 
+    ageDeclarationAccepted?: boolean
+  ): Promise<{ success: boolean; error?: string }> => {
     const chosenNick = nickname?.trim() || getRandomGuestNickname();
     const chosenAvatar = GUEST_AVATARS[Math.floor(Math.random() * GUEST_AVATARS.length)];
 
@@ -175,8 +206,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       nickname: chosenNick,
       avatar: chosenAvatar,
       languagePref: lang,
-      is18Verified: user.is18Verified,
       gender,
+      is18Verified: false,
+      ageDeclarationAccepted: Boolean(ageDeclarationAccepted),
     });
     
     if (res.success && res.session) {
@@ -184,7 +216,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         id: res.session.id,
         nickname: res.session.nickname,
         isGuest: true,
-        is18Verified: res.session.is18Verified,
+        is18Verified: false,
+        ageDeclarationAccepted: Boolean(res.session.ageDeclarationAccepted),
         avatar: res.session.avatar,
         gender: gender as UserGender,
         languagePreference: res.session.languagePref,
@@ -200,7 +233,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           id: `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           nickname: chosenNick,
           isGuest: true,
-          is18Verified: user.is18Verified,
+          is18Verified: false,
+          ageDeclarationAccepted: Boolean(ageDeclarationAccepted),
           avatar: chosenAvatar,
           gender: gender as UserGender,
           languagePreference: lang,
@@ -267,6 +301,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       nickname: 'Visitor',
       isGuest: true,
       is18Verified: false,
+      ageDeclarationAccepted: false,
       avatar: '',
       languagePreference: 'en',
       safeFilterEnabled: true,
@@ -306,6 +341,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       nickname: 'Visitor',
       isGuest: true,
       is18Verified: false,
+      ageDeclarationAccepted: false,
       avatar: '',
       languagePreference: 'en',
       safeFilterEnabled: true,
@@ -348,6 +384,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         hasActiveSession,
         isLoading,
         is18Verified: user.is18Verified,
+        ageDeclarationAccepted: Boolean(user.ageDeclarationAccepted),
         verify18,
         revoke18,
         setNickname,

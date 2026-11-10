@@ -8,6 +8,7 @@ export interface ValidatedGuestSession {
   gender?: string;
   languagePref: AppLanguage;
   is18Verified: boolean;
+  ageDeclarationAccepted?: boolean;
   expiresAt: number;
 }
 
@@ -22,7 +23,8 @@ export const guestSessionService = {
     avatar: string;
     gender?: string;
     languagePref: AppLanguage;
-    is18Verified: boolean;
+    is18Verified?: boolean;
+    ageDeclarationAccepted?: boolean;
   }): Promise<{ success: boolean; session?: ValidatedGuestSession; error?: string }> {
     try {
       const response = await fetch('/api/guest/session', {
@@ -52,7 +54,8 @@ export const guestSessionService = {
           nickname: params.nickname,
           avatar: params.avatar,
           languagePref: params.languagePref,
-          is18Verified: params.is18Verified,
+          is18Verified: false,
+          ageDeclarationAccepted: Boolean(params.ageDeclarationAccepted ?? params.is18Verified),
           expiresAt: Date.now() + 24 * 60 * 60 * 1000,
         };
         localStorage.setItem(STORAGE_KEY, fallbackToken);

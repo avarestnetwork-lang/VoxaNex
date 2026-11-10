@@ -28,7 +28,8 @@ import {
 export const RoomDirectoryPage: React.FC = () => {
   const { navigate } = useRouter();
   const { language, t } = useLanguage();
-  const { is18Verified } = useAuth();
+  const { is18Verified, ageDeclarationAccepted, user } = useAuth();
+  const hasAgeAccess = Boolean(is18Verified || user?.is18Verified || ageDeclarationAccepted || user?.ageDeclarationAccepted);
 
   const [rooms, setRooms] = useState<Room[]>(ROOMS_CONFIG);
   const [searchQuery, setSearchQuery] = useState('');
@@ -276,7 +277,7 @@ export const RoomDirectoryPage: React.FC = () => {
                 <p className="text-xs text-slate-600 leading-relaxed line-clamp-3 mb-2">{room.description[language] || room.description.en}</p>
               </div>
               <div className="pt-3 border-t border-slate-100 space-y-3">
-                <Button variant={isAdult ? (is18Verified ? 'primary' : 'danger') : 'primary'} size="md" fullWidth onClick={() => handleJoin(room)}>
+                <Button variant={isAdult ? (hasAgeAccess ? 'primary' : 'danger') : 'primary'} size="md" fullWidth onClick={() => handleJoin(room)}>
                   <span>{t.rooms.joinBtn}</span>
                   <ArrowRight className="w-4 h-4 ml-1.5" />
                 </Button>
@@ -314,7 +315,7 @@ export const RoomDirectoryPage: React.FC = () => {
                 {room.country && <div className="text-[10px] text-orange-600 font-mono mb-4 flex items-center gap-1"><Globe className="w-3 h-3" /><span>{room.country}</span></div>}
               </div>
               <div className="pt-3 border-t border-slate-100 space-y-3">
-                <Button variant={isAdult ? (is18Verified ? 'primary' : 'danger') : 'primary'} size="md" fullWidth onClick={() => handleJoin(room)}>
+                <Button variant={isAdult ? (hasAgeAccess ? 'primary' : 'danger') : 'primary'} size="md" fullWidth onClick={() => handleJoin(room)}>
                   <span>{t.rooms.joinBtn}</span>
                   <ArrowRight className="w-4 h-4 ml-1.5" />
                 </Button>

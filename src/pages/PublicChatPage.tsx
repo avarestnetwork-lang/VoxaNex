@@ -120,7 +120,7 @@ export const GenderBadge = ({ gender }: { gender?: string }) => {
 export const PublicChatPage: React.FC = () => {
   const { params, navigate } = useRouter();
   const { language, t } = useLanguage();
-  const { user, hasActiveSession, is18Verified } = useAuth();
+  const { user, hasActiveSession, is18Verified, ageDeclarationAccepted } = useAuth();
   const { openChat, openWindows, minimizeChat, closeChat } = usePrivateChat();
 
   const currentRoomSlug = params.roomId || 'bangla';
@@ -160,10 +160,11 @@ export const PublicChatPage: React.FC = () => {
       navigate('/user/guest-entry', { targetRoom: activeRoom.slug });
       return;
     }
-    if (activeRoom.is18Plus && (!is18Verified || !user.is18Verified)) {
+    const hasAgeAccess = Boolean(is18Verified || user.is18Verified || ageDeclarationAccepted || user.ageDeclarationAccepted);
+    if (activeRoom.is18Plus && !hasAgeAccess) {
       navigate('/user/guest-entry', { targetRoom: activeRoom.slug });
     }
-  }, [hasActiveSession, activeRoom, is18Verified, user.is18Verified, navigate]);
+  }, [hasActiveSession, activeRoom, is18Verified, user.is18Verified, ageDeclarationAccepted, user.ageDeclarationAccepted, navigate]);
 
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputText, setInputText] = useState('');

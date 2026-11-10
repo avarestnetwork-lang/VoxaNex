@@ -47,6 +47,7 @@ interface GuestSession {
   gender?: string;
   languagePref?: string;
   is18Verified?: boolean;
+  ageDeclarationAccepted?: boolean;
   createdAt: number;
   expiresAt: number;
 }
@@ -274,6 +275,7 @@ async function verifyGuestToken(
       gender: p.gen || p.gender,
       languagePref: p.lng || p.languagePref || 'en',
       is18Verified: Boolean(canonicalRow.is_18_verified),
+      ageDeclarationAccepted: Boolean(p.dec18 ?? p.ageDeclarationAccepted),
       createdAt: p.iat,
       expiresAt: p.exp,
     };
@@ -2361,14 +2363,16 @@ async function authorizeConversationAccess(
     if (url.pathname === '/api/guest/session' && request.method === 'POST') {
       try {
         const body: any = await request.json();
-        const { nickname, avatar, gender, languagePref, is18Verified } = body || {};
+        const { nickname, avatar, gender, languagePref, is18Verified, ageDeclarationAccepted } = body || {};
 
         const sessionId = crypto.randomUUID();
         const issuedAt = Date.now();
         const expiresAt = issuedAt + 24 * 60 * 60 * 1000;
 
-        // Age-assurance fail-closed: client-supplied is18Verified is a client-side declaration only
-        // and must NOT forge a trusted is_18_verified database record or signed token claim.
+        // User explicit 18+ declaration & consent.
+        // Recorded as a signed token claim (dec18), but NEVER as trusted verification (v18 / is_18_verified).
+        const hasDeclared = Boolean(ageDeclarationAccepted ?? is18Verified);
+
         const payload = {
           sid: sessionId,
           nick: (nickname || 'Guest_User').slice(0, 24),
@@ -2376,6 +2380,7 @@ async function authorizeConversationAccess(
           gen: gender || 'prefer_not_to_say',
           lng: languagePref || 'en',
           v18: false,
+          dec18: hasDeclared,
           iat: issuedAt,
           exp: expiresAt,
         };
@@ -2483,6 +2488,7 @@ async function authorizeConversationAccess(
           gender: payload.gen,
           languagePref: payload.lng,
           is18Verified: false,
+          ageDeclarationAccepted: payload.dec18,
           createdAt: issuedAt,
           expiresAt: expiresAt,
         };
