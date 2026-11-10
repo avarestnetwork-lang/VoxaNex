@@ -44,7 +44,7 @@ export const ConsentProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, []);
 
-  const saveConsent = (status: ConsentStatus) => {
+  const saveConsent = React.useCallback((status: ConsentStatus) => {
     try {
       localStorage.setItem('cookie_consent_status', status);
     } catch (e) {
@@ -52,12 +52,12 @@ export const ConsentProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     setConsentStatus(status);
     setIsBannerOpen(false);
-  };
+  }, []);
 
-  const acceptConsent = () => saveConsent('accepted');
-  const rejectConsent = () => saveConsent('rejected');
-  const openConsentBanner = () => setIsBannerOpen(true);
-  const closeConsentBanner = () => setIsBannerOpen(false);
+  const acceptConsent = React.useCallback(() => saveConsent('accepted'), [saveConsent]);
+  const rejectConsent = React.useCallback(() => saveConsent('rejected'), [saveConsent]);
+  const openConsentBanner = React.useCallback(() => setIsBannerOpen(true), []);
+  const closeConsentBanner = React.useCallback(() => setIsBannerOpen(false), []);
 
   return (
     <ConsentContext.Provider value={{ 
