@@ -20,19 +20,24 @@ export const ConsentProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     try {
       const newStatus = localStorage.getItem('cookie_consent_status');
-      const legacyStatus = newStatus ? null : localStorage.getItem('cookie_consent');
+      const legacyStatus = localStorage.getItem('cookie_consent');
       
       let status: ConsentStatus = 'unset';
-      if (newStatus === 'accepted' || newStatus === 'rejected') {
+      const isNewValid = (newStatus === 'accepted' || newStatus === 'rejected');
+
+      if (isNewValid) {
         status = newStatus as ConsentStatus;
-      } else if (legacyStatus === 'granted') {
-        status = 'accepted';
-        localStorage.setItem('cookie_consent_status', 'accepted');
-        localStorage.removeItem('cookie_consent');
-      } else if (legacyStatus === 'denied') {
-        status = 'rejected';
-        localStorage.setItem('cookie_consent_status', 'rejected');
-        localStorage.removeItem('cookie_consent');
+      } else {
+        // New status is missing, empty or invalid. Inspect legacy.
+        if (legacyStatus === 'granted') {
+          status = 'accepted';
+          localStorage.setItem('cookie_consent_status', 'accepted');
+          localStorage.removeItem('cookie_consent');
+        } else if (legacyStatus === 'denied') {
+          status = 'rejected';
+          localStorage.setItem('cookie_consent_status', 'rejected');
+          localStorage.removeItem('cookie_consent');
+        }
       }
 
       setConsentStatus(status);

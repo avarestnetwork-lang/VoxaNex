@@ -35,6 +35,12 @@ function runCookieConsentTests() {
   assert(migrateConsent(null, 'denied') === 'rejected', 'Migrate legacy status: denied');
   assert(migrateConsent(null, null) === 'unset', 'No status');
   assert(migrateConsent('invalid', null) === 'unset', 'Invalid new status');
+  
+  // New test cases
+  assert(migrateConsent('invalid', 'granted') === 'accepted', 'Invalid new + valid legacy granted');
+  assert(migrateConsent('invalid', 'denied') === 'rejected', 'Invalid new + valid legacy denied');
+  assert(migrateConsent('invalid', 'invalid') === 'unset', 'Both keys invalid');
+  assert(migrateConsent('', '') === 'unset', 'Both keys empty');
 
   console.log(`\nTests completed: ${passed} PASSED, ${failed} FAILED`);
   process.exit(failed > 0 ? 1 : 0);

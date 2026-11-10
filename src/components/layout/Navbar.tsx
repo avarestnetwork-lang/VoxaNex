@@ -52,8 +52,8 @@ export const Navbar: React.FC = () => {
                 height={36}
                 loading="eager"
               />
-              <div className="flex items-center gap-2">
-                <span className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white truncate">
                   Chat<span className="text-rose-600 dark:text-rose-400">Lustora</span>
                 </span>
               </div>
