@@ -597,6 +597,17 @@ function jsonResponse(data: unknown, status = 200, extraHeaders: Record<string, 
   });
 }
 
+export function buildAllowedProfileUpdatePayload(updates: Record<string, unknown>, updatedAt: string): Record<string, unknown> {
+  return {
+    nickname: updates.nickname,
+    bio: updates.bio,
+    avatar_url: updates.avatar,
+    safe_filter_enabled: updates.safeFilterEnabled,
+    notification_sounds: updates.notificationSounds,
+    updated_at: updatedAt,
+  };
+}
+
 function broadcastToRoom(roomId: string, eventName: string, data: unknown) {
   const controllers = roomStreams.get(roomId);
   if (!controllers || controllers.size === 0) return;
@@ -3288,14 +3299,7 @@ async function authorizeConversationAccess(
         }
 
         // Correction 2: Generic profile updates must never modify trusted verification fields.
-        const allowedUpdates: any = {
-          nickname: updates.nickname,
-          bio: updates.bio,
-          avatar_url: updates.avatar,
-          safe_filter_enabled: updates.safeFilterEnabled,
-          notification_sounds: updates.notificationSounds,
-          updated_at: new Date().toISOString(),
-        };
+        const allowedUpdates = buildAllowedProfileUpdatePayload(updates, new Date().toISOString());
 
         // Perform authoritative update strictly scoped to the verifiedUserId.
         // Use 'Prefer: return=representation' to verify the target row was actually affected.

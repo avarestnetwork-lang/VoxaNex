@@ -58,6 +58,7 @@ export const GuestEntryPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [accountNickname, setAccountNickname] = useState('');
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [accountNotice, setAccountNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   // Forgot password state
@@ -144,6 +145,7 @@ export const GuestEntryPage: React.FC = () => {
   const handleAccountSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAccountError(null);
+    setAccountNotice(null);
 
     if (!email || !password) {
       setAccountError(language === 'bn' ? 'ইমেইল ও পাসওয়ার্ড দিন।' : 'Please provide email and password.');
@@ -192,6 +194,14 @@ export const GuestEntryPage: React.FC = () => {
         const res = await registerWithAccount(email, password, accountNickname.trim(), gender);
         if (!res.success) {
           setAccountError(res.error || 'Registration failed');
+          setLoading(false);
+          return;
+        }
+        if (res.requiresEmailConfirmation) {
+          setAccountNotice(language === 'bn'
+            ? 'নিবন্ধন সম্পন্ন হয়েছে। লগ ইন করার আগে আপনার ইমেইল নিশ্চিত করুন।'
+            : 'Registration received. Check your email and confirm your address before signing in.');
+          setPassword('');
           setLoading(false);
           return;
         }
@@ -640,6 +650,12 @@ export const GuestEntryPage: React.FC = () => {
             {accountError && (
               <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900 text-xs text-rose-300">
                 {accountError}
+              </div>
+            )}
+
+            {accountNotice && (
+              <div role="status" className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-900 text-xs text-emerald-300">
+                {accountNotice}
               </div>
             )}
 

@@ -16,7 +16,7 @@ interface AuthContextType {
   setAvatar: (avatar: string) => void;
   loginGuest: (nickname?: string, lang?: AppLanguage, gender?: string, ageDeclarationAccepted?: boolean) => Promise<{ success: boolean; error?: string }>;
   loginWithAccount: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  registerWithAccount: (email: string, password: string, nickname: string, gender?: string) => Promise<{ success: boolean; error?: string }>;
+  registerWithAccount: (email: string, password: string, nickname: string, gender?: string) => Promise<{ success: boolean; error?: string; requiresEmailConfirmation?: boolean }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
   deleteAccount: () => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<{ success: boolean; error?: string }>;
@@ -47,6 +47,92 @@ function getRandomGuestNickname(): string {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+function createVisitorProfile(): UserProfile {
+  return {
+    id: '',
+    nickname: 'Visitor',
+    isGuest: true,
+    is18Verified: false,
+    ageDeclarationAccepted: false,
+    avatar: '',
+    languagePreference: 'en',
+    safeFilterEnabled: true,
+    notificationSounds: true,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function createUnavailableMemberProfile(): UserProfile {
+  return {
+    ...createVisitorProfile(),
+    nickname: 'Account unavailable',
+    isGuest: false,
+  };
+}
+
+export async function restoreAuthContextState(options: {
+  isSupabaseActive: boolean;
+  auth: Pick<typeof authService, 'restoreSession'>;
+  guest: Pick<typeof guestSessionService, 'getStoredToken' | 'validateSession'>;
+  setUser: (user: UserProfile) => void;
+  setHasActiveSession: (active: boolean) => void;
+  setIsLoading: (loading: boolean) => void;
+  clearStoredProfile: () => void;
+}): Promise<void> {
+  let memberStateResolved = !options.isSupabaseActive;
+  try {
+    if (options.isSupabaseActive) {
+      const member = await options.auth.restoreSession();
+      memberStateResolved = member.status !== 'session-error';
+      if (member.status === 'restored') {
+        options.setUser(member.user);
+        options.setHasActiveSession(true);
+        return;
+      }
+      if (member.status !== 'no-session') {
+        // A member session existed or its state could not be read. Fail closed,
+        // and leave any independent guest token untouched for a later retry.
+        console.warn('[AuthContext] Registered session restoration failed:', member.status, member.error);
+        options.setUser(createUnavailableMemberProfile());
+        options.setHasActiveSession(false);
+        return;
+      }
+    }
+
+    const token = options.guest.getStoredToken();
+    if (token) {
+      const check = await options.guest.validateSession(token);
+      if (check.valid && check.session) {
+        options.setUser({
+          ...createVisitorProfile(),
+          id: check.session.id || '',
+          nickname: check.session.nickname || 'Visitor',
+          avatar: check.session.avatar || '',
+          is18Verified: Boolean(check.session.is18Verified),
+          ageDeclarationAccepted: Boolean(check.session.ageDeclarationAccepted),
+          gender: check.session.gender as UserGender,
+        });
+        options.setHasActiveSession(true);
+        return;
+      }
+
+      options.setHasActiveSession(false);
+      options.setUser(createVisitorProfile());
+      options.clearStoredProfile();
+      return;
+    }
+
+    options.setHasActiveSession(false);
+    options.setUser(createVisitorProfile());
+  } catch {
+    console.warn('[AuthContext] Initial session restoration failed.');
+    options.setHasActiveSession(false);
+    options.setUser(memberStateResolved ? createVisitorProfile() : createUnavailableMemberProfile());
+  } finally {
+    options.setIsLoading(false);
+  }
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [hasActiveSession, setHasActiveSession] = useState<boolean>(() => {
@@ -84,61 +170,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Restore authenticated session on initial mount
   useEffect(() => {
-    async function restore() {
-      if (isSupabaseActive) {
-        const restoredProfile = await authService.restoreSession();
-        if (restoredProfile) {
-          setUser(restoredProfile);
-          setHasActiveSession(true);
-          return;
+    void restoreAuthContextState({
+      isSupabaseActive,
+      auth: authService,
+      guest: guestSessionService,
+      setUser,
+      setHasActiveSession,
+      setIsLoading,
+      clearStoredProfile: () => {
+        try {
+          localStorage.removeItem('voxanex_user_profile');
+        } catch {
+          // ignore
         }
-      }
-
-      // If guest token exists, validate against server
-      const token = guestSessionService.getStoredToken();
-      if (token) {
-        const check = await guestSessionService.validateSession(token);
-        if (check.valid && check.session) {
-          setUser(prev => ({
-            ...prev,
-            id: check.session?.id || prev.id,
-            nickname: check.session?.nickname || prev.nickname,
-            avatar: check.session?.avatar || prev.avatar,
-            is18Verified: Boolean(check.session?.is18Verified),
-            ageDeclarationAccepted: Boolean(check.session?.ageDeclarationAccepted),
-            gender: check.session?.gender as UserGender,
-          }));
-          setHasActiveSession(true);
-        } else {
-          setHasActiveSession(false);
-          setUser({
-            id: '',
-            nickname: 'Visitor',
-            isGuest: true,
-            is18Verified: false,
-            ageDeclarationAccepted: false,
-            avatar: '',
-            languagePreference: 'en',
-            safeFilterEnabled: true,
-            notificationSounds: true,
-            createdAt: new Date().toISOString(),
-          });
-          try {
-            localStorage.removeItem('voxanex_user_profile');
-          } catch {
-            // ignore
-          }
-        }
-      } else {
-        setHasActiveSession(false);
-        setUser(prev => ({
-          ...prev,
-          ageDeclarationAccepted: prev.isGuest ? false : prev.ageDeclarationAccepted,
-        }));
-      }
-    }
-    restore();
-    setIsLoading(false);
+      },
+    });
   }, [isSupabaseActive]);
 
   useEffect(() => {
@@ -261,6 +307,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const registerWithAccount = async (email: string, password: string, nickname: string, gender?: string) => {
     const res = await authService.register(email, password, nickname, gender, user.languagePreference);
+    if (res.success && res.requiresEmailConfirmation) {
+      return { success: true, requiresEmailConfirmation: true };
+    }
     if (res.success && res.user) {
       setUser(res.user);
       setHasActiveSession(true);

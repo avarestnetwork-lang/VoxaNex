@@ -5,12 +5,197 @@ export interface AuthResponse {
   success: boolean;
   user?: UserProfile;
   error?: string;
+  requiresEmailConfirmation?: boolean;
+  sessionCleanupFailed?: boolean;
+}
+
+export type ProfileFetchResult =
+  | { status: 'found'; profile: UserProfile }
+  | { status: 'missing'; error: string }
+  | { status: 'error'; error: string };
+
+export type SessionRestoreResult =
+  | { status: 'no-session' }
+  | { status: 'restored'; user: UserProfile }
+  | { status: 'profile-missing'; error: string; sessionCleanupFailed?: boolean }
+  | { status: 'profile-error'; error: string; sessionCleanupFailed?: boolean }
+  | { status: 'session-error'; error: string; sessionCleanupFailed?: boolean };
+
+const PROFILE_SELECT_COLUMNS = [
+  'id', 'nickname', 'avatar_url', 'bio', 'is_18_verified', 'verified_at',
+  'verification_method', 'safe_filter_enabled', 'notification_sounds', 'created_at',
+].join(',');
+
+export async function fetchProfileResultWithClient(supabase: any, userId: string, authUser?: any): Promise<ProfileFetchResult> {
+  try {
+    const { data, error, status } = await supabase
+      .from('profiles')
+      .select(PROFILE_SELECT_COLUMNS)
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('[VX-AUTH] Profile fetch failed:', { code: error?.code, status });
+      return { status: 'error', error: error.message || 'Profile query failed.' };
+    }
+    if (!data) return { status: 'missing', error: 'The authenticated account has no application profile.' };
+
+    const metadata = authUser?.id === userId ? authUser.user_metadata || {} : {};
+    return {
+      status: 'found',
+      profile: {
+        id: data.id,
+        nickname: data.nickname,
+        email: authUser?.id === userId ? authUser.email : undefined,
+        avatar: data.avatar_url || '🛡️',
+        gender: metadata.gender,
+        bio: data.bio || '',
+        isGuest: false,
+        is18Verified: Boolean(data.is_18_verified),
+        verifiedAt: data.verified_at,
+        verificationMethod: data.verification_method,
+        languagePreference: 'en',
+        safeFilterEnabled: Boolean(data.safe_filter_enabled),
+        notificationSounds: Boolean(data.notification_sounds),
+        createdAt: data.created_at,
+      },
+    };
+  } catch (error: any) {
+    console.warn('[VX-AUTH] Profile fetch failed unexpectedly.');
+    return { status: 'error', error: error?.message || 'Profile query failed unexpectedly.' };
+  }
+}
+
+export async function getProfileWithClient(supabase: any, userId: string, authUser?: any): Promise<UserProfile | null> {
+  const result = await fetchProfileResultWithClient(supabase, userId, authUser);
+  return result.status === 'found' ? result.profile : null;
+}
+
+async function cleanUpFailedProfileSession(supabase: any): Promise<{ error?: string; failed: boolean }> {
+  let cleanupError: string | undefined;
+  try {
+    const { error } = await supabase.auth.signOut({ scope: 'local' });
+    if (error) cleanupError = error.message || 'Local session cleanup failed.';
+  } catch (error: any) {
+    cleanupError = error?.message || 'Local session cleanup failed.';
+  }
+
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      cleanupError = [cleanupError, error.message || 'Could not verify local session cleanup.'].filter(Boolean).join(' ');
+      return { error: cleanupError, failed: true };
+    }
+    if (data?.session) {
+      cleanupError = [cleanupError, 'A local authenticated session remains active.'].filter(Boolean).join(' ');
+      return { error: cleanupError, failed: true };
+    }
+  } catch (error: any) {
+    cleanupError = [cleanupError, error?.message || 'Could not verify local session cleanup.'].filter(Boolean).join(' ');
+    return { error: cleanupError, failed: true };
+  }
+  return cleanupError
+    ? { error: `Sign-out reported an error, but the local session was cleared: ${cleanupError}`, failed: false }
+    : { failed: false };
+}
+
+async function authenticatedProfileResponse(supabase: any, user: any, context: string): Promise<AuthResponse> {
+  const result = await fetchProfileResultWithClient(supabase, user.id, user);
+  if (result.status === 'found') return { success: true, user: result.profile };
+
+  const reason = `${context}: ${result.error}`;
+  const cleanup = await cleanUpFailedProfileSession(supabase);
+  if (cleanup.error) {
+    return {
+      success: false,
+      error: `${reason} Session cleanup: ${cleanup.error}`,
+      ...(cleanup.failed ? { sessionCleanupFailed: true } : {}),
+    };
+  }
+  return { success: false, error: reason };
+}
+
+export async function registerWithSupabaseClient(
+  supabase: any,
+  email: string,
+  password: string,
+  nickname: string,
+  gender: string,
+  _languagePref: AppLanguage,
+): Promise<AuthResponse> {
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { nickname: nickname.trim(), avatar_url: '🛡️', gender } },
+    });
+
+    if (error) return { success: false, error: error.message };
+    if (!data.user) return { success: false, error: 'Registration failed: No user returned.' };
+    if (!data.session) return { success: true, requiresEmailConfirmation: true };
+
+    const response = await authenticatedProfileResponse(supabase, data.user, 'Registration succeeded but the application profile could not be loaded');
+    if (response.user) response.user.languagePreference = _languagePref;
+    return response;
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'An unexpected error occurred during signup.' };
+  }
+}
+
+export async function loginWithSupabaseClient(supabase: any, email: string, password: string): Promise<AuthResponse> {
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { success: false, error: error.message };
+    if (!data.user) return { success: false, error: 'Login failed: Invalid credentials.' };
+    return authenticatedProfileResponse(supabase, data.user, 'Login succeeded but the application profile could not be loaded');
+  } catch (error: any) {
+    return { success: false, error: error?.message || 'An unexpected error occurred during signin.' };
+  }
+}
+
+export async function restoreSessionWithSupabaseClient(supabase: any): Promise<SessionRestoreResult> {
+  let sessionData: any;
+  try {
+    const result = await supabase.auth.getSession();
+    if (result.error) {
+      const reason = result.error.message || 'Could not read the authentication session.';
+      const cleanup = await cleanUpFailedProfileSession(supabase);
+      return {
+        status: 'session-error',
+        error: cleanup.error ? `${reason} Session cleanup: ${cleanup.error}` : reason,
+        ...(cleanup.failed ? { sessionCleanupFailed: true } : {}),
+      };
+    }
+    sessionData = result.data;
+  } catch (error: any) {
+    const reason = error?.message || 'Could not read the authentication session.';
+    const cleanup = await cleanUpFailedProfileSession(supabase);
+    return {
+      status: 'session-error',
+      error: cleanup.error ? `${reason} Session cleanup: ${cleanup.error}` : reason,
+      ...(cleanup.failed ? { sessionCleanupFailed: true } : {}),
+    };
+  }
+
+  const authUser = sessionData?.session?.user;
+  if (!authUser) return { status: 'no-session' };
+
+  const profile = await fetchProfileResultWithClient(supabase, authUser.id, authUser);
+  if (profile.status === 'found') return { status: 'restored', user: profile.profile };
+
+  const cleanup = await cleanUpFailedProfileSession(supabase);
+  return {
+    status: profile.status === 'missing' ? 'profile-missing' : 'profile-error',
+    error: profile.error,
+    ...(cleanup.error ? {
+      ...(cleanup.failed ? { sessionCleanupFailed: true } : {}),
+      error: `${profile.error} Session cleanup: ${cleanup.error}`,
+    } : {}),
+  };
 }
 
 export const authService = {
-  /**
-   * Register a new user with Supabase Auth and initialize public profile record
-   */
+  /** Register a user; a database trigger creates the profile transactionally. */
   async register(
     email: string,
     password: string,
@@ -27,9 +212,7 @@ export const authService = {
         nickname: nickname.trim(),
         gender: gender as any,
         isGuest: false,
-        is18Verified: true,
-        verifiedAt: new Date().toISOString(),
-        verificationMethod: 'self_declaration',
+        is18Verified: false,
         avatar: '🛡️',
         languagePreference: languagePref,
         safeFilterEnabled: true,
@@ -39,70 +222,7 @@ export const authService = {
       return { success: true, user: simulatedUser };
     }
 
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            nickname: nickname.trim(),
-            avatar_url: '🛡️',
-            gender,
-          },
-        },
-      });
-
-      if (error) {
-        return { success: false, error: error.message };
-      }
-
-      if (!data.user) {
-        return { success: false, error: 'Registration failed: No user returned.' };
-      }
-
-      // Upsert profile in public.profiles table
-      const profileData: UserProfile = {
-        id: data.user.id,
-        email: data.user.email,
-        nickname: nickname.trim(),
-        gender: gender as any,
-        avatar: '🛡️',
-        isGuest: false,
-        is18Verified: false,
-        languagePreference: languagePref,
-        safeFilterEnabled: true,
-        notificationSounds: true,
-        createdAt: new Date().toISOString(),
-      };
-
-      const { error: profileError } = await supabase.from('profiles').upsert({
-        id: data.user.id,
-        nickname: nickname.trim(),
-        avatar_url: '🛡️',
-        role: 'user',
-        is_18_verified: false,
-        safe_filter_enabled: true,
-        notification_sounds: true,
-      });
-
-      if (profileError) {
-        console.error('[authService] Profile persistence failed:', profileError);
-        return { success: false, error: `Registration failed: Could not create user profile (${profileError.message})` };
-      }
-
-      // If email confirmation is enabled, data.session will be null.
-      // The user must confirm their email before they can access the application.
-      if (!data.session) {
-        return {
-          success: false,
-          error: 'Registration successful! Please check your email and confirm your account before logging in.'
-        };
-      }
-
-      return { success: true, user: profileData };
-    } catch (err: any) {
-      return { success: false, error: err.message || 'An unexpected error occurred during signup.' };
-    }
+    return registerWithSupabaseClient(supabase, email, password, nickname, gender, languagePref);
   },
 
   /**
@@ -116,9 +236,7 @@ export const authService = {
         email,
         nickname: email.split('@')[0],
         isGuest: false,
-        is18Verified: true,
-        verifiedAt: new Date().toISOString(),
-        verificationMethod: 'self_declaration',
+        is18Verified: false,
         avatar: '🛡️',
         languagePreference: 'en',
         safeFilterEnabled: true,
@@ -128,26 +246,7 @@ export const authService = {
       return { success: true, user: simulatedUser };
     }
 
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        return { success: false, error: error.message };
-      }
-
-      if (!data.user) {
-        return { success: false, error: 'Login failed: Invalid credentials.' };
-      }
-
-      // Retrieve full profile from database and merge auth metadata
-      const profile = await this.getProfile(data.user.id, data.user);
-      return { success: true, user: profile || undefined };
-    } catch (err: any) {
-      return { success: false, error: err.message || 'An unexpected error occurred during signin.' };
-    }
+    return loginWithSupabaseClient(supabase, email, password);
   },
 
   /**
@@ -199,19 +298,10 @@ export const authService = {
   /**
    * Restore active session on initial page load
    */
-  async restoreSession(): Promise<UserProfile | null> {
+  async restoreSession(): Promise<SessionRestoreResult> {
     const supabase = getSupabaseClient();
-    if (!supabase) return null;
-
-    try {
-      const { data } = await supabase.auth.getSession();
-      if (data?.session?.user) {
-        return await this.getProfile(data.session.user.id, data.session.user);
-      }
-      return null;
-    } catch {
-      return null;
-    }
+    if (!supabase) return { status: 'no-session' };
+    return restoreSessionWithSupabaseClient(supabase);
   },
 
   /**
@@ -220,73 +310,7 @@ export const authService = {
   async getProfile(userId: string, authUser?: any): Promise<UserProfile | null> {
     const supabase = getSupabaseClient();
     if (!supabase) return null;
-
-    try {
-      const { data, error, status } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      // Get metadata from authUser if provided, or try to fetch current user
-      let metadata = authUser?.user_metadata || {};
-      if (!authUser && userId) {
-         // Optionally fetch auth user if not provided and it matches the current session
-         // For now, we rely on callers passing authUser when available (login/restore)
-      }
-
-      if (error) {
-        // Detailed logging for PostgREST errors (e.g. PGRST205 / 404)
-        console.warn(`[VX-AUTH] Profile fetch error for ${userId.slice(0, 8)}:`, {
-          code: error.code,
-          message: error.message,
-          status,
-          hint: error.hint
-        });
-        
-        // If the table is missing or the record is missing, we might want to return 
-        // a minimal profile from the auth metadata as a last-resort fallback
-        if (status === 404) {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user && user.id === userId) {
-             return {
-               id: user.id,
-               nickname: user.user_metadata?.nickname || user.email?.split('@')[0] || 'User',
-               avatar: user.user_metadata?.avatar_url || '🛡️',
-               gender: user.user_metadata?.gender,
-               isGuest: false,
-               is18Verified: false,
-               languagePreference: 'en',
-               safeFilterEnabled: true,
-               notificationSounds: true,
-               createdAt: user.created_at,
-             };
-          }
-        }
-        return null;
-      }
-
-      if (!data) return null;
-
-      return {
-        id: data.id,
-        nickname: data.nickname,
-        avatar: data.avatar_url || '🛡️',
-        gender: metadata.gender,
-        bio: data.bio || '',
-        isGuest: false,
-        is18Verified: Boolean(data.is_18_verified),
-        verifiedAt: data.verified_at,
-        verificationMethod: data.verification_method,
-        languagePreference: 'en',
-        safeFilterEnabled: Boolean(data.safe_filter_enabled),
-        notificationSounds: Boolean(data.notification_sounds),
-        createdAt: data.created_at,
-      };
-    } catch (e) {
-      console.error('[VX-AUTH] Unexpected profile fetch exception:', e);
-      return null;
-    }
+    return getProfileWithClient(supabase, userId, authUser);
   },
 
   /**
