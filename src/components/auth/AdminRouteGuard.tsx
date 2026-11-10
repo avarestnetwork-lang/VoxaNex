@@ -74,7 +74,7 @@ export const AdminRouteGuard: React.FC<AdminRouteGuardProps> = ({ children }) =>
           </div>
           <h2 className="text-xl font-bold text-white">Access Denied</h2>
           <p className="text-xs text-slate-400 leading-relaxed">
-            {errorMsg || 'You must be authenticated as an authorized administrator or staff member to view this console.'}
+            {errorMsg || 'You must be authenticated as an authorized administrator to view this console.'}
           </p>
           <div className="pt-2">
             <button

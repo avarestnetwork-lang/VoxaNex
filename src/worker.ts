@@ -828,7 +828,7 @@ export default {
       const verify = await verifyAdminToken(token, env.JWT_SECRET);
       
       if (!verify.valid) {
-        return jsonResponse({ success: false, error: verify.reason || 'Unauthorized' }, 401);
+        return jsonResponse({ success: false, error: 'Unauthorized' }, 401);
       }
 
       return jsonResponse({

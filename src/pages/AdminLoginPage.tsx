@@ -36,7 +36,7 @@ export const AdminLoginPage: React.FC = () => {
         setError(data.error || 'Authentication failed. Invalid administrator credentials.');
       } else {
         // Successfully logged in
-        navigate('/admin');
+        navigate('/admin/dashboard');
       }
     } catch (err) {
       setError('Connection error. Unable to reach authentication server.');
@@ -55,10 +55,10 @@ export const AdminLoginPage: React.FC = () => {
             <span>Restricted Operations Console</span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white">
-            Staff Authentication
+            Administrator Authentication
           </h1>
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
-            Authorized administrators and staff members only. All access attempts are logged and audited.
+            Authorized administrators only. All access attempts are logged and audited.
           </p>
         </div>
 
