@@ -154,7 +154,7 @@ export const RoomDirectoryPage: React.FC = () => {
             <span>{language === 'bn' ? 'উন্মুক্ত কমিউনিটি ও আন্তর্জাতিক চ্যানেল' : 'Public & International Lounges'}</span>
           </div>
           <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            {t.rooms.title}
+            Bengali & Desi Chat Rooms Directory
           </h1>
           <p className="text-base text-slate-600 dark:text-slate-400 max-w-2xl leading-relaxed">
             {t.rooms.subtitle}
