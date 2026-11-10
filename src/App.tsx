@@ -5,6 +5,8 @@ import { CallProvider } from './context/CallContext';
 import { RouterProvider, useRouter } from './context/RouterContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { PrivateChatProvider } from './context/PrivateChatContext';
+import { ConsentProvider } from './context/ConsentContext';
+import { CookieConsent } from './components/ads/CookieConsent';
 import { FloatingChatManager } from './components/chat/FloatingChatManager';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
@@ -146,6 +148,7 @@ const AppRoutes: React.FC = () => {
       <main className="flex-1 w-full">{renderCurrentPage()}</main>
       <Footer />
       <BackToTop />
+      <CookieConsent />
     </div>
   );
 };
@@ -158,8 +161,10 @@ export default function App() {
           <ThemeProvider>
             <RouterProvider>
               <PrivateChatProvider>
-                <AppRoutes />
-                <FloatingChatManager />
+                <ConsentProvider>
+                  <AppRoutes />
+                  <FloatingChatManager />
+                </ConsentProvider>
               </PrivateChatProvider>
             </RouterProvider>
           </ThemeProvider>
