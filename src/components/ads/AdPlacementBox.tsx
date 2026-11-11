@@ -1,23 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 export type AdSlotPosition = 'top' | 'bottom' | 'left' | 'right';
+export type AdProvider = 'adsense' | 'adsterra' | 'juicyads' | 'monetag' | 'exoclick';
 
 export interface AdPlacementBoxProps {
   slotId: string;
+  provider?: AdProvider;
   label?: string;
   className?: string;
   isVertical?: boolean;
   position?: AdSlotPosition;
-  adUnitId?: string;
+  adUnitId?: string; // Used for AdSense slot or Adsterra unit ID
   onStatusChange?: (status: 'filled' | 'unfilled' | 'error') => void;
   renderAd?: () => React.ReactNode;
 }
 
-// Canonical publisher ID from index.html / ads.txt
 const ADSENSE_CLIENT_ID = 'ca-pub-7862321512207088';
 
 export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   slotId,
+  provider = 'adsense',
   className = '',
   isVertical = false,
   position,
@@ -25,15 +27,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   onStatusChange,
   renderAd,
 }) => {
-  // Determine effective unit ID from props or optional environment config
   const effectiveUnitId =
     adUnitId ||
     (typeof import.meta !== 'undefined' &&
       (import.meta as any).env?.[
-        `VITE_ADSENSE_SLOT_${slotId.toUpperCase().replace(/-/g, '_')}`
+        `VITE_${provider.toUpperCase()}_SLOT_${slotId.toUpperCase().replace(/-/g, '_')}`
       ]);
 
-  // Determine position-aware responsive wrapper classes
   let positionClasses = '';
   if (position === 'top') {
     positionClasses = 'w-full mb-2.5 shrink-0 flex justify-center overflow-hidden';
@@ -47,7 +47,6 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     positionClasses = 'w-full shrink-0 flex justify-center overflow-hidden';
   }
 
-  // 1. If custom renderAd is supplied (for testing, affiliate banners, or custom provider)
   if (renderAd) {
     const customContent = renderAd();
     if (!customContent) {
@@ -65,59 +64,80 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     );
   }
 
-  // 2. If no ad unit ID is configured, fail closed immediately with zero DOM footprint
   if (!effectiveUnitId) {
     onStatusChange?.('unfilled');
     return null;
   }
 
   const [adStatus, setAdStatus] = useState<'idle' | 'filled' | 'unfilled' | 'error'>('idle');
-  const adRef = useRef<HTMLModElement | null>(null);
+  const adRef = useRef<HTMLModElement | HTMLDivElement | null>(null);
 
   useEffect(() => {
-    // Attempt AdSense rendering
-    try {
-      if (typeof window !== 'undefined') {
-        const adsbygoogle = (window as any).adsbygoogle;
-        if (Array.isArray(adsbygoogle)) {
-          adsbygoogle.push({});
-        }
-      }
-    } catch {
-      setAdStatus('error');
-      onStatusChange?.('error');
-      return;
-    }
-
-    // Observe ad element for actual fill status from provider
-    const targetElement = adRef.current;
-    if (!targetElement) return;
-
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type === 'attributes' && mutation.attributeName === 'data-ad-status') {
-          const status = targetElement.getAttribute('data-ad-status');
-          if (status === 'filled') {
-            setAdStatus('filled');
-            onStatusChange?.('filled');
-          } else if (status === 'unfilled') {
-            setAdStatus('unfilled');
-            onStatusChange?.('unfilled');
+    if (provider === 'adsense') {
+      try {
+        if (typeof window !== 'undefined') {
+          const adsbygoogle = (window as any).adsbygoogle;
+          if (Array.isArray(adsbygoogle)) {
+            adsbygoogle.push({});
           }
         }
+      } catch {
+        setAdStatus('error');
+        onStatusChange?.('error');
+        return;
       }
-    });
+    } else if (provider === 'adsterra') {
+      // Adsterra initialization placeholder
+      setAdStatus('filled');
+      onStatusChange?.('filled');
+    }
+    
+    // MutationObserver only for AdSense
+    if (provider === 'adsense') {
+      const targetElement = adRef.current;
+      if (!targetElement) return;
 
-    observer.observe(targetElement, { attributes: true });
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.type === 'attributes' && mutation.attributeName === 'data-ad-status') {
+            const status = (targetElement as HTMLElement).getAttribute('data-ad-status');
+            if (status === 'filled') {
+              setAdStatus('filled');
+              onStatusChange?.('filled');
+            } else if (status === 'unfilled') {
+              setAdStatus('unfilled');
+              onStatusChange?.('unfilled');
+            }
+          }
+        }
+      });
+      observer.observe(targetElement, { attributes: true });
+      return () => observer.disconnect();
+    }
+  }, [provider, effectiveUnitId, onStatusChange]);
 
-    return () => {
-      observer.disconnect();
-    };
-  }, [effectiveUnitId, onStatusChange]);
-
-  // If advertisement is unconfirmed, unfilled, or errored, render absolutely nothing
-  if (adStatus !== 'filled') {
+  if (adStatus !== 'filled' && provider === 'adsense') {
     return null;
+  }
+
+  if (provider === 'adsterra') {
+    return (
+      <div
+        data-testid={`ad-slot-${slotId}`}
+        className={`${positionClasses} ${className}`.trim()}
+      >
+        <script
+          type="text/javascript"
+          dangerouslySetInnerHTML={{
+            __html: `atOptions = { 'key' : '${effectiveUnitId}', 'format' : 'iframe', 'height' : 250, 'width' : 300, 'params' : {} };`,
+          }}
+        />
+        <script
+          type="text/javascript"
+          src={`//www.highperformanceformat.com/${effectiveUnitId}/invoke.js`}
+        />
+      </div>
+    );
   }
 
   return (
@@ -126,7 +146,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       className={`${positionClasses} ${className}`.trim()}
     >
       <ins
-        ref={adRef}
+        ref={adRef as React.RefObject<HTMLModElement>}
         className="adsbygoogle block overflow-hidden max-w-full"
         data-ad-client={ADSENSE_CLIENT_ID}
         data-ad-slot={effectiveUnitId}
