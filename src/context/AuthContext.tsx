@@ -167,20 +167,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (supabase && isSupabaseActive) {
       const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!isMounted) return;
+        const eventSeq = ++restoreSeqRef.current;
 
         if (event === 'SIGNED_IN' && session?.user) {
-          setUser(curr => {
-            if (!curr.isGuest && curr.id === session.user.id) {
-              return curr;
-            }
-            authService.getProfile(session.user.id, session.user).then(profile => {
-              if (isMounted && profile) {
-                setUser(profile);
-                setHasActiveSession(true);
-              }
-            });
-            return curr;
-          });
+          const profile = await authService.getProfile(session.user.id, session.user);
+          if (!isMounted || restoreSeqRef.current !== eventSeq) return;
+          if (profile) {
+            setUser(profile);
+            setHasActiveSession(true);
+            setIsLoading(false);
+          }
         } else if (event === 'SIGNED_OUT') {
           // Strictly clear only registered member sessions to preserve independent guest access
           setUser(curr => {
@@ -195,6 +191,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
             return curr;
           });
+          if (isMounted && restoreSeqRef.current === eventSeq) {
+            setIsLoading(false);
+          }
         }
       });
       authListenerSub = data?.subscription || null;

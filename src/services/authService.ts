@@ -7,6 +7,7 @@ export interface AuthResponse {
   error?: string;
   requiresEmailConfirmation?: boolean;
   message?: string;
+  profileConfirmed?: boolean;
 }
 
 export const authService = {
@@ -79,10 +80,10 @@ export const authService = {
       // If session exists immediately, fetch the profile created by the database trigger
       const profile = await this.getProfile(data.user.id, data.user);
       if (profile) {
-        return { success: true, user: profile };
+        return { success: true, user: profile, profileConfirmed: true };
       }
 
-      // Fallback profile representation if read replica is momentarily propagating
+      // Temporary presentation fallback if read replica is momentarily propagating
       const profileData: UserProfile = {
         id: data.user.id,
         email: data.user.email,
@@ -97,7 +98,7 @@ export const authService = {
         createdAt: data.user.created_at || new Date().toISOString(),
       };
 
-      return { success: true, user: profileData };
+      return { success: true, user: profileData, profileConfirmed: false };
     } catch (err: any) {
       return { success: false, error: err.message || 'An unexpected error occurred during signup.' };
     }
