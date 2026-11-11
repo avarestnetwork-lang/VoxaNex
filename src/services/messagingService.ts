@@ -45,11 +45,51 @@ export const setTestAuthTokenResolver = (resolver: (() => Promise<string | null>
   __testAuthTokenResolver = resolver;
 };
 
-async function getAuthToken(): Promise<string | null> {
+export interface AuthTokenOptions {
+  isGuest?: boolean;
+  senderType?: 'registered' | 'guest';
+  userId?: string;
+}
+
+export async function getAuthToken(options?: AuthTokenOptions | boolean): Promise<string | null> {
   if (typeof __testAuthTokenResolver === 'function') {
     return await __testAuthTokenResolver();
   }
 
+  const isGuest =
+    typeof options === 'boolean'
+      ? options
+      : options?.isGuest !== undefined
+      ? options.isGuest
+      : options?.senderType !== undefined
+      ? options.senderType === 'guest'
+      : options?.userId !== undefined
+      ? options.userId.startsWith('guest_')
+      : undefined;
+
+  if (isGuest === true) {
+    const guestToken =
+      guestSessionService.getStoredToken() ||
+      (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
+    return guestToken || null;
+  }
+
+  if (isGuest === false) {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data?.session?.access_token) {
+          return data.session.access_token;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return null;
+  }
+
+  // Fallback for unspecified caller context: check Supabase session then guest token
   const supabase = getSupabaseClient();
   if (supabase) {
     try {
@@ -62,7 +102,9 @@ async function getAuthToken(): Promise<string | null> {
     }
   }
 
-  const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
+  const guestToken =
+    guestSessionService.getStoredToken() ||
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
   if (guestToken) return guestToken;
 
   return null;
@@ -232,9 +274,9 @@ export const messagingService = {
     }
   },
 
-  async getIdentityHeaders(): Promise<Record<string, string>> {
+  async getIdentityHeaders(options?: AuthTokenOptions | boolean): Promise<Record<string, string>> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const token = await getAuthToken();
+    const token = await getAuthToken(options);
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -508,10 +550,12 @@ export const messagingService = {
 
   async getOrCreateConversation(
     userId: string,
-    partnerId: string
+    partnerId: string,
+    options?: AuthTokenOptions | boolean
   ): Promise<{ success: boolean; conversationId?: string; slug?: string; error?: string; status?: number }> {
     try {
-      const token = await getAuthToken();
+      const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
+      const token = await getAuthToken(opts);
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -545,10 +589,12 @@ export const messagingService = {
 
   async fetchConversationMessages(
     convId: string,
-    userId: string
+    userId: string,
+    options?: AuthTokenOptions | boolean
   ): Promise<{ success: boolean; messages: ChatMessage[]; error?: string; status?: number }> {
     try {
-      const token = await getAuthToken();
+      const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
+      const token = await getAuthToken(opts);
       const url = `${API_BASE}/api/chat/conversations/${convId}/messages?userId=${encodeURIComponent(userId)}`;
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -586,23 +632,26 @@ export const messagingService = {
       linkPreview?: LinkPreviewData;
       clientNonce?: string;
       senderType?: 'registered' | 'guest';
+      isGuest?: boolean;
     }
   ): Promise<{ success: boolean; message?: ChatMessage; error?: string }> {
     try {
-      const guestToken =
-        guestSessionService.getStoredToken() ||
-        (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined) ||
-        undefined;
-      const authToken = !guestToken ? await getAuthToken() : undefined;
+      const isGuest =
+        options.isGuest !== undefined
+          ? options.isGuest
+          : options.senderType !== undefined
+          ? options.senderType === 'guest'
+          : options.senderId.startsWith('guest_');
+
+      const token = await getAuthToken({ isGuest, senderType: options.senderType, userId: options.senderId });
+      const guestToken = isGuest ? (token || undefined) : undefined;
 
       const clientNonce = options.clientNonce || `nonce_dm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       let confirmedMessage: ChatMessage | null = null;
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (guestToken) {
-        headers['Authorization'] = `Bearer ${guestToken}`;
-      } else if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
 
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/messages`, {
@@ -660,9 +709,10 @@ export const messagingService = {
     }
   },
 
-  async fetchUserConversations(userId: string): Promise<string[]> {
+  async fetchUserConversations(userId: string, options?: AuthTokenOptions | boolean): Promise<string[]> {
     try {
-      const authToken = await getAuthToken();
+      const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
+      const authToken = await getAuthToken(opts);
       const url = `${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`;
       const headers: Record<string, string> = {};
       if (authToken) {
@@ -676,9 +726,16 @@ export const messagingService = {
     }
   },
 
-  async sendConversationTyping(convId: string, memberId: string, nickname: string, isTyping: boolean) {
+  async sendConversationTyping(
+    convId: string,
+    memberId: string,
+    nickname: string,
+    isTyping: boolean,
+    options?: AuthTokenOptions | boolean
+  ) {
     try {
-      const headers = await this.getIdentityHeaders();
+      const opts = typeof options === 'boolean' ? { isGuest: options, userId: memberId } : { userId: memberId, ...options };
+      const headers = await this.getIdentityHeaders(opts);
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/typing`, {
         method: 'POST',
         headers,
@@ -691,9 +748,15 @@ export const messagingService = {
     }
   },
 
-  async sendConversationRead(convId: string, userId: string, messageId: string) {
+  async sendConversationRead(
+    convId: string,
+    userId: string,
+    messageId: string,
+    options?: AuthTokenOptions | boolean
+  ) {
     try {
-      const headers = await this.getIdentityHeaders();
+      const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
+      const headers = await this.getIdentityHeaders(opts);
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/read`, {
         method: 'POST',
         headers,
@@ -715,7 +778,8 @@ export const messagingService = {
           onTyping?: (typers: string[]) => void;
           onRead?: (receipt: { userId: string; messageId: string; readAt: string }) => void;
         }
-      | ((msg: ChatMessage) => void)
+      | ((msg: ChatMessage) => void),
+    options?: AuthTokenOptions | boolean
   ): () => void {
     const callbacks =
       typeof callbacksOrOnMessage === 'function'
@@ -757,14 +821,12 @@ export const messagingService = {
     let unsubscribeSSE = () => {};
     (async () => {
       if (isClosed) return;
-      const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
-      const authToken = !guestToken ? await getAuthToken() : undefined;
+      const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
+      const authToken = await getAuthToken(opts);
       if (isClosed) return;
 
       const headers: Record<string, string> = {};
-      if (guestToken) {
-        headers['Authorization'] = `Bearer ${guestToken}`;
-      } else if (authToken) {
+      if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
 
@@ -821,7 +883,7 @@ export const messagingService = {
     syncInterval = setInterval(async () => {
       if (isClosed) return;
       try {
-        const res = await messagingService.fetchConversationMessages(convId, userId);
+        const res = await messagingService.fetchConversationMessages(convId, userId, options);
         if (res.success && res.messages.length > 0) {
           for (const m of res.messages) {
             if (!seenDmIds.has(m.id)) {
@@ -857,21 +919,20 @@ export const messagingService = {
     callbacks: {
       onMessage?: (msg: ChatMessage) => void;
       onAuthError?: (status: number, message: string) => void;
-    }
+    },
+    options?: AuthTokenOptions | boolean
   ): () => void {
     let unsubscribeSSE = () => {};
     let isClosed = false;
 
     (async () => {
       if (isClosed) return;
-      const guestToken = guestSessionService.getStoredToken() || (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
-      const authToken = !guestToken ? await getAuthToken() : undefined;
+      const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
+      const authToken = await getAuthToken(opts);
       if (isClosed) return;
 
       const headers: Record<string, string> = {};
-      if (guestToken) {
-        headers['Authorization'] = `Bearer ${guestToken}`;
-      } else if (authToken) {
+      if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
 

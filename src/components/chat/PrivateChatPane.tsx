@@ -35,6 +35,7 @@ interface PrivateChatPaneProps {
     id: string;
     nickname: string;
     avatar: string;
+    isGuest?: boolean;
   };
   onClose: () => void;
   onMinimize?: () => void;
@@ -79,7 +80,8 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
       setInitError(null);
       setActiveConversationId(null);
 
-      const initRes = await messagingService.getOrCreateConversation(currentUser.id, partner.id);
+      const userOpts = { isGuest: currentUser.isGuest, userId: currentUser.id };
+      const initRes = await messagingService.getOrCreateConversation(currentUser.id, partner.id, userOpts);
       if (cancel) return;
 
       if (!initRes.success) {
@@ -91,7 +93,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
       const verifiedConvId = initRes.conversationId || conversationId;
       setActiveConversationId(verifiedConvId);
 
-      const res = await messagingService.fetchConversationMessages(verifiedConvId, currentUser.id);
+      const res = await messagingService.fetchConversationMessages(verifiedConvId, currentUser.id, userOpts);
       if (cancel) return;
 
       if (res.success) {
@@ -101,7 +103,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
           const incoming = res.messages.filter((m) => m.senderId === partner.id);
           if (incoming.length > 0) {
             const latest = incoming[incoming.length - 1];
-            messagingService.sendConversationRead(verifiedConvId, currentUser.id, latest.id);
+            messagingService.sendConversationRead(verifiedConvId, currentUser.id, latest.id, userOpts);
           }
         } else {
           // Welcome message placeholder
@@ -140,7 +142,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             });
 
             if (newMsg.senderId === partner.id) {
-              messagingService.sendConversationRead(verifiedConvId, currentUser.id, newMsg.id);
+              messagingService.sendConversationRead(verifiedConvId, currentUser.id, newMsg.id, userOpts);
             }
 
             setTimeout(() => scrollToBottom(true), 50);
@@ -153,7 +155,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
               setLastReadMessageId(receipt.messageId);
             }
           },
-        });
+        }, userOpts);
       }
     }
 
@@ -163,7 +165,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
       cancel = true;
       if (unsubscribeFn) unsubscribeFn();
     };
-  }, [conversationId, partner.id, partner.nickname, partner.avatar, currentUser.id, language]);
+  }, [conversationId, partner.id, partner.nickname, partner.avatar, currentUser.id, currentUser.isGuest, language]);
 
   const isComposerDisabled = loading || Boolean(initError) || !activeConversationId;
 
@@ -172,11 +174,11 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
     if (isComposerDisabled || !activeConversationId) return;
 
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    messagingService.sendConversationTyping(activeConversationId, currentUser.id, currentUser.nickname, true);
+    messagingService.sendConversationTyping(activeConversationId, currentUser.id, currentUser.nickname, true, { isGuest: currentUser.isGuest, userId: currentUser.id });
 
     typingTimeoutRef.current = setTimeout(() => {
       if (activeConversationId) {
-        messagingService.sendConversationTyping(activeConversationId, currentUser.id, currentUser.nickname, false);
+        messagingService.sendConversationTyping(activeConversationId, currentUser.id, currentUser.nickname, false, { isGuest: currentUser.isGuest, userId: currentUser.id });
       }
     }, 2500);
   };
@@ -222,6 +224,8 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
       mediaUrl: mediaToSend?.url,
       mediaType: mediaToSend?.type,
       clientNonce: nonce,
+      senderType: currentUser.isGuest ? 'guest' : 'registered',
+      isGuest: currentUser.isGuest,
     });
 
     if (result.success && result.message) {

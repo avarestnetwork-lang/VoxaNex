@@ -406,6 +406,53 @@ async function runInitErrorHandlingTests() {
       assert(hasMergeDuplicates === false, '7.3 Worker NO LONGER uses resolution=merge-duplicates');
     }
 
+    // =========================================================================
+    // 8. Explicit Caller Identity & Token Isolation Verification
+    // =========================================================================
+    console.log('\n--- 8. Explicit Caller Identity & Token Isolation Verification ---');
+    {
+      const { getAuthToken } = await import('../src/services/messagingService');
+
+      // 8.1 Guest user with stale member token present -> returns guest token, never member token
+      let mockGuestToken: string | null = tokenA;
+      const mockLocalStorage = {
+        getItem: (k: string) => (k === 'vx_guest_token' ? mockGuestToken : null),
+        setItem: (k: string, v: string) => { if (k === 'vx_guest_token') mockGuestToken = v; },
+        removeItem: (k: string) => { if (k === 'vx_guest_token') mockGuestToken = null; },
+      };
+      (globalThis as any).localStorage = mockLocalStorage;
+
+      const guestTokenResult = await getAuthToken({ isGuest: true });
+      assert(guestTokenResult === tokenA, '8.1 Guest caller returns stored guest token');
+
+      // 8.2 Registered member caller -> returns member token (or null if no Supabase session), never guest token
+      const memberTokenResult = await getAuthToken({ isGuest: false });
+      assert(memberTokenResult !== tokenA, '8.2 Registered member caller NEVER receives guest token');
+      assert(memberTokenResult === null, '8.3 Missing member token returns null safely without falling back to guest token');
+
+      // 8.4 Missing guest token for guest caller -> returns null safely without falling back to member token
+      mockLocalStorage.removeItem('vx_guest_token');
+
+      const missingGuestResult = await getAuthToken({ isGuest: true });
+      assert(missingGuestResult === null, '8.4 Missing guest token returns null safely without fallback');
+
+      // 8.5 Worker endpoint HTTP User ID Mismatch Verification
+      const mismatchToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJyZWctdXNlci11dWlkLTExMTEiLCJpYXQiOjE1MTYyMzkwMjJ9.signature';
+      const reqWorkerMismatch = new Request('https://voxanex.test/api/chat/conversations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${mismatchToken}`,
+        },
+        body: JSON.stringify({ userId: guestAId, partnerId: guestBId }),
+      });
+
+      const resWorkerMismatch = await worker.fetch(reqWorkerMismatch, env, {} as any);
+      assert(resWorkerMismatch.status === 403 || resWorkerMismatch.status === 401, '8.5 Worker rejects guest userId with member JWT token (HTTP 403/401)');
+      const errBody = (await resWorkerMismatch.json()) as any;
+      assert(errBody.error?.includes('User ID mismatch') || errBody.error?.includes('Unauthorized'), '8.6 Error message contains User ID mismatch or Unauthorized');
+    }
+
   } finally {
     globalThis.fetch = origFetch;
     process.env = originalEnv;

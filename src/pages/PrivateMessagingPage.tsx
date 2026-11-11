@@ -92,8 +92,9 @@ export const PrivateMessagingPage: React.FC = () => {
 
     async function init() {
       setInitError(null);
+      const userOpts = { isGuest: user.isGuest, userId: user.id };
       // Register membership on server
-      const initRes = await messagingService.getOrCreateConversation(user.id, currentConv.partnerId);
+      const initRes = await messagingService.getOrCreateConversation(user.id, currentConv.partnerId, userOpts);
       if (cancel) return;
 
       if (!initRes.success) {
@@ -102,7 +103,7 @@ export const PrivateMessagingPage: React.FC = () => {
       }
 
       // Fetch history
-      const res = await messagingService.fetchConversationMessages(activeConvId, user.id);
+      const res = await messagingService.fetchConversationMessages(activeConvId, user.id, userOpts);
       if (cancel) return;
 
       if (res.success) {
@@ -138,7 +139,7 @@ export const PrivateMessagingPage: React.FC = () => {
             });
             setTimeout(scrollToBottom, 50);
           },
-        });
+        }, userOpts);
       }
     }
 
@@ -148,7 +149,7 @@ export const PrivateMessagingPage: React.FC = () => {
       cancel = true;
       if (unsubscribeFn) unsubscribeFn();
     };
-  }, [activeConvId, activeConversation, user.id]);
+  }, [activeConvId, activeConversation, user.id, user.isGuest]);
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -200,6 +201,8 @@ export const PrivateMessagingPage: React.FC = () => {
       mediaUrl: mediaToSend?.url,
       mediaType: mediaToSend?.type,
       linkPreview,
+      senderType: user.isGuest ? 'guest' : 'registered',
+      isGuest: user.isGuest,
     });
 
     if (result.success && result.message) {
