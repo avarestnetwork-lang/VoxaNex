@@ -12,18 +12,26 @@ export const ADSTERRA_CONFIG = {
 
 export const MONETAG_CONFIG = {
   verificationTag: '416e702dd7d166aafe13107553d43a38',
-  multitagId: '308899', // From JS tag data-zone
-  workerZoneId: '12241124', // From SW content zoneId
-  enabled: false, // DEFERRED due to ID discrepancy (308899 vs 12241124)
+  multitagId: '308899', // JS-based multitag for In-Page Push/Vignette (if enabled)
+  workerZoneId: '12241124', // Service Worker zone for background formats
+  enabled: false, // DEFERRED until manual verification of dual-zone behavior
 };
 
 export const JUICYADS_CONFIG = {
   verificationTag: '97a6aeec522d11d21efa5f84c86eb958',
+  enabled: false, // NO SERVING ZONE DEFINED
+};
+
+export const EXOCLICK_CONFIG = {
+  verificationFile: '28befc4532cb8837aa59edffca607a5a.html',
+  enabled: false, // NO SERVING ZONE DEFINED
 };
 
 /**
  * Selection strategy: Priority list.
  * Fallback logic: Adsterra -> AdSense.
+ * 
+ * STRICT POLICY: No pop-ups, pop-unders, redirects, or push notification ads.
  */
 export const getProviderRotation = (position: string): AdProvider[] => {
   // Primary strategy: Adsterra first for adult/community slots, AdSense for general.
@@ -61,7 +69,11 @@ export const isRouteExcludedFromFooterAds = (currentRoute: string): boolean => {
   );
 };
 
-export const getAdsterraUnitForWidth = (width: number, position: string) => {
+/**
+ * Atomic Unit Mapping for Adsterra.
+ * Ensures the unit ID changes atomically with the width and position.
+ */
+export const getAdsterraUnitForWidth = (width: number, position: string): string | null => {
   if (position === 'footer' || position === 'content-gap') {
     if (width >= 728) return ADSTERRA_CONFIG.banner728x90;
     if (width >= 320) return ADSTERRA_CONFIG.banner320x50;
@@ -73,6 +85,7 @@ export const getAdsterraUnitForWidth = (width: number, position: string) => {
     if (width >= 300) return ADSTERRA_CONFIG.banner300x250;
   }
 
+  // General fallback by width
   if (width >= 728) return ADSTERRA_CONFIG.banner728x90;
   if (width >= 300) return ADSTERRA_CONFIG.banner300x250;
   if (width >= 320) return ADSTERRA_CONFIG.banner320x50;

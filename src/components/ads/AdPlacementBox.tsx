@@ -93,8 +93,15 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
     if (status !== 'filled' && !explicitProvider && providerIndex < rotation.length - 1) {
       console.log(`[Ads] Slot ${slotId} unfilled by ${currentProvider}. Rotating to ${rotation[providerIndex+1]}.`);
+      // Atomic change: Update index, clear previous state
       setProviderIndex(prev => prev + 1);
       setAdStatus('idle');
+      
+      // Cleanup previous observers
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
     } else {
       setAdStatus(status);
       onStatusChange?.(status);
@@ -195,12 +202,22 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           script.src = scriptSrc;
           
           script.onload = () => {
-            setTimeout(() => {
+            // Use a polling interval to check for native content injection
+            let attempts = 0;
+            const checkNativeFill = setInterval(() => {
+              if (!isMountedRef.current) { clearInterval(checkNativeFill); resolve(); return; }
               const el = document.getElementById(containerId);
-              if (el && el.children.length > 0) updateStatus('filled');
-              else updateStatus('unfilled'); 
-              resolve();
-            }, 1000); // Wait longer for native to render
+              if (el && el.children.length > 0) {
+                clearInterval(checkNativeFill);
+                updateStatus('filled');
+                resolve();
+              } else if (attempts > 5) { // Timeout after ~2.5s
+                clearInterval(checkNativeFill);
+                updateStatus('unfilled');
+                resolve();
+              }
+              attempts++;
+            }, 500);
           };
           script.onerror = () => { updateStatus('error'); resolve(); };
           document.head.appendChild(script);
@@ -224,12 +241,25 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           script.src = scriptSrc;
           
           script.onload = () => {
+            // For banners, we check for iframe presence after a short delay
             setTimeout(() => {
+              if (!isMountedRef.current) { resolve(); return; }
               const hasIframe = adRef.current?.querySelector('iframe');
-              if (hasIframe) updateStatus('filled');
-              else updateStatus('filled'); // Fallback
+              if (hasIframe) {
+                // Check if iframe has content (not empty)
+                try {
+                   // Cannot check cross-origin content, so we assume if iframe exists it's filled
+                   // but we double check if iframe has 0 height/width
+                   if (hasIframe.offsetHeight > 0) updateStatus('filled');
+                   else updateStatus('unfilled');
+                } catch {
+                   updateStatus('filled');
+                }
+              } else {
+                updateStatus('unfilled');
+              }
               resolve();
-            }, 600);
+            }, 1000);
           };
           script.onerror = () => { updateStatus('error'); resolve(); };
 
