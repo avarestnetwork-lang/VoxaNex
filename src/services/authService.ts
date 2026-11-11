@@ -74,6 +74,7 @@ export const authService = {
           success: true,
           requiresEmailConfirmation: true,
           message: 'Registration successful! Please check your email to confirm your account before logging in.',
+          profileConfirmed: false,
         };
       }
 
@@ -83,22 +84,12 @@ export const authService = {
         return { success: true, user: profile, profileConfirmed: true };
       }
 
-      // Temporary presentation fallback if read replica is momentarily propagating
-      const profileData: UserProfile = {
-        id: data.user.id,
-        email: data.user.email,
-        nickname: sanitizedNick,
-        gender: gender as any,
-        avatar: '🛡️',
-        isGuest: false,
-        is18Verified: false,
-        languagePreference: languagePref,
-        safeFilterEnabled: true,
-        notificationSounds: true,
-        createdAt: data.user.created_at || new Date().toISOString(),
+      // If session exists but profile cannot be retrieved or confirmed, do not claim success.
+      return {
+        success: false,
+        error: 'Account created, but database profile initialization could not be confirmed. Please sign in to complete account setup.',
+        profileConfirmed: false,
       };
-
-      return { success: true, user: profileData, profileConfirmed: false };
     } catch (err: any) {
       return { success: false, error: err.message || 'An unexpected error occurred during signup.' };
     }
@@ -280,6 +271,7 @@ export const authService = {
         languagePreference: 'en',
         safeFilterEnabled: Boolean(data.safe_filter_enabled),
         notificationSounds: Boolean(data.notification_sounds),
+        role: data.role || 'user',
         createdAt: data.created_at,
       };
     } catch (e) {
