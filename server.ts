@@ -324,8 +324,8 @@ export function createExpressApp(dbEnvOverride?: {
   // ---------------------------------------------------------------------------
   // GUEST SESSION ENDPOINTS
   // ---------------------------------------------------------------------------
-  app.post('/api/guest/session', (req, res) => {
-    const { nickname, avatar, languagePref, is18Verified, gender } = req.body || {};
+  app.post('/api/guest/session', async (req, res) => {
+    const { nickname, avatar, languagePref, is18Verified, gender, ageDeclarationAccepted } = req.body || {};
 
     if (!nickname || typeof nickname !== 'string' || nickname.trim().length < 2) {
       return res.status(400).json({
@@ -352,6 +352,48 @@ export function createExpressApp(dbEnvOverride?: {
       return res.status(429).json({ success: false, error: result.error });
     }
 
+    const tokenHash = await computeTokenHash(result.session.token);
+    const guestSessionRecord = {
+      id: result.session.id,
+      session_token_hash: tokenHash,
+      nickname: result.session.nickname,
+      avatar: result.session.avatar,
+      language_pref: result.session.languagePref,
+      is_18_verified: Boolean(result.session.is18Verified),
+      verified_at: null,
+      expires_at: new Date(result.session.expiresAt).toISOString(),
+      is_revoked: false,
+    };
+
+    if (dbEnv.supabaseUrl && dbEnv.supabaseServiceKey) {
+      try {
+        const dbRes = await fetch(`${dbEnv.supabaseUrl}/rest/v1/guest_sessions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': dbEnv.supabaseServiceKey,
+            'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+            'Prefer': 'return=representation',
+          },
+          body: JSON.stringify(guestSessionRecord),
+        });
+        if (!dbRes.ok) {
+          const errText = await dbRes.text().catch(() => '');
+          console.error(`[Server] Supabase guest session insert failed HTTP ${dbRes.status}:`, errText);
+          return res.status(500).json({
+            success: false,
+            error: `Database session registration failed (HTTP ${dbRes.status}).`,
+          });
+        }
+      } catch (err) {
+        console.error('[Server] Supabase guest session insert error:', err);
+        return res.status(500).json({
+          success: false,
+          error: 'Database connection error during guest registration.',
+        });
+      }
+    }
+
     res.json({
       success: true,
       session: {
@@ -361,6 +403,7 @@ export function createExpressApp(dbEnvOverride?: {
         avatar: result.session.avatar,
         languagePref: result.session.languagePref,
         is18Verified: result.session.is18Verified,
+        ageDeclarationAccepted: Boolean(ageDeclarationAccepted),
         expiresAt: result.session.expiresAt,
       },
       disclaimer:
@@ -368,22 +411,88 @@ export function createExpressApp(dbEnvOverride?: {
     });
   });
 
-  app.post('/api/guest/validate', (req, res) => {
+  app.post('/api/guest/validate', async (req, res) => {
     const { token } = req.body || {};
     if (!token) {
       return res.status(400).json({ valid: false, reason: 'Token required' });
     }
     const result = validateGuestToken(token);
+    if (!result.valid || !result.session) {
+      return res.json(result);
+    }
+
+    if (dbEnv.supabaseUrl && dbEnv.supabaseServiceKey) {
+      try {
+        const tokenHash = await computeTokenHash(token);
+        const queryUrl = `${dbEnv.supabaseUrl}/rest/v1/guest_sessions?session_token_hash=eq.${encodeURIComponent(tokenHash)}&select=id,is_revoked,expires_at`;
+        const dbRes = await fetch(queryUrl, {
+          headers: {
+            'apikey': dbEnv.supabaseServiceKey,
+            'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+          },
+        });
+        if (dbRes.ok) {
+          const rows: any = await dbRes.json();
+          if (Array.isArray(rows) && rows.length > 0) {
+            const row = rows[0];
+            if (row.is_revoked) {
+              return res.json({ valid: false, reason: 'Guest session has been revoked by security policy' });
+            }
+            if (row.expires_at && Date.now() >= Date.parse(row.expires_at)) {
+              return res.json({ valid: false, reason: 'Guest session has expired in database' });
+            }
+          } else {
+            return res.json({ valid: false, reason: 'Guest session not recognized by durable store' });
+          }
+        }
+      } catch {
+        // Safe fallback if network error
+      }
+    }
+
     res.json(result);
   });
 
-  app.post('/api/guest/revoke', (req, res) => {
+  app.post('/api/guest/revoke', async (req, res) => {
     const { token, sessionId } = req.body || {};
     const target = token || sessionId;
     if (!target) {
       return res.status(400).json({ success: false, error: 'Token or sessionId required' });
     }
     const revoked = revokeGuestSession(target);
+
+    if (dbEnv.supabaseUrl && dbEnv.supabaseServiceKey) {
+      try {
+        let filter = '';
+        if (target.startsWith('vx_gst_')) {
+          const tokenHash = await computeTokenHash(target);
+          filter = `session_token_hash=eq.${encodeURIComponent(tokenHash)}`;
+        } else {
+          filter = `id=eq.${encodeURIComponent(target)}`;
+        }
+
+        const dbRes = await fetch(`${dbEnv.supabaseUrl}/rest/v1/guest_sessions?${filter}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': dbEnv.supabaseServiceKey,
+            'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+            'Prefer': 'return=representation',
+          },
+          body: JSON.stringify({
+            is_revoked: true,
+            revoked_at: new Date().toISOString(),
+          }),
+        });
+        if (!dbRes.ok) {
+          const errText = await dbRes.text().catch(() => '');
+          console.error(`[Server] Supabase guest session revoke failed HTTP ${dbRes.status}:`, errText);
+        }
+      } catch (err) {
+        console.error('[Server] Supabase guest session revoke error:', err);
+      }
+    }
+
     res.json({ success: revoked });
   });
 
