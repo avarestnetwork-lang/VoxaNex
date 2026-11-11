@@ -750,22 +750,20 @@ export const PublicChatPage: React.FC = () => {
         noindex={true}
       />
 
-      {/* Top Ad Slot */}
-      <div className="mb-2.5 shrink-0">
-        <AdPlacementBox slotId="public-chatroom-top" label="Top Ad Slot" />
-      </div>
+      {/* Top Ad Slot (renders null and consumes 0 space when unfilled) */}
+      <AdPlacementBox slotId="public-chatroom-top" label="Top Ad Slot" position="top" />
 
       {/* Outer Workspace with Left and Right Side Ads */}
       <div className="flex-1 flex gap-3 overflow-hidden min-h-0">
         {/* Left Ad Slot (Desktop / Large Screens only) */}
-        <div className="hidden lg:flex shrink-0">
-          <AdPlacementBox slotId="public-chatroom-left" label="Left Ad" isVertical={true} />
-        </div>
+        <AdPlacementBox slotId="public-chatroom-left" label="Left Ad" isVertical={true} position="left" />
 
         {/* Center Chatroom & Maximized Panes Container */}
         <div className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0">
-        {/* Left: Brand/Room info & Switcher tabs */}
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-x-auto no-scrollbar">
+          {/* Header Bar */}
+          <div className="p-3 border-b border-slate-800 bg-[#0c1324] flex items-center justify-between gap-3 shrink-0">
+            {/* Left: Brand/Room info & Switcher tabs */}
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-x-auto no-scrollbar">
           <button
             onClick={() => navigate('/rooms')}
             className="p-2 text-slate-400 hover:text-white hover:bg-slate-800/80 rounded-xl transition-colors cursor-pointer shrink-0"
@@ -918,7 +916,7 @@ export const PublicChatPage: React.FC = () => {
       </div>
 
       {/* Main Container */}
-      <div className="flex-1 flex overflow-hidden border-x border-b border-slate-800 rounded-b-2xl bg-[#090d18] relative shadow-2xl">
+      <div className="flex-1 flex overflow-hidden relative">
         {activeMaximizedWindow ? (
           <div className="flex-1 flex flex-col overflow-hidden relative" data-testid="maximized-private-pane">
             <PrivateChatPane
@@ -1493,17 +1491,14 @@ export const PublicChatPage: React.FC = () => {
           </div>
         </div>
       </div>
+    </div>
 
         {/* Right Ad Slot (Desktop / Large Screens only) */}
-        <div className="hidden lg:flex shrink-0">
-          <AdPlacementBox slotId="public-chatroom-right" label="Right Ad" isVertical={true} />
-        </div>
+        <AdPlacementBox slotId="public-chatroom-right" label="Right Ad" isVertical={true} position="right" />
       </div>
 
-      {/* Bottom Ad Slot */}
-      <div className="mt-2.5 shrink-0">
-        <AdPlacementBox slotId="public-chatroom-bottom" label="Bottom Ad Slot" />
-      </div>
+      {/* Bottom Ad Slot (renders null and consumes 0 space when unfilled) */}
+      <AdPlacementBox slotId="public-chatroom-bottom" label="Bottom Ad Slot" position="bottom" />
 
       {/* Mobile Backdrop */}
       {showMobileSidebar && (
