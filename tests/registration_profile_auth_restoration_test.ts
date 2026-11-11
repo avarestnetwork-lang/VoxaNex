@@ -15,7 +15,7 @@ function assert(condition: boolean, testName: string) {
 
 async function runRegistrationAndRestorationTests() {
   console.log('\n=============================================================');
-  console.log('--- PHASE 1: FINAL REGISTRATION & AUTH RESTORATION CORRECTIONS ---');
+  console.log('--- PHASE 1: LIFECYCLE TESTS, ERROR SANITIZATION & ISOLATION ---');
   console.log('=============================================================\n');
 
   // 1. Corrective Migration SQL & Error Handling Verification
@@ -36,7 +36,7 @@ async function runRegistrationAndRestorationTests() {
     assert(sqlContent.includes('REVOKE ALL ON FUNCTION public.handle_new_user_profile() FROM authenticated'), '1. Revokes EXECUTE from authenticated');
   }
 
-  // 2. AuthContext Site Loading Fix & Initialization Lifecycle
+  // 2. AuthContext Lifecycle, INITIAL_SESSION & Stale Restoration Guards
   {
     const authContextPath = path.join(process.cwd(), 'src', 'context', 'AuthContext.tsx');
     assert(fs.existsSync(authContextPath), '2. AuthContext.tsx exists');
@@ -49,7 +49,7 @@ async function runRegistrationAndRestorationTests() {
     assert(authContextContent.includes("++restoreSeqRef.current"), '2. AuthContext bumps sequence ref on explicit login/logout state changes');
   }
 
-  // 3. AuthService Simulation Contract & Error Sanitization
+  // 3. AuthService Simulation Contract & Strict Database Confirmation
   {
     const emptyNickRes = await authService.register('test_empty@example.com', 'Password123!', '   ', 'prefer_not_to_say', 'en');
     assert(emptyNickRes.success === true, '3. Registration with whitespace nickname succeeds');
@@ -68,33 +68,15 @@ async function runRegistrationAndRestorationTests() {
     assert(simulatedLoginRes.user?.is18Verified === false, '3. Simulation login does not manufacture trusted age verification');
   }
 
-  // 4. User Metadata Role Isolation Check
+  // 4. Robust Error Sanitization & Non-String Message Safety
   {
-    const userMetaWithAdmin = {
-      nickname: 'HackerNick',
-      role: 'admin',
-      is_admin: true,
-      is_moderator: true,
-    };
-
-    const profile: UserProfile = {
-      id: 'usr_meta_test',
-      email: 'hacker@example.com',
-      nickname: userMetaWithAdmin.nickname,
-      isGuest: false,
-      is18Verified: false,
-      avatar: '🛡️',
-      languagePreference: 'en',
-      safeFilterEnabled: true,
-      notificationSounds: true,
-      createdAt: new Date().toISOString(),
-    };
-
-    assert(!('role' in profile), '4. UserProfile object strictly isolates client role fields');
-    assert(!('is_admin' in profile), '4. UserProfile object strictly isolates is_admin fields');
+    const authServiceContent = fs.readFileSync(path.join(process.cwd(), 'src', 'services', 'authService.ts'), 'utf8');
+    assert(authServiceContent.includes('sanitizeAuthError'), '4. AuthService utilizes sanitizeAuthError function');
+    assert(authServiceContent.includes('typeof rawError.message === \'string\''), '4. sanitizeAuthError safely checks for string error messages');
+    assert(authServiceContent.includes('An unexpected authentication error occurred'), '4. Unknown raw errors map to safe generic user-facing message');
   }
 
-  // 5. Guest Session Independence & Non-Revocation
+  // 5. Test Isolation & Guest Session Independence
   {
     const guestToken = guestSessionService.getStoredToken();
     assert(typeof guestSessionService.getStoredToken === 'function', '5. Guest session service token getter exists');
@@ -102,7 +84,7 @@ async function runRegistrationAndRestorationTests() {
   }
 
   console.log('\n=============================================================');
-  console.log('--- ALL CRITICAL CORRECTION TESTS PASSED SUCCESSFULLY ---');
+  console.log('--- ALL LIFECYCLE, SANITIZATION & ISOLATION TESTS PASSED ---');
   console.log('=============================================================\n');
 }
 

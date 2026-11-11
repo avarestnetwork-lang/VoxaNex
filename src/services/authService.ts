@@ -12,7 +12,20 @@ export interface AuthResponse {
 
 function sanitizeAuthError(rawError: any): string {
   if (!rawError) return 'An unexpected authentication error occurred. Please try again.';
-  const msg = typeof rawError === 'string' ? rawError : rawError.message || '';
+  
+  let msg = '';
+  if (typeof rawError === 'string') {
+    msg = rawError;
+  } else if (typeof rawError === 'object' && rawError !== null) {
+    if (typeof rawError.message === 'string') {
+      msg = rawError.message;
+    } else if (typeof rawError.error === 'string') {
+      msg = rawError.error;
+    } else if (typeof rawError.toString === 'function') {
+      msg = rawError.toString();
+    }
+  }
+
   if (msg.includes('User already registered') || msg.includes('already exists')) {
     return 'An account with this email address already exists. Please sign in instead.';
   }
@@ -28,7 +41,8 @@ function sanitizeAuthError(rawError: any): string {
   if (msg.includes('Too many requests') || msg.includes('rate limit')) {
     return 'Too many attempts. Please wait a few minutes and try again.';
   }
-  // Unknown provider, SQL, PostgREST internal messages, relation errors, stack traces
+  
+  // All unknown provider, SQL, PostgREST internal messages, relation/column errors, stack traces, or non-string values
   return 'An unexpected authentication error occurred. Please try again.';
 }
 
@@ -184,10 +198,10 @@ export const authService = {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/user/dashboard`,
       });
-      if (error) return { success: false, error: error.message };
+      if (error) return { success: false, error: sanitizeAuthError(error) };
       return { success: true };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      return { success: false, error: sanitizeAuthError(err) };
     }
   },
 
@@ -200,10 +214,10 @@ export const authService = {
 
     try {
       const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) return { success: false, error: error.message };
+      if (error) return { success: false, error: sanitizeAuthError(error) };
       return { success: true };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      return { success: false, error: sanitizeAuthError(err) };
     }
   },
 
