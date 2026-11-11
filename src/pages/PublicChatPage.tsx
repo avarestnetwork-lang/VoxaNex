@@ -751,12 +751,23 @@ export const PublicChatPage: React.FC = () => {
       />
 
       {/* Top Ad Slot (renders null and consumes 0 space when unfilled) */}
-      <AdPlacementBox slotId="public-chatroom-top" label="Top Ad Slot" position="top" />
+      <AdPlacementBox 
+        slotId="public-chatroom-top" 
+        provider="adsterra" 
+        adUnitId="d8696ddef865fbc92f612a0124ae627f" 
+        position="top" 
+      />
 
       {/* Outer Workspace with Left and Right Side Ads */}
       <div className="flex-1 flex gap-3 overflow-hidden min-h-0">
         {/* Left Ad Slot (Desktop / Large Screens only) */}
-        <AdPlacementBox slotId="public-chatroom-left" label="Left Ad" isVertical={true} position="left" />
+        <AdPlacementBox 
+          slotId="public-chatroom-left" 
+          provider="adsterra" 
+          adUnitId="4085ad0bb94688c1cdc0917f2df29137" 
+          isVertical={true} 
+          position="left" 
+        />
 
         {/* Center Chatroom & Maximized Panes Container */}
         <div className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0">
@@ -1494,11 +1505,22 @@ export const PublicChatPage: React.FC = () => {
     </div>
 
         {/* Right Ad Slot (Desktop / Large Screens only) */}
-        <AdPlacementBox slotId="public-chatroom-right" label="Right Ad" isVertical={true} position="right" />
+        <AdPlacementBox 
+          slotId="public-chatroom-right" 
+          provider="adsterra" 
+          adUnitId="4085ad0bb94688c1cdc0917f2df29137" 
+          isVertical={true} 
+          position="right" 
+        />
       </div>
 
       {/* Bottom Ad Slot (renders null and consumes 0 space when unfilled) */}
-      <AdPlacementBox slotId="public-chatroom-bottom" label="Bottom Ad Slot" position="bottom" />
+      <AdPlacementBox 
+        slotId="public-chatroom-bottom" 
+        provider="adsterra" 
+        adUnitId="d8696ddef865fbc92f612a0124ae627f" 
+        position="bottom" 
+      />
 
       {/* Mobile Backdrop */}
       {showMobileSidebar && (

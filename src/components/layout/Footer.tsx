@@ -4,15 +4,67 @@ import { useLanguage } from '../../context/LanguageContext';
 import { MessageSquare, Globe, Shield, Lock, Sun, Moon, Monitor, Facebook, Mail, Users } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { useConsent } from '../../context/ConsentContext';
+import { AdPlacementBox } from '../ads/AdPlacementBox';
 
 export const Footer: React.FC = () => {
-  const { navigate } = useRouter();
+  const { navigate, currentRoute } = useRouter();
   const { language, toggleLanguage } = useLanguage();
   const { theme, setTheme } = useTheme();
   const { openConsentBanner } = useConsent();
 
+  // Route Eligibility logic for Footer Ad
+  const isExcludedRoute = [
+    '/user/login',
+    '/user/register',
+    '/user/guest-entry',
+    '/auth',
+    '/admin/login',
+    '/moderator/login',
+    '/chat',
+    '/chat/bangla',
+    '/chat/indian',
+    '/chat/video',
+    '/av-chat',
+  ].some(route => currentRoute === route || currentRoute.startsWith('/chat/'));
+
+  const showFooterAd = !isExcludedRoute;
+
   return (
     <footer className="w-full bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 text-xs mt-auto border-t border-slate-200 dark:border-slate-800 shadow-inner transition-colors">
+      {showFooterAd && (
+        <div className="border-b border-slate-100 dark:border-slate-800/50 py-4 flex flex-col items-center">
+          {/* Responsive Footer Adsterra Banner */}
+          <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="hidden lg:block">
+              {/* Desktop horizontal wide banner */}
+              <AdPlacementBox 
+                slotId="global-footer-desktop" 
+                provider="adsterra" 
+                adUnitId="d8696ddef865fbc92f612a0124ae627f"
+                position="footer"
+              />
+            </div>
+            <div className="hidden sm:block lg:hidden">
+              {/* Tablet horizontal banner */}
+              <AdPlacementBox 
+                slotId="global-footer-tablet" 
+                provider="adsterra" 
+                adUnitId="6863f1ca8dc093d7a0a913d8f30c47a2"
+                position="footer"
+              />
+            </div>
+            <div className="block sm:hidden">
+              {/* Mobile horizontal banner */}
+              <AdPlacementBox 
+                slotId="global-footer-mobile" 
+                provider="adsterra" 
+                adUnitId="8b239fe78d1bba05c2a125bb36872489"
+                position="footer"
+              />
+            </div>
+          </div>
+        </div>
+      )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-10">
           {/* Col 1: Logo & Summary */}
