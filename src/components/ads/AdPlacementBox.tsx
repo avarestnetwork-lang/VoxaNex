@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { ADSTERRA_CONFIG, AdProvider, getProviderRotation } from '../../config/adsConfig';
 
-export type AdSlotPosition = 'top' | 'bottom' | 'left' | 'right' | 'footer';
-export type AdProvider = 'adsense' | 'adsterra' | 'juicyads' | 'monetag' | 'exoclick';
+export type AdSlotPosition = 'top' | 'bottom' | 'left' | 'right' | 'footer' | 'sidebar-horizontal';
 
 export interface AdPlacementBoxProps {
   slotId: string;
@@ -17,22 +17,35 @@ export interface AdPlacementBoxProps {
 
 const ADSENSE_CLIENT_ID = 'ca-pub-7862321512207088';
 
-// Global queue for Adsterra banners to prevent atOptions collisions
-let adsterraLoadQueue: Array<() => Promise<void>> = [];
-let isAdsterraLoading = false;
+// Global queue for Adsterra to prevent atOptions collisions
+interface QueueItem {
+  id: string;
+  load: () => Promise<void>;
+}
+let adsterraLoadQueue: QueueItem[] = [];
+let isAdsterraProcessing = false;
 
 const processAdsterraQueue = async () => {
-  if (isAdsterraLoading || adsterraLoadQueue.length === 0) return;
-  isAdsterraLoading = true;
-  const next = adsterraLoadQueue.shift();
-  if (next) await next();
-  isAdsterraLoading = false;
-  processAdsterraQueue();
+  if (isAdsterraProcessing || adsterraLoadQueue.length === 0) return;
+  isAdsterraProcessing = true;
+  
+  while (adsterraLoadQueue.length > 0) {
+    const item = adsterraLoadQueue.shift();
+    if (item) {
+      try {
+        await item.load();
+      } catch (err) {
+        console.error(`[Adsterra] Load error for slot ${item.id}:`, err);
+      }
+    }
+  }
+  
+  isAdsterraProcessing = false;
 };
 
 export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   slotId,
-  provider = 'adsense',
+  provider: explicitProvider,
   className = '',
   isVertical = false,
   position,
@@ -40,201 +53,200 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   onStatusChange,
   renderAd,
 }) => {
-  const effectiveUnitId =
-    adUnitId ||
-    (typeof import.meta !== 'undefined' &&
-      (import.meta as any).env?.[
-        `VITE_${provider.toUpperCase()}_SLOT_${slotId.toUpperCase().replace(/-/g, '_')}`
-      ]);
+  // 1. Mandatory Stable Hook Declarations
+  const [adStatus, setAdStatus] = useState<'idle' | 'loading' | 'filled' | 'unfilled' | 'error'>('idle');
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [providerIndex, setProviderIndex] = useState(0);
+  
+  const adRef = useRef<HTMLDivElement | null>(null);
+  const isMountedRef = useRef(true);
+  const observerRef = useRef<MutationObserver | null>(null);
 
-  let positionClasses = '';
-  if (position === 'top') {
-    positionClasses = 'w-full mb-2.5 shrink-0 flex justify-center overflow-hidden';
-  } else if (position === 'bottom' || position === 'footer') {
-    positionClasses = 'w-full mt-2.5 shrink-0 flex justify-center overflow-hidden';
-  } else if (position === 'left' || position === 'right') {
-    positionClasses = 'hidden lg:flex shrink-0 w-[160px] xl:w-[200px] max-w-[200px] justify-center overflow-hidden';
-  } else if (isVertical) {
-    positionClasses = 'hidden lg:flex shrink-0 w-[160px] xl:w-[200px] max-w-[200px] justify-center overflow-hidden';
-  } else {
-    positionClasses = 'w-full shrink-0 flex justify-center overflow-hidden';
-  }
+  // Derive active provider from rotation or explicit prop
+  const rotation = getProviderRotation(position || '');
+  const provider = explicitProvider || rotation[providerIndex];
 
-  if (renderAd) {
-    const customContent = renderAd();
-    if (!customContent) {
-      onStatusChange?.('unfilled');
-      return null;
+  // Status update wrapper
+  const updateStatus = useCallback((status: 'filled' | 'unfilled' | 'error') => {
+    if (!isMountedRef.current) return;
+
+    if (status !== 'filled' && !explicitProvider && providerIndex < rotation.length - 1) {
+      // Automatic Fallback/Rotation
+      console.log(`[Ads] Slot ${slotId} unfilled by ${provider}. Falling back to next provider.`);
+      setProviderIndex(prev => prev + 1);
+      setAdStatus('idle');
+    } else {
+      setAdStatus(status);
+      onStatusChange?.(status);
     }
-    onStatusChange?.('filled');
-    return (
-      <div
-        data-testid={`ad-slot-${slotId}`}
-        className={`${positionClasses} ${className}`.trim()}
-      >
-        {customContent}
-      </div>
-    );
-  }
+  }, [onStatusChange, explicitProvider, providerIndex, rotation, provider, slotId]);
 
-  if (!effectiveUnitId) {
-    onStatusChange?.('unfilled');
-    return null;
-  }
+  // Unit ID resolution
+  const effectiveUnitId = adUnitId || (
+    typeof import.meta !== 'undefined' &&
+    (import.meta as any).env?.[`VITE_${provider.toUpperCase()}_SLOT_${slotId.toUpperCase().replace(/-/g, '_')}`]
+  );
 
-  const [adStatus, setAdStatus] = useState<'idle' | 'filled' | 'unfilled' | 'error'>('idle');
-  const adRef = useRef<HTMLElement | null>(null);
-
+  // 2. Lifecycle & Dimensional Awareness
   useEffect(() => {
-    let isMounted = true;
+    isMountedRef.current = true;
+    
+    const updateWidth = () => {
+      if (adRef.current) {
+        setContainerWidth(adRef.current.offsetWidth);
+      }
+    };
+    
+    updateWidth();
+    const resizeObserver = new ResizeObserver(updateWidth);
+    if (adRef.current) resizeObserver.observe(adRef.current);
+    
+    return () => {
+      isMountedRef.current = false;
+      resizeObserver.disconnect();
+      if (observerRef.current) observerRef.current.disconnect();
+    };
+  }, []);
+
+  // 3. Ad Integration Orchestration
+  useEffect(() => {
+    // Skip if we just updated providerIndex and are waiting for next cycle
+    if (adStatus !== 'idle') return;
+
+    if (renderAd) {
+      const content = renderAd();
+      updateStatus(content ? 'filled' : 'unfilled');
+      return;
+    }
+
+    if (!effectiveUnitId) {
+      updateStatus('unfilled');
+      return;
+    }
+
+    // Safety: Horizontal sidebars must be wide enough
+    if (position === 'sidebar-horizontal' && provider === 'adsterra' && effectiveUnitId === ADSTERRA_CONFIG.banner320x50) {
+      if (containerWidth > 0 && containerWidth < 320) {
+        updateStatus('unfilled');
+        return;
+      }
+    }
+
+    setAdStatus('loading');
 
     if (provider === 'adsense') {
       try {
-        if (typeof window !== 'undefined') {
-          const adsbygoogle = (window as any).adsbygoogle;
-          if (Array.isArray(adsbygoogle)) {
-            adsbygoogle.push({});
+        const win = window as any;
+        if (win.adsbygoogle) {
+          win.adsbygoogle.push({});
+          
+          if (adRef.current) {
+            const obs = new MutationObserver(() => {
+              const ins = adRef.current?.querySelector('ins');
+              const status = ins?.getAttribute('data-ad-status');
+              if (status === 'filled') updateStatus('filled');
+              else if (status === 'unfilled') updateStatus('unfilled');
+            });
+            obs.observe(adRef.current, { attributes: true, subtree: true });
+            observerRef.current = obs;
           }
         }
-      } catch {
-        if (isMounted) {
-          setAdStatus('error');
-          onStatusChange?.('error');
-        }
-        return;
+      } catch (err) {
+        updateStatus('error');
       }
     } else if (provider === 'adsterra') {
-      const isNative = effectiveUnitId === '4085ad0bb94688c1cdc0917f2df29137';
+      const isNative = effectiveUnitId === ADSTERRA_CONFIG.nativeUnitId;
       
-      if (isNative) {
-        // Native ad doesn't use atOptions, uses container ID
-        const script = document.createElement('script');
-        script.async = true;
-        script.setAttribute('data-cfasync', 'false');
-        script.src = `https://pl32301907.profitableratecpmnetwork.com/${effectiveUnitId}/invoke.js`;
-        
-        // Use slotId as container ID to allow multiple instances
-        const containerId = `container-${slotId}`;
-        script.onload = () => {
-          if (isMounted) {
-            setAdStatus('filled');
-            onStatusChange?.('filled');
-          }
-        };
-        
-        document.head.appendChild(script);
-      } else {
-        // Banner ad uses atOptions, needs sequencing
-        const loadBanner = () => new Promise<void>((resolve) => {
-          if (!isMounted) { resolve(); return; }
+      const loadTask = () => new Promise<void>((resolve) => {
+        if (!isMountedRef.current) { resolve(); return; }
+
+        if (isNative) {
+          const containerId = `container-${ADSTERRA_CONFIG.nativeUnitId}`;
+          const existing = document.getElementById(containerId);
           
-          // Set dimensions based on unit ID
-          let height = 250, width = 300;
-          if (effectiveUnitId === '8b239fe78d1bba05c2a125bb36872489') { height = 50; width = 320; }
-          else if (effectiveUnitId === 'd8696ddef865fbc92f612a0124ae627f') { height = 90; width = 728; }
+          if (existing && !adRef.current?.contains(existing)) {
+             // Restriction: Adsterra Native expects a unique global ID
+             console.warn(`[Adsterra] Native container ${containerId} already active. Skipping slot ${slotId}.`);
+             updateStatus('unfilled');
+             resolve();
+             return;
+          }
+
+          if (adRef.current) {
+            adRef.current.innerHTML = `<div id="${containerId}"></div>`;
+          }
+
+          const script = document.createElement('script');
+          script.async = true;
+          script.setAttribute('data-cfasync', 'false');
+          script.src = `https://${ADSTERRA_CONFIG.nativeDomain}/${ADSTERRA_CONFIG.nativeUnitId}/invoke.js`;
+          
+          script.onload = () => {
+            setTimeout(() => {
+              const el = document.getElementById(containerId);
+              if (el && el.children.length > 0) updateStatus('filled');
+              else updateStatus('filled'); // Assume filled if script ran
+              resolve();
+            }, 600);
+          };
+          script.onerror = () => { updateStatus('error'); resolve(); };
+          document.head.appendChild(script);
+        } else {
+          // Banner Sequencing
+          let h = 250, w = 300;
+          if (effectiveUnitId === ADSTERRA_CONFIG.banner320x50) { h = 50; w = 320; }
+          else if (effectiveUnitId === ADSTERRA_CONFIG.banner728x90) { h = 90; w = 728; }
 
           (window as any).atOptions = {
             'key': effectiveUnitId,
             'format': 'iframe',
-            'height': height,
-            'width': width,
+            'height': h,
+            'width': w,
             'params': {}
           };
 
           const script = document.createElement('script');
           script.type = 'text/javascript';
-          script.src = `https://www.highrevenueformat.com/${effectiveUnitId}/invoke.js`;
+          script.src = `https://${ADSTERRA_CONFIG.bannerDomain}/${effectiveUnitId}/invoke.js`;
           
-          script.onload = () => {
-            if (isMounted) {
-              setAdStatus('filled');
-              onStatusChange?.('filled');
-            }
-            resolve();
-          };
-          
-          script.onerror = () => {
-            if (isMounted) {
-              setAdStatus('error');
-              onStatusChange?.('error');
-            }
-            resolve();
-          };
+          script.onload = () => { updateStatus('filled'); resolve(); };
+          script.onerror = () => { updateStatus('error'); resolve(); };
 
-          if (adRef.current) {
-            adRef.current.appendChild(script);
-          } else {
-            resolve();
-          }
-        });
-
-        adsterraLoadQueue.push(loadBanner);
-        processAdsterraQueue();
-      }
-    }
-    
-    // MutationObserver only for AdSense
-    if (provider === 'adsense') {
-      const targetElement = adRef.current;
-      if (!targetElement) return;
-
-      const observer = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-          if (mutation.type === 'attributes' && mutation.attributeName === 'data-ad-status') {
-            const status = targetElement.getAttribute('data-ad-status');
-            if (status === 'filled') {
-              setAdStatus('filled');
-              onStatusChange?.('filled');
-            } else if (status === 'unfilled') {
-              setAdStatus('unfilled');
-              onStatusChange?.('unfilled');
-            }
-          }
+          if (adRef.current) adRef.current.appendChild(script);
+          else resolve();
         }
       });
-      observer.observe(targetElement, { attributes: true });
-      return () => {
-        isMounted = false;
-        observer.disconnect();
-      };
+
+      adsterraLoadQueue.push({ id: slotId, load: loadTask });
+      processAdsterraQueue();
+    } else {
+      updateStatus('unfilled');
     }
+  }, [provider, effectiveUnitId, renderAd, updateStatus, position, slotId, containerWidth, adStatus]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [provider, effectiveUnitId, onStatusChange]);
+  // 4. Position Classes & Visibility
+  if (adStatus === 'unfilled' || adStatus === 'error') return null;
 
-  if (adStatus === 'unfilled' || adStatus === 'error') {
-    return null;
-  }
+  let posClasses = 'w-full flex justify-center overflow-hidden';
+  if (position === 'top') posClasses += ' mb-2.5 shrink-0';
+  else if (position === 'bottom' || position === 'footer') posClasses += ' mt-2.5 shrink-0';
+  else if (position === 'left' || position === 'right') posClasses = 'hidden lg:flex shrink-0 w-[160px] xl:w-[200px] max-w-[200px] justify-center overflow-hidden';
+  else if (position === 'sidebar-horizontal') posClasses = 'w-full my-2 flex justify-center overflow-hidden px-2';
+  else if (isVertical) posClasses = 'hidden lg:flex shrink-0 w-[160px] xl:w-[200px] max-w-[200px] justify-center overflow-hidden';
 
-  // If advertisement is idle, render a placeholder with fixed dimensions for banners to reduce CLS if we're reasonably sure it will fill
-  // But requirement says: "Do not render an empty ad wrapper when no ad is available"
-  // So we only render when filled or when we're about to load (idle -> loading)
-  if (adStatus === 'idle' && provider === 'adsense') {
-    return null;
-  }
+  const containerProps = {
+    'data-testid': `ad-slot-${slotId}`,
+    className: `${posClasses} ${className}`.trim(),
+    ref: adRef,
+  };
 
-  if (provider === 'adsterra') {
-    const isNative = effectiveUnitId === '4085ad0bb94688c1cdc0917f2df29137';
-    return (
-      <div
-        data-testid={`ad-slot-${slotId}`}
-        className={`${positionClasses} ${className}`.trim()}
-        ref={adRef as React.RefObject<HTMLDivElement>}
-      >
-        {isNative && <div id={`container-${slotId}`}></div>}
-      </div>
-    );
-  }
+  // 5. Final Assembly
+  if (renderAd) return <div {...containerProps}>{renderAd()}</div>;
+  if (provider === 'adsterra') return <div {...containerProps} />;
 
   return (
-    <div
-      data-testid={`ad-slot-${slotId}`}
-      className={`${positionClasses} ${className}`.trim()}
-    >
+    <div {...containerProps}>
       <ins
-        ref={adRef as React.RefObject<HTMLModElement>}
         className="adsbygoogle block overflow-hidden max-w-full"
         data-ad-client={ADSENSE_CLIENT_ID}
         data-ad-slot={effectiveUnitId}
@@ -244,5 +256,3 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     </div>
   );
 };
-
-

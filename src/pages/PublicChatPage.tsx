@@ -21,6 +21,7 @@ import { Button } from '../components/ui/Button';
 import { SEOHead } from '../components/common/SEOHead';
 import { PrivateChatPane } from '../components/chat/PrivateChatPane';
 import { AdPlacementBox } from '../components/ads/AdPlacementBox';
+import { ADSTERRA_CONFIG } from '../config/adsConfig';
 import {
   messagingService,
   RealtimePresenceMember,
@@ -754,7 +755,7 @@ export const PublicChatPage: React.FC = () => {
       <AdPlacementBox 
         slotId="public-chatroom-top" 
         provider="adsterra" 
-        adUnitId="d8696ddef865fbc92f612a0124ae627f" 
+        adUnitId={ADSTERRA_CONFIG.banner728x90} 
         position="top" 
       />
 
@@ -763,8 +764,7 @@ export const PublicChatPage: React.FC = () => {
         {/* Left Ad Slot (Desktop / Large Screens only) */}
         <AdPlacementBox 
           slotId="public-chatroom-left" 
-          provider="adsterra" 
-          adUnitId="4085ad0bb94688c1cdc0917f2df29137" 
+          adUnitId={ADSTERRA_CONFIG.nativeUnitId} 
           isVertical={true} 
           position="left" 
         />
@@ -1305,6 +1305,14 @@ export const PublicChatPage: React.FC = () => {
             {/* TAB CONTENT 1: ONLINE USERS */}
             {sidebarTab === 'users' && (
               <div className="flex-1 flex flex-col p-3 overflow-hidden">
+                {/* Participant Box Horizontal Ad - Slim Banner (only inside Users tab) */}
+                <AdPlacementBox 
+                  slotId="participant-box-horizontal" 
+                  adUnitId={ADSTERRA_CONFIG.banner320x50} 
+                  position="sidebar-horizontal"
+                  className="mb-2"
+                />
+
                 {/* Search user filter */}
                 <div className="relative mb-2 shrink-0">
                   <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
@@ -1507,8 +1515,7 @@ export const PublicChatPage: React.FC = () => {
         {/* Right Ad Slot (Desktop / Large Screens only) */}
         <AdPlacementBox 
           slotId="public-chatroom-right" 
-          provider="adsterra" 
-          adUnitId="4085ad0bb94688c1cdc0917f2df29137" 
+          adUnitId={ADSTERRA_CONFIG.nativeUnitId} 
           isVertical={true} 
           position="right" 
         />
@@ -1518,7 +1525,7 @@ export const PublicChatPage: React.FC = () => {
       <AdPlacementBox 
         slotId="public-chatroom-bottom" 
         provider="adsterra" 
-        adUnitId="d8696ddef865fbc92f612a0124ae627f" 
+        adUnitId={ADSTERRA_CONFIG.banner728x90} 
         position="bottom" 
       />
 
