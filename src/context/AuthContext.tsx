@@ -93,6 +93,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let isMounted = true;
     const currentSeq = ++restoreSeqRef.current;
 
+    // Bounded bootstrap timeout guard to prevent infinite loading screen on network stalls
+    const initTimeout = setTimeout(() => {
+      if (isMounted) {
+        setIsLoading(false);
+      }
+    }, 6000);
+
     async function restore() {
       try {
         // 1. First attempt member session restoration if Supabase is configured
@@ -103,6 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (restoredProfile) {
             setUser(restoredProfile);
             setHasActiveSession(true);
+            setIsLoading(false);
             return;
           }
         }
@@ -125,9 +133,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               gender: check.session?.gender as UserGender,
             }));
             setHasActiveSession(true);
+            setIsLoading(false);
             return;
-          } else {
-            // Expired or revoked guest token cleanup
+          } else if (check.valid === false) {
+            // Only clear guest token if explicitly invalid
             setHasActiveSession(false);
             setUser(createDefaultVisitorProfile());
             try {
@@ -135,6 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } catch {
               // ignore
             }
+            setIsLoading(false);
             return;
           }
         }
@@ -167,9 +177,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (supabase && isSupabaseActive) {
       const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!isMounted) return;
-        const eventSeq = ++restoreSeqRef.current;
+
+        // CRITICAL FIX: Do NOT bump restoreSeqRef or invalidate in-flight restore() for INITIAL_SESSION or unhandled events
+        if (event === 'INITIAL_SESSION') {
+          return;
+        }
 
         if (event === 'SIGNED_IN' && session?.user) {
+          const eventSeq = ++restoreSeqRef.current;
           const profile = await authService.getProfile(session.user.id, session.user);
           if (!isMounted || restoreSeqRef.current !== eventSeq) return;
           if (profile) {
@@ -178,6 +193,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsLoading(false);
           }
         } else if (event === 'SIGNED_OUT') {
+          const eventSeq = ++restoreSeqRef.current;
           // Strictly clear only registered member sessions to preserve independent guest access
           setUser(curr => {
             if (!curr.isGuest) {
@@ -201,6 +217,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => {
       isMounted = false;
+      clearTimeout(initTimeout);
       if (authListenerSub) {
         authListenerSub.unsubscribe();
       }

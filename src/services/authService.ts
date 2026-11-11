@@ -10,6 +10,24 @@ export interface AuthResponse {
   profileConfirmed?: boolean;
 }
 
+function sanitizeAuthError(rawError: any): string {
+  if (!rawError) return 'An unexpected authentication error occurred.';
+  const msg = typeof rawError === 'string' ? rawError : rawError.message || '';
+  if (msg.includes('User already registered') || msg.includes('already exists')) {
+    return 'An account with this email address already exists. Please sign in instead.';
+  }
+  if (msg.includes('Invalid login credentials')) {
+    return 'Invalid email or password. Please try again.';
+  }
+  if (msg.includes('Password should be at least')) {
+    return 'Password must be at least 6 characters long.';
+  }
+  if (msg.includes('PGRST') || msg.includes('postgres') || msg.includes('database') || msg.includes('relation') || msg.includes('column')) {
+    return 'A database system error occurred. Please try again or contact support.';
+  }
+  return msg || 'An unexpected authentication error occurred.';
+}
+
 export const authService = {
   /**
    * Register a new user with Supabase Auth.
@@ -34,16 +52,15 @@ export const authService = {
         nickname: sanitizedNick,
         gender: gender as any,
         isGuest: false,
-        is18Verified: true,
-        verifiedAt: new Date().toISOString(),
-        verificationMethod: 'self_declaration',
+        is18Verified: false,
+        verificationMethod: 'pending',
         avatar: '🛡️',
         languagePreference: languagePref,
         safeFilterEnabled: true,
         notificationSounds: true,
         createdAt: new Date().toISOString(),
       };
-      return { success: true, user: simulatedUser };
+      return { success: true, user: simulatedUser, profileConfirmed: true };
     }
 
     try {
@@ -60,7 +77,7 @@ export const authService = {
       });
 
       if (error) {
-        return { success: false, error: error.message };
+        return { success: false, error: sanitizeAuthError(error) };
       }
 
       if (!data.user) {
@@ -78,20 +95,20 @@ export const authService = {
         };
       }
 
-      // If session exists immediately, fetch the profile created by the database trigger
-      const profile = await this.getProfile(data.user.id, data.user);
+      // Fetch actual database record strictly without presentation fallback (requireDatabaseRecord = true)
+      const profile = await this.getProfile(data.user.id, data.user, true);
       if (profile) {
         return { success: true, user: profile, profileConfirmed: true };
       }
 
-      // If session exists but profile cannot be retrieved or confirmed, do not claim success.
+      // If session exists but profile cannot be retrieved or confirmed from database, do not claim success.
       return {
         success: false,
         error: 'Account created, but database profile initialization could not be confirmed. Please sign in to complete account setup.',
         profileConfirmed: false,
       };
     } catch (err: any) {
-      return { success: false, error: err.message || 'An unexpected error occurred during signup.' };
+      return { success: false, error: sanitizeAuthError(err) };
     }
   },
 
@@ -106,9 +123,8 @@ export const authService = {
         email,
         nickname: email.split('@')[0],
         isGuest: false,
-        is18Verified: true,
-        verifiedAt: new Date().toISOString(),
-        verificationMethod: 'self_declaration',
+        is18Verified: false,
+        verificationMethod: 'pending',
         avatar: '🛡️',
         languagePreference: 'en',
         safeFilterEnabled: true,
@@ -125,7 +141,7 @@ export const authService = {
       });
 
       if (error) {
-        return { success: false, error: error.message };
+        return { success: false, error: sanitizeAuthError(error) };
       }
 
       if (!data.user) {
@@ -136,7 +152,7 @@ export const authService = {
       const profile = await this.getProfile(data.user.id, data.user);
       return { success: true, user: profile || undefined };
     } catch (err: any) {
-      return { success: false, error: err.message || 'An unexpected error occurred during signin.' };
+      return { success: false, error: sanitizeAuthError(err) };
     }
   },
 
@@ -207,7 +223,7 @@ export const authService = {
   /**
    * Fetch profile record from public.profiles
    */
-  async getProfile(userId: string, authUser?: any): Promise<UserProfile | null> {
+  async getProfile(userId: string, authUser?: any, requireDatabaseRecord: boolean = false): Promise<UserProfile | null> {
     const supabase = getSupabaseClient();
     if (!supabase) return null;
 
@@ -220,10 +236,6 @@ export const authService = {
 
       // Get metadata from authUser if provided, or try to fetch current user
       let metadata = authUser?.user_metadata || {};
-      if (!authUser && userId) {
-         // Optionally fetch auth user if not provided and it matches the current session
-         // For now, we rely on callers passing authUser when available (login/restore)
-      }
 
       if (error) {
         // Detailed logging for PostgREST errors (e.g. PGRST205 / 404)
@@ -234,8 +246,14 @@ export const authService = {
           hint: error.hint
         });
         
-        // If the table is missing or the record is missing, we might want to return 
-        // a minimal profile from the auth metadata as a last-resort fallback
+        // When requireDatabaseRecord is true (e.g. during registration confirmation),
+        // strictly require an actual database row and never return an Auth metadata fallback.
+        if (requireDatabaseRecord) {
+          return null;
+        }
+
+        // For non-registration flows (e.g. presentation fallback during minor read replica lag),
+        // construct presentation representation if user exists in Auth.
         if (status === 404) {
           const { data: { user } } = await supabase.auth.getUser();
           if (user && user.id === userId) {
