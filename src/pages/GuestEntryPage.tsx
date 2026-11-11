@@ -58,6 +58,7 @@ export const GuestEntryPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [accountNickname, setAccountNickname] = useState('');
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [accountNotice, setAccountNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   // Forgot password state
@@ -187,12 +188,26 @@ export const GuestEntryPage: React.FC = () => {
     }
 
     setLoading(true);
+    setAccountNotice(null);
     try {
       if (activeTab === 'register') {
         const res = await registerWithAccount(email, password, accountNickname.trim(), gender);
         if (!res.success) {
           setAccountError(res.error || 'Registration failed');
           setLoading(false);
+          return;
+        }
+
+        if (res.requiresEmailConfirmation) {
+          setLoading(false);
+          setPassword('');
+          setAccountNotice(
+            res.message ||
+              (language === 'bn'
+                ? 'রেজিস্ট্রেশন সফল হয়েছে! আপনার ইমেইল চেক করে একাউন্ট ভেরিফাই করুন।'
+                : 'Registration successful! Please check your email to confirm your account before signing in.')
+          );
+          setActiveTab('login');
           return;
         }
       } else {
@@ -634,6 +649,12 @@ export const GuestEntryPage: React.FC = () => {
                     I agree to community safety guidelines, respectful conduct, and zero harassment rules.
                   </span>
                 </label>
+              </div>
+            )}
+
+            {accountNotice && (
+              <div className="p-3.5 rounded-lg bg-emerald-950/50 border border-emerald-800 text-xs text-emerald-200">
+                {accountNotice}
               </div>
             )}
 

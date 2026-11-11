@@ -5,11 +5,15 @@ export interface AuthResponse {
   success: boolean;
   user?: UserProfile;
   error?: string;
+  requiresEmailConfirmation?: boolean;
+  message?: string;
 }
 
 export const authService = {
   /**
-   * Register a new user with Supabase Auth and initialize public profile record
+   * Register a new user with Supabase Auth.
+   * Profile record initialization is handled authoritatively and idempotently
+   * by the PostgreSQL database trigger (handle_new_user_profile) on auth.users.
    */
   async register(
     email: string,
@@ -19,12 +23,14 @@ export const authService = {
     languagePref: AppLanguage = 'en'
   ): Promise<AuthResponse> {
     const supabase = getSupabaseClient();
+    const sanitizedNick = nickname.trim().slice(0, 32) || email.split('@')[0] || 'User';
+
     if (!supabase) {
       // Offline / Local Simulation Mode fallback
       const simulatedUser: UserProfile = {
         id: `usr_${Date.now()}`,
         email,
-        nickname: nickname.trim(),
+        nickname: sanitizedNick,
         gender: gender as any,
         isGuest: false,
         is18Verified: true,
@@ -45,7 +51,7 @@ export const authService = {
         password,
         options: {
           data: {
-            nickname: nickname.trim(),
+            nickname: sanitizedNick,
             avatar_url: '🛡️',
             gender,
           },
@@ -60,11 +66,27 @@ export const authService = {
         return { success: false, error: 'Registration failed: No user returned.' };
       }
 
-      // Upsert profile in public.profiles table
+      // If email confirmation is required, data.session is null/undefined.
+      // The user record and database trigger profile have been created.
+      if (!data.session) {
+        return {
+          success: true,
+          requiresEmailConfirmation: true,
+          message: 'Registration successful! Please check your email to confirm your account before logging in.',
+        };
+      }
+
+      // If session exists immediately, fetch the profile created by the database trigger
+      const profile = await this.getProfile(data.user.id, data.user);
+      if (profile) {
+        return { success: true, user: profile };
+      }
+
+      // Fallback profile representation if read replica is momentarily propagating
       const profileData: UserProfile = {
         id: data.user.id,
         email: data.user.email,
-        nickname: nickname.trim(),
+        nickname: sanitizedNick,
         gender: gender as any,
         avatar: '🛡️',
         isGuest: false,
@@ -72,32 +94,8 @@ export const authService = {
         languagePreference: languagePref,
         safeFilterEnabled: true,
         notificationSounds: true,
-        createdAt: new Date().toISOString(),
+        createdAt: data.user.created_at || new Date().toISOString(),
       };
-
-      const { error: profileError } = await supabase.from('profiles').upsert({
-        id: data.user.id,
-        nickname: nickname.trim(),
-        avatar_url: '🛡️',
-        role: 'user',
-        is_18_verified: false,
-        safe_filter_enabled: true,
-        notification_sounds: true,
-      });
-
-      if (profileError) {
-        console.error('[authService] Profile persistence failed:', profileError);
-        return { success: false, error: `Registration failed: Could not create user profile (${profileError.message})` };
-      }
-
-      // If email confirmation is enabled, data.session will be null.
-      // The user must confirm their email before they can access the application.
-      if (!data.session) {
-        return {
-          success: false,
-          error: 'Registration successful! Please check your email and confirm your account before logging in.'
-        };
-      }
 
       return { success: true, user: profileData };
     } catch (err: any) {

@@ -1,8 +1,8 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { UserProfile, AppLanguage, UserGender } from '../types';
 import { authService } from '../services/authService';
 import { guestSessionService } from '../services/guestSessionService';
-import { isSupabaseConfigured } from '../lib/supabaseClient';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabaseClient';
 
 interface AuthContextType {
   user: UserProfile;
@@ -16,7 +16,12 @@ interface AuthContextType {
   setAvatar: (avatar: string) => void;
   loginGuest: (nickname?: string, lang?: AppLanguage, gender?: string, ageDeclarationAccepted?: boolean) => Promise<{ success: boolean; error?: string }>;
   loginWithAccount: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  registerWithAccount: (email: string, password: string, nickname: string, gender?: string) => Promise<{ success: boolean; error?: string }>;
+  registerWithAccount: (
+    email: string,
+    password: string,
+    nickname: string,
+    gender?: string
+  ) => Promise<{ success: boolean; error?: string; requiresEmailConfirmation?: boolean; message?: string }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
   deleteAccount: () => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<{ success: boolean; error?: string }>;
@@ -46,6 +51,19 @@ function getRandomGuestNickname(): string {
   return `${base}_${randNum}`;
 }
 
+const createDefaultVisitorProfile = (): UserProfile => ({
+  id: '',
+  nickname: 'Visitor',
+  isGuest: true,
+  is18Verified: false,
+  ageDeclarationAccepted: false,
+  avatar: '',
+  languagePreference: 'en',
+  safeFilterEnabled: true,
+  notificationSounds: true,
+  createdAt: new Date().toISOString(),
+});
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -64,81 +82,130 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore
     }
 
-    // Initial state: No user logged in
-    return {
-      id: '',
-      nickname: 'Visitor',
-      isGuest: true,
-      is18Verified: false,
-      ageDeclarationAccepted: false,
-      avatar: '',
-      languagePreference: 'en',
-      safeFilterEnabled: true,
-      notificationSounds: true,
-      createdAt: new Date().toISOString(),
-    };
+    return createDefaultVisitorProfile();
   });
 
   const isSupabaseActive = isSupabaseConfigured();
+  const restoreSeqRef = useRef<number>(0);
 
-
-  // Restore authenticated session on initial mount
+  // Restore authenticated session on initial mount with strict race-condition guards
   useEffect(() => {
-    async function restore() {
-      if (isSupabaseActive) {
-        const restoredProfile = await authService.restoreSession();
-        if (restoredProfile) {
-          setUser(restoredProfile);
-          setHasActiveSession(true);
-          return;
-        }
-      }
+    let isMounted = true;
+    const currentSeq = ++restoreSeqRef.current;
 
-      // If guest token exists, validate against server
-      const token = guestSessionService.getStoredToken();
-      if (token) {
-        const check = await guestSessionService.validateSession(token);
-        if (check.valid && check.session) {
-          setUser(prev => ({
-            ...prev,
-            id: check.session?.id || prev.id,
-            nickname: check.session?.nickname || prev.nickname,
-            avatar: check.session?.avatar || prev.avatar,
-            is18Verified: Boolean(check.session?.is18Verified),
-            ageDeclarationAccepted: Boolean(check.session?.ageDeclarationAccepted),
-            gender: check.session?.gender as UserGender,
-          }));
-          setHasActiveSession(true);
-        } else {
-          setHasActiveSession(false);
-          setUser({
-            id: '',
-            nickname: 'Visitor',
-            isGuest: true,
-            is18Verified: false,
-            ageDeclarationAccepted: false,
-            avatar: '',
-            languagePreference: 'en',
-            safeFilterEnabled: true,
-            notificationSounds: true,
-            createdAt: new Date().toISOString(),
-          });
-          try {
-            localStorage.removeItem('voxanex_user_profile');
-          } catch {
-            // ignore
+    async function restore() {
+      try {
+        // 1. First attempt member session restoration if Supabase is configured
+        if (isSupabaseActive) {
+          const restoredProfile = await authService.restoreSession();
+          if (!isMounted || restoreSeqRef.current !== currentSeq) return;
+
+          if (restoredProfile) {
+            setUser(restoredProfile);
+            setHasActiveSession(true);
+            return;
           }
         }
-      } else {
+
+        // 2. If no member session, inspect stored guest token
+        const token = guestSessionService.getStoredToken();
+        if (token) {
+          const check = await guestSessionService.validateSession(token);
+          if (!isMounted || restoreSeqRef.current !== currentSeq) return;
+
+          if (check.valid && check.session) {
+            setUser(prev => ({
+              ...prev,
+              id: check.session?.id || prev.id,
+              nickname: check.session?.nickname || prev.nickname,
+              avatar: check.session?.avatar || prev.avatar,
+              isGuest: true,
+              is18Verified: Boolean(check.session?.is18Verified),
+              ageDeclarationAccepted: Boolean(check.session?.ageDeclarationAccepted),
+              gender: check.session?.gender as UserGender,
+            }));
+            setHasActiveSession(true);
+            return;
+          } else {
+            // Expired or revoked guest token cleanup
+            setHasActiveSession(false);
+            setUser(createDefaultVisitorProfile());
+            try {
+              localStorage.removeItem('voxanex_user_profile');
+            } catch {
+              // ignore
+            }
+            return;
+          }
+        }
+
+        // 3. Neither member nor guest session present
+        if (!isMounted || restoreSeqRef.current !== currentSeq) return;
         setHasActiveSession(false);
         setUser(prev => ({
           ...prev,
           ageDeclarationAccepted: prev.isGuest ? false : prev.ageDeclarationAccepted,
         }));
+      } catch (err) {
+        console.warn('[AuthContext] Session restoration error:', err);
+        if (isMounted && restoreSeqRef.current === currentSeq) {
+          setHasActiveSession(false);
+        }
+      } finally {
+        if (isMounted && restoreSeqRef.current === currentSeq) {
+          setIsLoading(false);
+        }
       }
     }
+
     restore();
-    setIsLoading(false);
+
+    // Supabase auth state change listener to sync member state without affecting guest sessions
+    const supabase = getSupabaseClient();
+    let authListenerSub: { unsubscribe: () => void } | null = null;
+
+    if (supabase && isSupabaseActive) {
+      const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (!isMounted) return;
+
+        if (event === 'SIGNED_IN' && session?.user) {
+          setUser(curr => {
+            if (!curr.isGuest && curr.id === session.user.id) {
+              return curr;
+            }
+            authService.getProfile(session.user.id, session.user).then(profile => {
+              if (isMounted && profile) {
+                setUser(profile);
+                setHasActiveSession(true);
+              }
+            });
+            return curr;
+          });
+        } else if (event === 'SIGNED_OUT') {
+          // Strictly clear only registered member sessions to preserve independent guest access
+          setUser(curr => {
+            if (!curr.isGuest) {
+              setHasActiveSession(false);
+              try {
+                localStorage.removeItem('voxanex_user_profile');
+              } catch {
+                // ignore
+              }
+              return createDefaultVisitorProfile();
+            }
+            return curr;
+          });
+        }
+      });
+      authListenerSub = data?.subscription || null;
+    }
+
+    return () => {
+      isMounted = false;
+      if (authListenerSub) {
+        authListenerSub.unsubscribe();
+      }
+    };
   }, [isSupabaseActive]);
 
   useEffect(() => {
@@ -261,10 +328,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const registerWithAccount = async (email: string, password: string, nickname: string, gender?: string) => {
     const res = await authService.register(email, password, nickname, gender, user.languagePreference);
-    if (res.success && res.user) {
-      setUser(res.user);
-      setHasActiveSession(true);
-      return { success: true };
+    if (res.success) {
+      if (res.user) {
+        setUser(res.user);
+        setHasActiveSession(true);
+      }
+      return {
+        success: true,
+        requiresEmailConfirmation: res.requiresEmailConfirmation,
+        message: res.message,
+      };
     }
     return { success: false, error: res.error || 'Registration failed' };
   };
