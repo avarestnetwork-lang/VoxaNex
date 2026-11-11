@@ -15,6 +15,7 @@ import {
   getPublicReportStatus,
   submitAgeDeclaration,
   getUserAgeAssurance,
+  initiateAgeProviderSession,
   completeAgeProviderVerification,
   revokeAgeVerification,
   isUserEligibleForAdultAreas,
@@ -48,6 +49,8 @@ import {
 import {
   initiateCall,
 } from '../src/server/webrtcCallHub';
+
+import { safetyService } from '../src/services/safetyService';
 
 let passedCount = 0;
 let failedCount = 0;
@@ -122,6 +125,35 @@ async function runPhase6Tests() {
   });
   assert(zkResult.success && !!zkResult.record.providerProofHash, '1.7 Third-party provider verification stores zero-knowledge SHA256 proof hash');
   assert(!zkResult.record.notes?.includes('id_document_image'), '1.8 Privacy preservation: No raw government identity images stored');
+
+  // 1.8b Third-party provider session initiation: fails safely when unconfigured without fabricated URLs
+  const providerSessionResult = initiateAgeProviderSession({
+    userId: providerUserId,
+    provider: 'veriff_sandbox',
+  });
+  assert(!providerSessionResult.success, '1.8b Unconfigured age-assurance provider session fails safely');
+  assert(!providerSessionResult.redirectUrl, '1.8c No fabricated or legacy redirect URL is returned');
+  assert(typeof providerSessionResult.error === 'string' && providerSessionResult.error.length > 0, '1.8d Explicit provider-unavailable error returned');
+
+  // 1.8e Client-side safetyService error handling for unconfigured provider
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url: any) => {
+      if (url.toString().includes('/api/safety/age-assurance/provider/session')) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Third-party age verification provider is not currently configured. Local declaration is required for this phase.',
+        }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+      }
+      return originalFetch(url);
+    };
+    const clientResult = await safetyService.startProviderVerification(providerUserId, 'veriff_sandbox');
+    assert(!clientResult.success, '1.8e Client safetyService handles unconfigured provider error gracefully');
+    assert(!clientResult.redirectUrl, '1.8f Client receives no fabricated or legacy redirect URL');
+    assert(clientResult.error?.includes('not currently configured'), '1.8g Client receives explicit provider-unavailable message');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 
   // 1.9 Adult eligibility revocation
   revokeAgeVerification(adultUserId, 'Investigation found suspicious minority indicators', 'Staff_Safety_Officer');

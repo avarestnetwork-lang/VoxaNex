@@ -13,12 +13,12 @@ export const AboutPage: React.FC = () => {
       <SEOHead
         title={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরা (ChatLustora) সম্পর্কে - বাংলা, দেশি ও আন্তর্জাতিক ১৮+ কমিউনিটি'
+            ? 'চ্যাটলুস্টোরা (ChatLustora) সম্পর্কে - বাংলা, দেশি ও আন্তর্জাতিক ১৮+ কমিউনিটি'
             : 'About ChatLustora – Bangla, Desi & International 18+ Adult Community'
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরা ১৮+ প্রাপ্তবয়স্কদের জন্য বাংলা, দেশি ও আন্তর্জাতিক চ্যাট এবং ডেটিং কমিউনিটি। আমাদের লক্ষ্য নিরাপদ ও সম্মানজনক বিশ্বব্যাপী কথোপকথন।'
+            ? 'চ্যাটলুস্টোরা ১৮+ প্রাপ্তবয়স্কদের জন্য বাংলা, দেশি ও আন্তর্জাতিক চ্যাট এবং ডেটিং কমিউনিটি। আমাদের লক্ষ্য নিরাপদ ও সম্মানজনক বিশ্বব্যাপী কথোপকথন।'
             : 'Learn about ChatLustora, the premier 18+ community for Bangla, Desi, and international adult chat. Discover our mission for safe, respectful global conversations.'
         }
         canonicalPath="/about"

@@ -43,7 +43,7 @@ export const FaqPage: React.FC = () => {
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরায় বাংলা, দেশি ও আন্তর্জাতিক চ্যাট সম্পর্কিত সাধারণ প্রশ্নের উত্তর খুঁজুন। নিরাপত্তা, প্রাইভেট মেসেজিং এবং ডেটিং নিয়মাবলী সম্পর্কে জানুন।'
+            ? 'চ্যাটলুস্টোরায় বাংলা, দেশি ও আন্তর্জাতিক চ্যাট সম্পর্কিত সাধারণ প্রশ্নের উত্তর খুঁজুন। নিরাপত্তা, প্রাইভেট মেসেজিং এবং ডেটিং নিয়মাবলী সম্পর্কে জানুন।'
             : 'Find answers to common questions about Bangla, Desi, and international adult chat on ChatLustora. Learn about safety, private messaging, and dating rules.'
         }
         canonicalPath="/faq"

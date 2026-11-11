@@ -18,7 +18,7 @@ export const PrivacyPolicyPage: React.FC = () => {
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরা (ChatLustora.com) এর গোপনীয়তা নীতি। বেনামী গেস্ট সেশন, ডেটা মিনিমাইজেশন, এনক্রিপশন এবং ব্যক্তিগত তথ্যের সুরক্ষা।'
+            ? 'চ্যাটলুস্টোরা (ChatLustora.com) এর গোপনীয়তা নীতি। বেনামী গেস্ট সেশন, ডেটা মিনিমাইজেশন, এনক্রিপশন এবং ব্যক্তিগত তথ্যের সুরক্ষা।'
             : 'ChatLustora Privacy Policy and data protection practices. Anonymous guest sessions, strict data minimization, and user privacy guarantees.'
         }
         canonicalPath="/privacy"

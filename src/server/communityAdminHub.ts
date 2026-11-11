@@ -218,7 +218,7 @@ const INITIAL_BLOG_ARTICLES: BlogArticle[] = [
     status: 'published',
     content: {
       en: `Banglish—the transliteration of the Bengali language into the Latin (English) alphabet—originated during the early days of mobile SMS when Bengali font support was limited on feature phones. Over the past two decades, it evolved from a technological workaround into a vibrant, expressive conversational dialect for millions of digital natives in Bangladesh and across the diaspora.\n\nOn ChatLustora, we celebrate Banglish alongside formal Bangla. When typing quickly on mobile devices, Banglish offers rapid expression. However, clarity and respect remain essential:\n\n1. Phonetic Consistency: Spellings like "kmn acho?", "valo achi", and "kothay jabe?" are widely recognized.\n2. Respectful Boundaries: Because Latin text lacks visual honorifics, always clarify tone when speaking to new partners.\n3. Zero Tolerance for Verbal Abuse: Abusive slurs in Banglish violate platform terms just as severely as English or Bengali insults.`,
-      bn: `বাংলিশ—অর্থাৎ ইংরেজি হরফে বাংলা লেখার প্রচলন শুরু হয়েছিল প্রথম দিকের মোবাইল এসএমএসের যুগে, যখন ফিচার ফোনে বাংলা ফন্টের সমর্থন ছিল না। গত দুই দশকে এটি প্রযুক্তিগত সীমাবদ্ধতার সমাধান থেকে শুরু করে তরুণ প্রজন্মের প্রাণবন্ত ভাষায় রূপান্তরিত হয়েছে।\n\nচ্যাটলুস্টোরাে আমরা আনুষ্ঠানিক বাংলার পাশাপাশি বাংলিশকেও গুরুত্ব দিই। মোবাইলে দ্রুত টাইপ করার ক্ষেত্রে এটি অত্যন্ত সহায়ক:\n\n১. সাধারণ ফোনেটিক রীতি: "kmn acho?", "valo achi", "ki khobor?" ইত্যাদি সহজেই বোধগম্য।\n২. সম্মানজনক স্বর: অনলাইন লেখায় শারীরিক অভিব্যক্তি থাকে না, তাই অপরিচিতদের সাথে কথা বলার সময় সংযত থাকা বাঞ্ছনীয়।\n৩. গালিগালাজ সম্পূর্ণ নিষিদ্ধ: বাংলিশে লেখা যেকোনো অশ্লীল কটূক্তি বা উত্ত্যক্তকরণ প্ল্যাটফর্মের নীতিমালার সরাসরি লঙ্ঘন।`,
+      bn: `বাংলিশ—অর্থাৎ ইংরেজি হরফে বাংলা লেখার প্রচলন শুরু হয়েছিল প্রথম দিকের মোবাইল এসএমএসের যুগে, যখন ফিচার ফোনে বাংলা ফন্টের সমর্থন ছিল না। গত দুই দশকে এটি প্রযুক্তিগত সীমাবদ্ধতার সমাধান থেকে শুরু করে তরুণ প্রজন্মের প্রাণবন্ত ভাষায় রূপান্তরিত হয়েছে।\n\nচ্যাটলুস্টোরায় আমরা আনুষ্ঠানিক বাংলার পাশাপাশি বাংলিশকেও গুরুত্ব দিই। মোবাইলে দ্রুত টাইপ করার ক্ষেত্রে এটি অত্যন্ত সহায়ক:\n\n১. সাধারণ ফোনেটিক রীতি: "kmn acho?", "valo achi", "ki khobor?" ইত্যাদি সহজেই বোধগম্য।\n২. সম্মানজনক স্বর: অনলাইন লেখায় শারীরিক অভিব্যক্তি থাকে না, তাই অপরিচিতদের সাথে কথা বলার সময় সংযত থাকা বাঞ্ছনীয়।\n৩. গালিগালাজ সম্পূর্ণ নিষিদ্ধ: বাংলিশে লেখা যেকোনো অশ্লীল কটূক্তি বা উত্ত্যক্তকরণ প্ল্যাটফর্মের নীতিমালার সরাসরি লঙ্ঘন।`,
     },
     comments: [
       {
@@ -252,7 +252,7 @@ const INITIAL_BLOG_ARTICLES: BlogArticle[] = [
     status: 'published',
     content: {
       en: `Online anonymity should bring freedom, not vulnerability. Over recent years, bad actors have targeted internet users through screenshot extortion, impersonation, and doxxing.\n\nHere are the critical security practices enforced on ChatLustora:\n\n- Never Share Phone Numbers Early: Meeting an interesting person in a random room does not require immediate WhatsApp contact. Continue chatting securely in the platform's direct messages.\n- Beware of Video Screenshot Traps: Never display identifiable government documents, school uniforms, or office badges on camera.\n- Immediate Reporting: If someone attempts to threaten you with a recorded video or private chat, do not pay money or give in to demands. Take evidence snapshots and immediately report via the Safety Center or call the CID Cyber Police Centre at +880 1769691522.`,
-      bn: `অনলাইন বেনামী আড্ডা আপনার স্বাধীনতা দেবে, দুর্বলতা নয়। সাম্প্রতিক বছরগুলোতে অনলাইন ব্যবহারকারীদের লক্ষ্য করে ব্ল্যাকমেইল ও ব্যক্তিগত তথ্য ফাঁসের মতো ঘটনা ঘটছে।\n\nচ্যাটলুস্টোরাের গুরুত্বপূর্ণ নিরাপত্তা পরামর্শসমূহ:\n\n- শুরুতেই ফোন নম্বর দেবেন না: র‍্যান্ডম রুমে পরিচিত হলেই হোয়াটসঅ্যাপ বা ফেসবুক শেয়ার করার প্রয়োজন নেই। প্ল্যাটফর্মের সুরক্ষিত ডিরেক্ট মেসেজ ব্যবহার করুন।\n- ক্যামেরায় নিজের গোপনীয়তা রাখুন: অফিস আইডি, শিক্ষাপ্রতিষ্ঠানের ইউনিফর্ম বা বাড়ির ঠিকানা দৃশ্যমান রাখবেন না।\n- তাৎক্ষণিক অভিযোগ করুন: কেউ আপত্তিকর ছবি বা চ্যাট দিয়ে ব্ল্যাকমেইল করার চেষ্টা করলে কখনই টাকা দেবেন না। দ্রুত সেফটি সেন্টারে জানান অথবা পুলিশের সাইবার ইউনিটে যোগাযোগ করুন।`,
+      bn: `অনলাইন বেনামী আড্ডা আপনার স্বাধীনতা দেবে, দুর্বলতা নয়। সাম্প্রতিক বছরগুলোতে অনলাইন ব্যবহারকারীদের লক্ষ্য করে ব্ল্যাকমেইল ও ব্যক্তিগত তথ্য ফাঁসের মতো ঘটনা ঘটছে।\n\nচ্যাটলুস্টোরার গুরুত্বপূর্ণ নিরাপত্তা পরামর্শসমূহ:\n\n- শুরুতেই ফোন নম্বর দেবেন না: র‍্যান্ডম রুমে পরিচিত হলেই হোয়াটসঅ্যাপ বা ফেসবুক শেয়ার করার প্রয়োজন নেই। প্ল্যাটফর্মের সুরক্ষিত ডিরেক্ট মেসেজ ব্যবহার করুন।\n- ক্যামেরায় নিজের গোপনীয়তা রাখুন: অফিস আইডি, শিক্ষাপ্রতিষ্ঠানের ইউনিফর্ম বা বাড়ির ঠিকানা দৃশ্যমান রাখবেন না।\n- তাৎক্ষণিক অভিযোগ করুন: কেউ আপত্তিকর ছবি বা চ্যাট দিয়ে ব্ল্যাকমেইল করার চেষ্টা করলে কখনই টাকা দেবেন না। দ্রুত সেফটি সেন্টারে জানান অথবা পুলিশের সাইবার ইউনিটে যোগাযোগ করুন।`,
     },
     comments: [
       {
@@ -320,7 +320,7 @@ export const COMMUNITY_GUIDES: CommunityGuide[] = [
         },
         body: {
           en: 'ChatLustora categorizes public lounges by language and topic (Bangla Adult 18+, Bangladesh Random, Banglish, Regional hubs, and International exchange). Join rooms matching your current conversational interests.',
-          bn: 'চ্যাটলুস্টোরাে বিভিন্ন ভাষার ও বিষয়ের রুম রয়েছে (যেমন বাংলা ১৮+, বাংলাদেশ আড্ডা, বাংলিশ, আঞ্চলিক হাব এবং আন্তর্জাতিক বিনিময়)। আপনার আগ্রহ অনুযায়ী রুমে যোগ দিন।',
+          bn: 'চ্যাটলুস্টোরায় বিভিন্ন ভাষার ও বিষয়ের রুম রয়েছে (যেমন বাংলা ১৮+, বাংলাদেশ আড্ডা, বাংলিশ, আঞ্চলিক হাব এবং আন্তর্জাতিক বিনিময়)। আপনার আগ্রহ অনুযায়ী রুমে যোগ দিন।',
         },
         doList: {
           en: ['Verify the room topic and language before chatting', 'Greet others politely upon entering'],
@@ -489,7 +489,7 @@ export const COMMUNITY_GUIDES: CommunityGuide[] = [
         },
         body: {
           en: 'ChatLustora staff will NEVER ask for your password, verification codes, bKash/Nagad transfers, or external Telegram links. Real staff carry verified 🛡️ Admin badges.',
-          bn: 'চ্যাটলুস্টোরাের কোনো মডারেটর কখনো আপনার পাসওয়ার্ড, বিকাশ/নগদ পিন নম্বর বা টাকা চাইবে না। প্রকৃত অ্যাডমিনদের সাথে যাচাইকৃত 🛡️ ব্যাজ থাকে।',
+          bn: 'চ্যাটলুস্টোরার কোনো মডারেটর কখনো আপনার পাসওয়ার্ড, বিকাশ/নগদ পিন নম্বর বা টাকা চাইবে না। প্রকৃত অ্যাডমিনদের সাথে যাচাইকৃত 🛡️ ব্যাজ থাকে।',
         },
       },
     ],
@@ -512,7 +512,7 @@ export const COMMUNITY_GUIDES: CommunityGuide[] = [
       {
         heading: {
           en: 'The Golden Rule of ChatLustora',
-          bn: 'চ্যাটলুস্টোরাের মূলনীতি',
+          bn: 'চ্যাটলুস্টোরার মূলনীতি',
         },
         body: {
           en: 'Treat every participant with dignity. Harassment based on gender, religion, regional dialect, ethnicity, or sexual orientation results in immediate suspension or permanent bans.',
@@ -1865,22 +1865,16 @@ export function submitAgeDeclaration(params: {
 }
 
 /**
- * Initiate third-party provider age verification session (Persona / Yoti / Veriff sandbox)
+ * Initiate third-party provider age verification session (Persona / Yoti / Veriff)
+ * Fails safely with an explicit provider-unavailable error when no external provider is configured.
  */
-export function initiateAgeProviderSession(params: {
+export function initiateAgeProviderSession(_params: {
   userId: string;
   provider: AgeAssuranceProvider;
-}) {
-  const { userId, provider } = params;
-  const sessionId = `age_ses_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-  const redirectUrl = `https://verify.voxanex.internal/sandbox?session=${sessionId}&provider=${provider}`;
-
+}): { success: boolean; error: string; sessionId?: string; redirectUrl?: string } {
   return {
-    success: true,
-    sessionId,
-    provider,
-    redirectUrl,
-    disclaimer: 'Third-party verification handles identity attributes without storing government IDs on ChatLustora servers.',
+    success: false,
+    error: 'Third-party age verification provider is not currently configured. Local declaration is required for this phase.',
   };
 }
 

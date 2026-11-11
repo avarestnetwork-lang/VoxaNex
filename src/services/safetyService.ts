@@ -117,9 +117,16 @@ class SafetyService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, provider }),
       });
-      return (await res.json()) as { success: boolean; sessionId?: string; redirectUrl?: string; error?: string };
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        return {
+          success: false,
+          error: data?.error || 'Third-party age verification provider is currently unavailable.',
+        };
+      }
+      return data as { success: boolean; sessionId?: string; redirectUrl?: string; error?: string };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      return { success: false, error: err.message || 'Network error initiating provider verification' };
     }
   }
 

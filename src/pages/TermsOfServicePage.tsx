@@ -18,7 +18,7 @@ export const TermsOfServicePage: React.FC = () => {
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরা (ChatLustora.com) প্ল্যাটফর্ম ব্যবহারের নিয়মাবলী ও আইনি শর্ত। ১৮+ প্রাপ্তবয়স্কদের আচরণবিধি, মিউচুয়াল কনসেন্ট এবং নীতি লঙ্ঘন প্রতিরোধ।'
+            ? 'চ্যাটলুস্টোরা (ChatLustora.com) প্ল্যাটফর্ম ব্যবহারের নিয়মাবলী ও আইনি শর্ত। ১৮+ প্রাপ্তবয়স্কদের আচরণবিধি, মিউচুয়াল কনসেন্ট এবং নীতি লঙ্ঘন প্রতিরোধ।'
             : 'ChatLustora Terms of Service and adult user conduct agreement. 18+ access requirements, mutual consent, content policies, and dispute terms.'
         }
         canonicalPath="/terms"

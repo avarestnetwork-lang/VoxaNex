@@ -213,7 +213,7 @@ export const ForumPage: React.FC = () => {
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরা গ্লোবাল ডিসকাশনে যোগ দিন। আমাদের মডারেটেড কমিউনিটি ফোরামে বাংলা, দেশি এবং আন্তর্জাতিক ব্যবহারকারীদের সাথে চ্যাট করুন।'
+            ? 'চ্যাটলুস্টোরা গ্লোবাল ডিসকাশনে যোগ দিন। আমাদের মডারেটেড কমিউনিটি ফোরামে বাংলা, দেশি এবং আন্তর্জাতিক ব্যবহারকারীদের সাথে চ্যাট করুন।'
             : 'Join global discussions on ChatLustora. Connect with Bangla, Desi, and international users in our moderated community forum. Share tips, stories, and experiences.'
         }
         canonicalPath="/forum"

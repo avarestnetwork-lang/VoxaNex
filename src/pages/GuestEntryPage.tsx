@@ -101,7 +101,7 @@ export const GuestEntryPage: React.FC = () => {
     if (parsedAge < 18) {
       setGuestError(
         language === 'bn'
-          ? 'চ্যাটলাস্টোরা (ChatLustora) শুধুমাত্র ১৮+ প্রাপ্তবয়স্কদের জন্য। আপনার ঘোষিত বয়স ১৮ বছরের কম হওয়ায় প্রবেশাধিকার সম্পূর্ণরূপে নিষিদ্ধ।'
+          ? 'চ্যাটলুস্টোরা (ChatLustora) শুধুমাত্র ১৮+ প্রাপ্তবয়স্কদের জন্য। আপনার ঘোষিত বয়স ১৮ বছরের কম হওয়ায় প্রবেশাধিকার সম্পূর্ণরূপে নিষিদ্ধ।'
           : 'ChatLustora is strictly an adult community for users aged 18 and older. Access is strictly prohibited for minors.'
       );
       return;
@@ -110,7 +110,7 @@ export const GuestEntryPage: React.FC = () => {
     if (!adultConfirmed) {
       setGuestError(
         language === 'bn'
-          ? 'চ্যাটলাস্টোরায় প্রবেশের পূর্বে আপনার বয়স ১৮ বা তার বেশি নিশ্চিত করে ঘোষণা দিন।'
+          ? 'চ্যাটলুস্টোরায় প্রবেশের পূর্বে আপনার বয়স ১৮ বা তার বেশি নিশ্চিত করে ঘোষণা দিন।'
           : 'You must confirm you are 18 years of age or older to enter ChatLustora.'
       );
       return;
@@ -174,7 +174,7 @@ export const GuestEntryPage: React.FC = () => {
       if (!adultConfirmed) {
         setAccountError(
           language === 'bn'
-            ? 'চ্যাটলাস্টোরায় প্রবেশের পূর্বে আপনার বয়স ১৮ বা তার বেশি নিশ্চিত করে ঘোষণা দিন।'
+            ? 'চ্যাটলুস্টোরায় প্রবেশের পূর্বে আপনার বয়স ১৮ বা তার বেশি নিশ্চিত করে ঘোষণা দিন।'
             : 'You must confirm you are 18 years of age or older to enter ChatLustora.'
         );
         return;
@@ -287,7 +287,7 @@ export const GuestEntryPage: React.FC = () => {
             />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
-            {language === 'bn' ? 'চ্যাটলাস্টোরায় স্বাগতম' : 'Welcome to ChatLustora'}
+            {language === 'bn' ? 'চ্যাটলুস্টোরায় স্বাগতম' : 'Welcome to ChatLustora'}
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-md mx-auto">
             {language === 'bn'

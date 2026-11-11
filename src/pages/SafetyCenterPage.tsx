@@ -64,7 +64,7 @@ export const SafetyCenterPage: React.FC = () => {
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরায় নিরাপদে থাকুন। বাংলা, দেশি ও আন্তর্জাতিক প্রাপ্তবয়স্ক চ্যাটের জন্য আমাদের সুরক্ষা নির্দেশিকা দেখুন। আমাদের গ্লোবাল কমিউনিটির জন্য রিপোর্টিং টুলস এবং জরুরি যোগাযোগ অ্যাক্সেস করুন।'
+            ? 'চ্যাটলুস্টোরায় নিরাপদে থাকুন। বাংলা, দেশি ও আন্তর্জাতিক প্রাপ্তবয়স্ক চ্যাটের জন্য আমাদের সুরক্ষা নির্দেশিকা দেখুন। আমাদের গ্লোবাল কমিউনিটির জন্য রিপোর্টিং টুলস এবং জরুরি যোগাযোগ অ্যাক্সেস করুন।'
             : 'Stay safe on ChatLustora. Review our safety guidelines for Bangla, Desi, and international adult chat. Access reporting tools and emergency contacts for our global community.'
         }
         canonicalPath="/safety"
@@ -101,7 +101,7 @@ export const SafetyCenterPage: React.FC = () => {
           </span>
           <p className="text-slate-600 leading-relaxed">
             {language === 'bn'
-              ? 'চ্যাটলাস্টোরা স্বয়ংক্রিয় ফিল্টারিং এবং প্রশিক্ষিত মানব মডারেটরদের সম্মিলিত প্রক্রিয়ায় কাজ করে। স্বয়ংক্রিয় অ্যালগরিদম কখনোই অভ্রান্ত নয়, তাই প্রতিটি গুরুতর সিদ্ধান্ত মানবীয় পর্যালোচনার অধীন থাকে। আমরা কোনো অযৌক্তিক ২৪/৭ তাৎক্ষণিক দাবি করি না; অগ্রাধিকারভিত্তিতে রিপোর্টগুলো দ্রুততম সময়ে সমাধান করা হয়।'
+              ? 'চ্যাটলুস্টোরা স্বয়ংক্রিয় ফিল্টারিং এবং প্রশিক্ষিত মানব মডারেটরদের সম্মিলিত প্রক্রিয়ায় কাজ করে। স্বয়ংক্রিয় অ্যালগরিদম কখনোই অভ্রান্ত নয়, তাই প্রতিটি গুরুতর সিদ্ধান্ত মানবীয় পর্যালোচনার অধীন থাকে। আমরা কোনো অযৌক্তিক ২৪/৭ তাৎক্ষণিক দাবি করি না; অগ্রাধিকারভিত্তিতে রিপোর্টগুলো দ্রুততম সময়ে সমাধান করা হয়।'
               : 'ChatLustora operates transparently: automated filters assist in rapid screening, but serious sanctions and disputed decisions are reviewed by human trust-and-safety personnel. We do not claim infallible 24/7 staffing; reports are triaged continuously with child protection and threat cases prioritized immediately.'}
           </p>
         </div>

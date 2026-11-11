@@ -1143,6 +1143,9 @@ export function createExpressApp(dbEnvOverride?: {
       userId,
       provider: provider || 'veriff_sandbox',
     });
+    if (!session.success) {
+      return res.status(503).json(session);
+    }
     res.json(session);
   });
 

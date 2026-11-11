@@ -244,13 +244,13 @@ export const LandingPage: React.FC = () => {
     {
       q: language === 'bn' ? 'এটি কি বিনামূল্যে এবং নিবন্ধন কি বাধ্যতামূলক?' : 'Is it free, and do I have to register?',
       a: language === 'bn'
-        ? 'হ্যাঁ, চ্যাটলাস্টোরা (ChatLustora) সম্পূর্ণ বিনামূল্যে ব্যবহার করা যায়। পাবলিক চ্যাট রুম বা ১-অন-১ প্রাইভেট চ্যাটের জন্য কোনো বাধ্যতামূলক নিবন্ধনের প্রয়োজন নেই; কেবল একটি নিকনেম বেছে নিয়ে নিরাপদে চ্যাট শুরু করুন।'
+        ? 'হ্যাঁ, চ্যাটলুস্টোরা (ChatLustora) সম্পূর্ণ বিনামূল্যে ব্যবহার করা যায়। পাবলিক চ্যাট রুম বা ১-অন-১ প্রাইভেট চ্যাটের জন্য কোনো বাধ্যতামূলক নিবন্ধনের প্রয়োজন নেই; কেবল একটি নিকনেম বেছে নিয়ে নিরাপদে চ্যাট শুরু করুন।'
         : 'Yes, ChatLustora is completely free to use. No registration is required to join public chat rooms or private direct messaging; simply pick a nickname and start chatting immediately.'
     },
     {
       q: language === 'bn' ? 'আমার বয়স কত হতে হবে?' : 'How old do I have to be?',
       a: language === 'bn'
-        ? 'চ্যাটলাস্টোরার সমস্ত প্রাপ্তবয়স্ক রুম, ডেটিং ফিচার এবং প্রাইভেট মেসেজিংয়ে প্রবেশের জন্য আপনার বয়স কমপক্ষে ১৮ বছর হতে হবে। ১৮ বছরের কম বয়সীদের প্রবেশ সম্পূর্ণ নিষিদ্ধ।'
+        ? 'চ্যাটলুস্টোরার সমস্ত প্রাপ্তবয়স্ক রুম, ডেটিং ফিচার এবং প্রাইভেট মেসেজিংয়ে প্রবেশের জন্য আপনার বয়স কমপক্ষে ১৮ বছর হতে হবে। ১৮ বছরের কম বয়সীদের প্রবেশ সম্পূর্ণ নিষিদ্ধ।'
         : 'You must be at least 18 years old to access adult rooms, dating features, and private messaging spaces on ChatLustora. Strict 18+ verification applies.'
     },
     {
@@ -303,7 +303,7 @@ export const LandingPage: React.FC = () => {
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-[#0F172A] dark:text-white leading-[1.12]">
               {language === 'bn' ? (
                 <>
-                  চ্যাটলাস্টোরায় <span className="text-rose-600 dark:text-rose-400">নতুন মানুষের সাথে পরিচিত হোন</span>
+                  চ্যাটলুস্টোরায় <span className="text-rose-600 dark:text-rose-400">নতুন মানুষের সাথে পরিচিত হোন</span>
                 </>
               ) : (
                 <>
@@ -812,7 +812,7 @@ export const LandingPage: React.FC = () => {
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 border-t border-slate-200/60 dark:border-slate-800">
         <div className="mb-8">
           <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            {language === 'bn' ? 'চ্যাটলাস্টোরা কমিউনিটিতে যোগ দিন' : 'Join the ChatLustora Community'}
+            {language === 'bn' ? 'চ্যাটলুস্টোরা কমিউনিটিতে যোগ দিন' : 'Join the ChatLustora Community'}
           </h2>
           <p className="text-slate-600 dark:text-slate-300 mt-2">
             {language === 'bn' ? 'চ্যাট রুমের বাইরেও যুক্ত থাকুন। আমাদের আপডেট পেতে, কমিউনিটি মেম্বারদের সাথে দেখা করতে এবং আমাদের বৈশ্বিক কমিউনিটির অংশ হতে আমাদের ফলো করুন।' : 'Connect beyond the chat rooms. Follow our updates, meet community members and become part of our global community.'}
@@ -823,7 +823,7 @@ export const LandingPage: React.FC = () => {
           {/* Card A */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-6 shadow-sm">
             <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">{language === 'bn' ? 'আমাদের ফেসবুক পেজ ফলো করুন' : 'Follow Our Facebook Page'}</h3>
-            <p className="text-sm text-slate-600 dark:text-slate-300 mb-6">{language === 'bn' ? 'লেটেস্ট চ্যাটলাস্টোরা আপডেট, নতুন ফিচার ঘোষণা, কমিউনিটি নিউজ এবং বিশেষ আপডেট পেতে আমাদের পেজে লাইক দিন।' : 'Get the latest ChatLustora updates, feature announcements, community news and special updates.'}</p>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mb-6">{language === 'bn' ? 'লেটেস্ট চ্যাটলুস্টোরা আপডেট, নতুন ফিচার ঘোষণা, কমিউনিটি নিউজ এবং বিশেষ আপডেট পেতে আমাদের পেজে লাইক দিন।' : 'Get the latest ChatLustora updates, feature announcements, community news and special updates.'}</p>
             <a href="https://www.facebook.com/chatlustora" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center bg-[#1877F2] hover:bg-[#166fe5] text-white font-bold px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer">
               {language === 'bn' ? 'ফেসবুকে ফলো করুন' : 'Follow on Facebook'}
             </a>

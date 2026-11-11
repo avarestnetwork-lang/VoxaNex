@@ -132,7 +132,7 @@ export const RoomDirectoryPage: React.FC = () => {
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরায় বাংলা, বাঙালি, দেশি এবং আন্তর্জাতিক চ্যাট রুমগুলি অন্বেষণ করুন। বিশ্বজুড়ে মানুষের সাথে সংযোগ করুন, বন্ধু তৈরি করুন এবং বিভিন্ন সংস্কৃতির সাথে আলাপচারিতায় যোগ দিন।'
+            ? 'চ্যাটলুস্টোরায় বাংলা, বাঙালি, দেশি এবং আন্তর্জাতিক চ্যাট রুমগুলি অন্বেষণ করুন। বিশ্বজুড়ে মানুষের সাথে সংযোগ করুন, বন্ধু তৈরি করুন এবং বিভিন্ন সংস্কৃতির সাথে আলাপচারিতায় যোগ দিন।'
             : 'Explore Bangla, Bengali, Desi and international chat rooms on ChatLustora. Connect with people worldwide, make friends and join conversations across cultures.'
         }
         canonicalPath="/rooms"

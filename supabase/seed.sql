@@ -1,5 +1,5 @@
 -- =============================================================================
--- VOXANEX DATABASE SEED SCRIPT
+-- CHATLUSTORA DATABASE SEED SCRIPT
 -- Seeds default chat rooms, forum categories, and initial community guides
 -- =============================================================================
 
@@ -103,8 +103,8 @@ INSERT INTO public.blog_posts (
     'বাংলিশে কথা বলার শিল্প: ধ্বনিতত্ত্ব, স্ল্যাং ও আধুনিক শিষ্টাচার',
     'How the Latin script became a vibrant medium for Bengali internet culture, and best practices for writing clearly.',
     'কীভাবে ইংরেজি হরফ বাঙালি ইন্টারনেট সংস্কৃতির প্রাণবন্ত মাধ্যম হয়ে উঠল এবং পারস্পরিক শ্রদ্ধাপূর্ণ যোগাযোগের মূলনীতি।',
-    'Banglish evolved over two decades from a feature phone SMS limitation into a modern conversational medium for millions of digital natives. On VoxaNex, we celebrate Banglish while upholding respectful boundaries and zero-tolerance for harassment.',
-    'বাংলিশ গত দুই দশকে একটি প্রাণবন্ত ডিজিটাল মাধ্যমে পরিণত হয়েছে। ভক্সানেক্সে আমরা আনুষ্ঠানিক বাংলার পাশাপাশি বাংলিশকেও স্বাগত জানাই, যেখানে পারস্পরিক সম্মান ও শ্রদ্ধাবোধ বজায় রাখা আবশ্যক।',
+    'Banglish evolved over two decades from a feature phone SMS limitation into a modern conversational medium for millions of digital natives. On ChatLustora, we celebrate Banglish while upholding respectful boundaries and zero-tolerance for harassment.',
+    'বাংলিশ গত দুই দশকে একটি প্রাণবন্ত ডিজিটাল মাধ্যমে পরিণত হয়েছে। চ্যাটলুস্টোরায় আমরা আনুষ্ঠানিক বাংলার পাশাপাশি বাংলিশকেও স্বাগত জানাই, যেখানে পারস্পরিক সম্মান ও শ্রদ্ধাবোধ বজায় রাখা আবশ্যক।',
     'Culture & Language', '4 min read'
 ),
 (

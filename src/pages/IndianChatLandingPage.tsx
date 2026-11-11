@@ -24,7 +24,7 @@ export const IndianChatLandingPage: React.FC = () => {
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরায় ভারতীয়, হিন্দি এবং দেশি প্রাপ্তবয়স্ক চ্যাট রুমে যুক্ত হোন। ডেটিং, ফ্লার্টিং এবং আন্তর্জাতিক আড্ডার জন্য ভারতীয় সিঙ্গলদের সাথে যুক্ত হোন।'
+            ? 'চ্যাটলুস্টোরায় ভারতীয়, হিন্দি এবং দেশি প্রাপ্তবয়স্ক চ্যাট রুমে যুক্ত হোন। ডেটিং, ফ্লার্টিং এবং আন্তর্জাতিক আড্ডার জন্য ভারতীয় সিঙ্গলদের সাথে যুক্ত হোন।'
             : 'Explore Indian, Hindi, and Desi adult chat rooms on ChatLustora. Connect with Indian singles and South Asian diaspora for dating, flirting, and international chat.'
         }
         canonicalPath="/chat/indian"

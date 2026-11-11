@@ -30,7 +30,7 @@ export const BanglaChatLandingPage: React.FC = () => {
     {
       q: language === 'bn' ? 'বাংলা চ্যাট রুম কি বিনামূল্যে ব্যবহার করা যায়?' : 'Is the Bangla chat room free to use?',
       a: language === 'bn'
-        ? 'হ্যাঁ, চ্যাটলাস্টোরার বাংলা চ্যাট রুম সম্পূর্ণ বিনামূল্যে উন্মুক্ত। কোনো প্রকার ফি বা সাবস্ক্রিপশন ছাড়াই তাৎক্ষণিকভাবে আড্ডায় যোগ দেওয়া যায়।'
+        ? 'হ্যাঁ, চ্যাটলুস্টোরার বাংলা চ্যাট রুম সম্পূর্ণ বিনামূল্যে উন্মুক্ত। কোনো প্রকার ফি বা সাবস্ক্রিপশন ছাড়াই তাৎক্ষণিকভাবে আড্ডায় যোগ দেওয়া যায়।'
         : 'Yes, ChatLustora Bangla chat is 100% free. You can join group conversations or direct messaging with zero subscription fees.',
     },
     {
@@ -69,7 +69,7 @@ export const BanglaChatLandingPage: React.FC = () => {
         }
         description={
           language === 'bn'
-            ? 'চ্যাটলাস্টোরার সেরা বাংলা চ্যাট রুমে যুক্ত হোন। বাংলাদেশ, ভারত এবং আন্তর্জাতিক প্রবাসীদের সাথে ডেটিং, ফ্লার্টিং এবং বন্ধুত্বপূর্ণ আড্ডা দিন।'
+            ? 'চ্যাটলুস্টোরার সেরা বাংলা চ্যাট রুমে যুক্ত হোন। বাংলাদেশ, ভারত এবং আন্তর্জাতিক প্রবাসীদের সাথে ডেটিং, ফ্লার্টিং এবং বন্ধুত্বপূর্ণ আড্ডা দিন।'
             : 'Join the top Bangla chat room on ChatLustora. Connect with Bengali adults from Bangladesh, India, and the international diaspora for dating, flirting, and friendly chat.'
         }
         canonicalPath="/chat/bangla"
@@ -124,7 +124,7 @@ export const BanglaChatLandingPage: React.FC = () => {
 
           <p className="text-base sm:text-lg text-slate-600 dark:text-slate-300 max-w-2xl mx-auto leading-relaxed">
             {language === 'bn'
-              ? 'চ্যাটলাস্টোরার প্রধান বাংলা চ্যাট রুমে স্বাগতম। বাংলাদেশ, পশ্চিমবঙ্গ এবং বিশ্বব্যাপী প্রবাসী বাঙালিদের সাথে মুক্ত আলোচনা, ফ্লার্টিং ও বন্ধুত্বে মেতে উঠুন একটি শালীন এবং সম্মানজনক প্রাপ্তবয়স্ক পরিবেশে।'
+              ? 'চ্যাটলুস্টোরার প্রধান বাংলা চ্যাট রুমে স্বাগতম। বাংলাদেশ, পশ্চিমবঙ্গ এবং বিশ্বব্যাপী প্রবাসী বাঙালিদের সাথে মুক্ত আলোচনা, ফ্লার্টিং ও বন্ধুত্বে মেতে উঠুন একটি শালীন এবং সম্মানজনক প্রাপ্তবয়স্ক পরিবেশে।'
               : 'Welcome to ChatLustora’s dedicated Bangla room. Connect with Bengali-speaking adults worldwide for vibrant conversations, dating, flirting, and confidential private messaging in a safe, moderated space.'}
           </p>
 

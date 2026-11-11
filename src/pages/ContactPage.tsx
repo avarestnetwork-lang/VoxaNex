@@ -35,7 +35,7 @@ export const ContactPage: React.FC = () => {
         }
         description={
           language === 'bn'
-            ? 'বাংলা, দেশি ও আন্তর্জাতিক সাপোর্টের জন্য চ্যাটলাস্টোরার সাথে যোগাযোগ করুন। চ্যাট, নিরাপত্তা বা কমিউনিটি জিজ্ঞাসায় সহায়তার জন্য আমাদের গ্লোবাল টিমের সাথে যোগাযোগ করুন।'
+            ? 'বাংলা, দেশি ও আন্তর্জাতিক সাপোর্টের জন্য চ্যাটলুস্টোরার সাথে যোগাযোগ করুন। চ্যাট, নিরাপত্তা বা কমিউনিটি জিজ্ঞাসায় সহায়তার জন্য আমাদের গ্লোবাল টিমের সাথে যোগাযোগ করুন।'
             : 'Get in touch with ChatLustora for Bangla, Desi, and international support. Reach out to our global team for help with chat, safety, or community inquiries.'
         }
         canonicalPath="/contact"

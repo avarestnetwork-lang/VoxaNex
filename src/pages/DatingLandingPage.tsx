@@ -71,7 +71,7 @@ export const DatingLandingPage: React.FC = () => {
 
           <p className="max-w-2xl mx-auto text-base sm:text-lg text-slate-600 dark:text-slate-300 leading-relaxed">
             {language === 'bn'
-              ? 'চ্যাটলাস্টোরায় স্বাগতম — প্রাপ্তবয়স্কদের জন্য অর্থবহ অনলাইন পরিচয়, মিষ্টি ফ্লার্টিং এবং ব্যক্তিগত মেসেজিংয়ের নিরাপদ ঠিকানা। বাংলা ও দেশি কমিউনিটিতে নতুন মানুষের সাথে সম্মানজনকভাবে পরিচিত হোন।'
+              ? 'চ্যাটলুস্টোরায় স্বাগতম — প্রাপ্তবয়স্কদের জন্য অর্থবহ অনলাইন পরিচয়, মিষ্টি ফ্লার্টিং এবং ব্যক্তিগত মেসেজিংয়ের নিরাপদ ঠিকানা। বাংলা ও দেশি কমিউনিটিতে নতুন মানুষের সাথে সম্মানজনকভাবে পরিচিত হোন।'
               : 'Welcome to ChatLustora — a respectful, modern space for adults aged 18+ to connect, flirt, and discover romantic sparks. Connect through real-time public rooms or move into private direct messages.'}
           </p>
 
