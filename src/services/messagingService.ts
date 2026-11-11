@@ -40,8 +40,8 @@ export interface SendMessageOptions {
 
 const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) || (typeof window !== 'undefined' && window.location?.origin) || 'https://voxanex.test';
 
-let __testAuthTokenResolver: (() => Promise<string | null>) | null = null;
-export const setTestAuthTokenResolver = (resolver: (() => Promise<string | null>) | null) => {
+let __testAuthTokenResolver: ((options?: AuthTokenOptions | boolean) => Promise<string | null> | string | null) | null = null;
+export const setTestAuthTokenResolver = (resolver: ((options?: AuthTokenOptions | boolean) => Promise<string | null> | string | null) | null) => {
   __testAuthTokenResolver = resolver;
 };
 
@@ -54,7 +54,7 @@ export interface AuthTokenOptions {
 
 export async function getAuthToken(options?: AuthTokenOptions | boolean): Promise<string | null> {
   if (typeof __testAuthTokenResolver === 'function') {
-    return await __testAuthTokenResolver();
+    return await __testAuthTokenResolver(options);
   }
 
   const isGuest =
@@ -822,8 +822,9 @@ export const messagingService = {
         ? { onMessage: callbacksOrOnMessage }
         : callbacksOrOnMessage;
 
-    let eventSource: EventSource | null = null;
     let isClosed = false;
+    let unsubscribeSSE = () => {};
+    let unsubSupabase = () => {};
     let syncInterval: NodeJS.Timeout | null = null;
     let broadcastChannel: BroadcastChannel | null = null;
     const seenDmIds = new Set<string>();
@@ -839,7 +840,7 @@ export const messagingService = {
       callbacks.onMessage(msg);
     };
 
-    // 1. Cross-tab BroadcastChannel
+    // 1. Cross-tab BroadcastChannel (local browser tabs)
     try {
       if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
         broadcastChannel = new BroadcastChannel(`vx_tab_dm_${convId}`);
@@ -853,18 +854,19 @@ export const messagingService = {
       // ignore
     }
 
-    // 2. SSE Connection (Authenticated via HTTP Headers - Authorization)
-    let unsubscribeSSE = () => {};
+    // Authenticated network transports setup
     (async () => {
       if (isClosed) return;
       const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
       const authToken = await getAuthToken(opts);
-      if (isClosed) return;
-
-      const headers: Record<string, string> = {};
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
+      if (isClosed || !authToken) {
+        return; // Fail closed: unauthenticated or closed during pending resolution
       }
+
+      // 2. SSE Connection (Authenticated via HTTP Headers - Authorization)
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${authToken}`,
+      };
 
       const cleanup = connectCustomSSE({
         url: `${API_BASE}/api/chat/conversations/${convId}/events`,
@@ -900,37 +902,43 @@ export const messagingService = {
 
       if (isClosed) {
         cleanup();
-      } else {
-        unsubscribeSSE = cleanup;
+        return;
+      }
+      unsubscribeSSE = cleanup;
+
+      // 4. Supabase Realtime Private channel subscription (Shared state)
+      if (isSupabaseConfigured() && !isClosed) {
+        databaseService.subscribeToDM(convId, userId, (msg) => {
+          console.log('[VX-DM] Received new_dm event from Supabase for conversation:', convId);
+          emitUniqueDm(msg);
+        }).then(unsub => {
+          if (isClosed) {
+            unsub();
+          } else {
+            unsubSupabase = unsub;
+          }
+        });
+      }
+
+      // 3. Fallback auto-sync every 4s
+      if (!isClosed) {
+        syncInterval = setInterval(async () => {
+          if (isClosed) return;
+          try {
+            const res = await messagingService.fetchConversationMessages(convId, userId, options);
+            if (res.success && res.messages.length > 0) {
+              for (const m of res.messages) {
+                if (!seenDmIds.has(m.id)) {
+                  emitUniqueDm(m);
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }, 4000);
       }
     })();
-
-    // 4. Supabase Realtime Private channel subscription (Shared state)
-    let unsubSupabase = () => {};
-    databaseService.subscribeToDM(convId, userId, (msg) => {
-      console.log('[VX-DM] Received new_dm event from Supabase for conversation:', convId);
-      emitUniqueDm(msg);
-    }).then(unsub => {
-      if (isClosed) unsub();
-      else unsubSupabase = unsub;
-    });
-
-    // 3. Fallback auto-sync every 4s
-    syncInterval = setInterval(async () => {
-      if (isClosed) return;
-      try {
-        const res = await messagingService.fetchConversationMessages(convId, userId, options);
-        if (res.success && res.messages.length > 0) {
-          for (const m of res.messages) {
-            if (!seenDmIds.has(m.id)) {
-              emitUniqueDm(m);
-            }
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }, 4000);
 
     return () => {
       isClosed = true;
@@ -965,12 +973,11 @@ export const messagingService = {
       if (isClosed) return;
       const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
       const authToken = await getAuthToken(opts);
-      if (isClosed) return;
+      if (isClosed || !authToken) return;
 
-      const headers: Record<string, string> = {};
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${authToken}`,
+      };
 
       const cleanup = connectCustomSSE({
         url: `${API_BASE}/api/chat/user/${userId}/events`,
