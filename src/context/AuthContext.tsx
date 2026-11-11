@@ -295,6 +295,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     
     if (res.success && res.session) {
+      ++restoreSeqRef.current;
       setUser({
         id: res.session.id,
         nickname: res.session.nickname,
@@ -312,6 +313,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     } else {
       if (import.meta.env.DEV) {
+        ++restoreSeqRef.current;
         setUser({
           id: `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           nickname: chosenNick,
@@ -335,6 +337,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithAccount = async (email: string, password: string) => {
     const res = await authService.login(email, password);
     if (res.success && res.user) {
+      ++restoreSeqRef.current;
       setUser(res.user);
       setHasActiveSession(true);
       return { success: true };
@@ -346,6 +349,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await authService.register(email, password, nickname, gender, user.languagePreference);
     if (res.success) {
       if (res.user) {
+        ++restoreSeqRef.current;
         setUser(res.user);
         setHasActiveSession(true);
       }
@@ -368,6 +372,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return res;
     }
 
+    ++restoreSeqRef.current;
     // Server has confirmed permanent account deletion.
     // Perform best-effort client sign-out cleanup without failing the overall operation if Supabase signOut throws on deleted credentials.
     if (!user.isGuest) {
@@ -418,6 +423,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
+    ++restoreSeqRef.current;
     try {
       localStorage.removeItem('voxanex_user_profile');
     } catch {

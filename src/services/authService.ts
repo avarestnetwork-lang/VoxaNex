@@ -11,7 +11,7 @@ export interface AuthResponse {
 }
 
 function sanitizeAuthError(rawError: any): string {
-  if (!rawError) return 'An unexpected authentication error occurred.';
+  if (!rawError) return 'An unexpected authentication error occurred. Please try again.';
   const msg = typeof rawError === 'string' ? rawError : rawError.message || '';
   if (msg.includes('User already registered') || msg.includes('already exists')) {
     return 'An account with this email address already exists. Please sign in instead.';
@@ -22,10 +22,14 @@ function sanitizeAuthError(rawError: any): string {
   if (msg.includes('Password should be at least')) {
     return 'Password must be at least 6 characters long.';
   }
-  if (msg.includes('PGRST') || msg.includes('postgres') || msg.includes('database') || msg.includes('relation') || msg.includes('column')) {
-    return 'A database system error occurred. Please try again or contact support.';
+  if (msg.includes('Email not confirmed')) {
+    return 'Email confirmation is required. Please check your inbox.';
   }
-  return msg || 'An unexpected authentication error occurred.';
+  if (msg.includes('Too many requests') || msg.includes('rate limit')) {
+    return 'Too many attempts. Please wait a few minutes and try again.';
+  }
+  // Unknown provider, SQL, PostgREST internal messages, relation errors, stack traces
+  return 'An unexpected authentication error occurred. Please try again.';
 }
 
 export const authService = {
@@ -60,7 +64,8 @@ export const authService = {
         notificationSounds: true,
         createdAt: new Date().toISOString(),
       };
-      return { success: true, user: simulatedUser, profileConfirmed: true };
+      // Simulation mode must never claim database profile confirmation
+      return { success: true, user: simulatedUser, profileConfirmed: false };
     }
 
     try {

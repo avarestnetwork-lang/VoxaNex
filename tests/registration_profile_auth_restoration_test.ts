@@ -15,7 +15,7 @@ function assert(condition: boolean, testName: string) {
 
 async function runRegistrationAndRestorationTests() {
   console.log('\n=============================================================');
-  console.log('--- PHASE 1: CRITICAL LOADING FIX & REGISTRATION SECURITY ---');
+  console.log('--- PHASE 1: FINAL REGISTRATION & AUTH RESTORATION CORRECTIONS ---');
   console.log('=============================================================\n');
 
   // 1. Corrective Migration SQL & Error Handling Verification
@@ -46,9 +46,10 @@ async function runRegistrationAndRestorationTests() {
     assert(authContextContent.includes("initTimeout"), '2. AuthContext implements bounded initialization timeout guard');
     assert(authContextContent.includes("setIsLoading(false)"), '2. AuthContext guarantees transition to non-loading state');
     assert(authContextContent.includes("check.valid === false"), '2. Guest token cleanup strictly reserved for explicit server revocation');
+    assert(authContextContent.includes("++restoreSeqRef.current"), '2. AuthContext bumps sequence ref on explicit login/logout state changes');
   }
 
-  // 3. AuthService Signup Email Confirmation, Age Safety & Fallback Rules
+  // 3. AuthService Simulation Contract & Error Sanitization
   {
     const emptyNickRes = await authService.register('test_empty@example.com', 'Password123!', '   ', 'prefer_not_to_say', 'en');
     assert(emptyNickRes.success === true, '3. Registration with whitespace nickname succeeds');
@@ -60,6 +61,7 @@ async function runRegistrationAndRestorationTests() {
     assert(simulatedRes.user?.isGuest === false, '3. Registered user is not guest');
     assert(simulatedRes.user?.is18Verified === false, '3. Simulation mode does not manufacture trusted age verification');
     assert(simulatedRes.user?.verificationMethod === 'pending', '3. Simulation mode age verification method is pending');
+    assert(simulatedRes.profileConfirmed === false, '3. Simulation registration NEVER claims database profile confirmation (profileConfirmed: false)');
 
     const simulatedLoginRes = await authService.login('simlogin@example.com', 'Password123!');
     assert(simulatedLoginRes.success === true, '3. Simulation login succeeds');
@@ -75,7 +77,6 @@ async function runRegistrationAndRestorationTests() {
       is_moderator: true,
     };
 
-    // Client UserProfile interface does not allow role mutation
     const profile: UserProfile = {
       id: 'usr_meta_test',
       email: 'hacker@example.com',
@@ -101,7 +102,7 @@ async function runRegistrationAndRestorationTests() {
   }
 
   console.log('\n=============================================================');
-  console.log('--- ALL CRITICAL LOADING & REGISTRATION TESTS PASSED ---');
+  console.log('--- ALL CRITICAL CORRECTION TESTS PASSED SUCCESSFULLY ---');
   console.log('=============================================================\n');
 }
 
