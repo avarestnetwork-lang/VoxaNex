@@ -198,11 +198,12 @@ export const RandomMatchingPage: React.FC = () => {
               setMessages((prev) => [...prev, incomingMsg]);
             }
           },
-        }
+        },
+        { isGuest: user.isGuest, userId: user.id }
       );
       conversationUnsubscribeRef.current = unsubConv;
     },
-    [cleanupSubscriptions, language, user.id]
+    [cleanupSubscriptions, language, user.id, user.isGuest]
   );
 
   const handlePartnerDisconnected = (reasonText: string) => {
@@ -362,6 +363,8 @@ export const RandomMatchingPage: React.FC = () => {
       content: textToSend || (customMedia?.type === 'gif' ? 'Shared a GIF' : 'Shared media'),
       mediaUrl: customMedia?.url,
       mediaType: customMedia?.type,
+      senderType: user.isGuest ? 'guest' : 'registered',
+      isGuest: user.isGuest,
     });
 
     setIsSending(false);

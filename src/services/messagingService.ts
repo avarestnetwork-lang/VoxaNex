@@ -49,6 +49,7 @@ export interface AuthTokenOptions {
   isGuest?: boolean;
   senderType?: 'registered' | 'guest';
   userId?: string;
+  allowPublicFallback?: boolean;
 }
 
 export async function getAuthToken(options?: AuthTokenOptions | boolean): Promise<string | null> {
@@ -63,10 +64,9 @@ export async function getAuthToken(options?: AuthTokenOptions | boolean): Promis
       ? options.isGuest
       : options?.senderType !== undefined
       ? options.senderType === 'guest'
-      : options?.userId !== undefined
-      ? options.userId.startsWith('guest_')
       : undefined;
 
+  // 1. Explicit guest identity request
   if (isGuest === true) {
     const guestToken =
       guestSessionService.getStoredToken() ||
@@ -74,6 +74,7 @@ export async function getAuthToken(options?: AuthTokenOptions | boolean): Promis
     return guestToken || null;
   }
 
+  // 2. Explicit registered member identity request
   if (isGuest === false) {
     const supabase = getSupabaseClient();
     if (supabase) {
@@ -89,23 +90,48 @@ export async function getAuthToken(options?: AuthTokenOptions | boolean): Promis
     return null;
   }
 
-  // Fallback for unspecified caller context: check Supabase session then guest token
+  // 3. Unspecified caller identity (options or isGuest not explicitly provided):
+  const optsObj = typeof options === 'object' && options !== null ? options : undefined;
+
+  if (optsObj?.userId && optsObj.userId.startsWith('guest_')) {
+    const guestToken =
+      guestSessionService.getStoredToken() ||
+      (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
+    return guestToken || null;
+  }
+
+  const guestToken =
+    guestSessionService.getStoredToken() ||
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
+
   const supabase = getSupabaseClient();
+  let memberToken: string | null = null;
   if (supabase) {
     try {
       const { data } = await supabase.auth.getSession();
       if (data?.session?.access_token) {
-        return data.session.access_token;
+        memberToken = data.session.access_token;
       }
     } catch {
       // ignore
     }
   }
 
-  const guestToken =
-    guestSessionService.getStoredToken() ||
-    (typeof localStorage !== 'undefined' ? localStorage.getItem('vx_guest_token') : undefined);
-  if (guestToken) return guestToken;
+  if (guestToken && !memberToken) {
+    return guestToken;
+  }
+
+  if (memberToken && !guestToken) {
+    return memberToken;
+  }
+
+  if (memberToken && guestToken) {
+    return memberToken;
+  }
+
+  if (optsObj?.allowPublicFallback) {
+    return memberToken || guestToken || null;
+  }
 
   return null;
 }
@@ -406,7 +432,7 @@ export const messagingService = {
       url: `${API_BASE}/api/chat/rooms/${roomId}/events`,
       headers: async () => {
         const headers: Record<string, string> = {};
-        const token = await getAuthToken();
+        const token = await getAuthToken({ allowPublicFallback: true });
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -556,8 +582,13 @@ export const messagingService = {
     try {
       const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
       const token = await getAuthToken(opts);
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (!token) {
+        return { success: false, error: 'Unauthorized: Authentication token required for direct messages.', status: 401 };
+      }
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      };
 
       const res = await fetch(`${API_BASE}/api/chat/conversations`, {
         method: 'POST',
@@ -595,9 +626,11 @@ export const messagingService = {
     try {
       const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
       const token = await getAuthToken(opts);
+      if (!token) {
+        return { success: false, messages: [], error: 'Unauthorized: Authentication token required for direct messages.', status: 401 };
+      }
       const url = `${API_BASE}/api/chat/conversations/${convId}/messages?userId=${encodeURIComponent(userId)}`;
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const headers: Record<string, string> = { 'Authorization': `Bearer ${token}` };
 
       const res = await fetch(url, { headers });
 
@@ -644,15 +677,18 @@ export const messagingService = {
           : options.senderId.startsWith('guest_');
 
       const token = await getAuthToken({ isGuest, senderType: options.senderType, userId: options.senderId });
-      const guestToken = isGuest ? (token || undefined) : undefined;
+      if (!token) {
+        return { success: false, error: 'Unauthorized: Authentication token required to send direct message.' };
+      }
+      const guestToken = isGuest ? token : undefined;
 
       const clientNonce = options.clientNonce || `nonce_dm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       let confirmedMessage: ChatMessage | null = null;
 
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      };
 
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/messages`, {
         method: 'POST',
@@ -713,11 +749,9 @@ export const messagingService = {
     try {
       const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
       const authToken = await getAuthToken(opts);
+      if (!authToken) return [];
       const url = `${API_BASE}/api/chat/conversations/list?userId=${encodeURIComponent(userId)}`;
-      const headers: Record<string, string> = {};
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
+      const headers: Record<string, string> = { 'Authorization': `Bearer ${authToken}` };
       const res = await fetch(url, { headers });
       const data = (await res.json()) as { success?: boolean; conversations?: string[] };
       return data.success && Array.isArray(data.conversations) ? data.conversations : [];
@@ -736,6 +770,7 @@ export const messagingService = {
     try {
       const opts = typeof options === 'boolean' ? { isGuest: options, userId: memberId } : { userId: memberId, ...options };
       const headers = await this.getIdentityHeaders(opts);
+      if (!headers['Authorization']) return false;
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/typing`, {
         method: 'POST',
         headers,
@@ -757,6 +792,7 @@ export const messagingService = {
     try {
       const opts = typeof options === 'boolean' ? { isGuest: options, userId } : { userId, ...options };
       const headers = await this.getIdentityHeaders(opts);
+      if (!headers['Authorization']) return false;
       const res = await fetch(`${API_BASE}/api/chat/conversations/${convId}/read`, {
         method: 'POST',
         headers,

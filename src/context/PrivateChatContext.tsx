@@ -209,17 +209,18 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
       // Fetch server-backed conversations for this user (robust for cleared localStorage / fresh browser session)
       try {
-        const token = guestSessionService.getStoredToken();
-        const serverConvs = await messagingService.fetchUserConversations(user.id);
+        const userOpts = { isGuest: user.isGuest, userId: user.id };
+        const serverConvs = await messagingService.fetchUserConversations(user.id, userOpts);
         serverConvs.forEach((id) => knownConversationIdsRef.current.add(id));
       } catch {
         // ignore
       }
 
       // Seed seenMessageIdsRef with existing history so reload does not treat old messages as brand-new incoming messages
+      const userOpts = { isGuest: user.isGuest, userId: user.id };
       for (const convId of knownConversationIdsRef.current) {
         try {
-          const res = await messagingService.fetchConversationMessages(convId, user.id);
+          const res = await messagingService.fetchConversationMessages(convId, user.id, userOpts);
           if (res.success && res.messages) {
             res.messages.forEach((m) => {
               if (m.id) seenMessageIdsRef.current.add(m.id);
@@ -231,7 +232,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       }
     }
     initConvs();
-  }, [user.id]);
+  }, [user.id, user.isGuest]);
 
   // Open or focus a chat window with a partner (Rule 1: Always starts in 'floating' mode)
   const openChat = useCallback(async (partner: { id: string; nickname: string; avatar: string; gender?: string }) => {
@@ -393,6 +394,8 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       content: clean,
       mediaUrl: media?.url,
       mediaType: media?.type,
+      senderType: user.isGuest ? 'guest' : 'registered',
+      isGuest: user.isGuest,
     });
 
     if (res.success && res.message) {
@@ -538,31 +541,32 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
   }, [user.id, autoOpenPrivateChats]);
 
-  // Fix 1: Global Notifications (SSE Stream authenticated via guestToken)
+  // Fix 1: Global Notifications (SSE Stream authenticated via explicit user identity)
   useEffect(() => {
     if (!user.id) return;
 
-    const token = guestSessionService.getStoredToken();
-    const API_BASE = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
-    const userEventSource = new EventSource(`${API_BASE}/api/chat/user/${user.id}/events?guestToken=${encodeURIComponent(token || '')}`);
-    userEventSource.addEventListener('incoming_dm', (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        handleIncomingMessage(data.message, data.conversationId);
-      } catch (err) {
-        console.error('Failed to parse incoming DM from SSE stream', err);
-      }
-    });
+    const userOpts = { isGuest: user.isGuest, userId: user.id };
+    const unsubUserEvents = messagingService.subscribeToUserEvents(
+      user.id,
+      {
+        onMessage: (msg) => {
+          if (msg && msg.conversationId) {
+            handleIncomingMessage(msg, msg.conversationId);
+          }
+        },
+      },
+      userOpts
+    );
 
     const unsubSupabase = databaseService.subscribeToUserDMs(user.id, (conversationId: string, message: ChatMessage) => {
       handleIncomingMessage(message, conversationId);
     });
 
     return () => {
-      userEventSource.close();
+      unsubUserEvents();
       unsubSupabase();
     };
-  }, [user.id, handleIncomingMessage]);
+  }, [user.id, user.isGuest, handleIncomingMessage]);
 
 
   // Fix 3: Polling Sync
@@ -572,9 +576,10 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
       const allConvs = new Set<string>(knownConversationIdsRef.current);
       openWindows.forEach((w) => allConvs.add(w.conversationId));
 
+      const userOpts = { isGuest: user.isGuest, userId: user.id };
       for (const convId of allConvs) {
         try {
-          const res = await messagingService.fetchConversationMessages(convId, user.id);
+          const res = await messagingService.fetchConversationMessages(convId, user.id, userOpts);
           if (res.success && res.messages.length > 0) {
             for (const m of res.messages) {
               if (!seenMessageIdsRef.current.has(m.id)) {
@@ -598,7 +603,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, 3000);
 
     return () => clearInterval(syncInterval);
-  }, [user.id, openWindows, handleIncomingMessage]);
+  }, [user.id, user.isGuest, openWindows, handleIncomingMessage]);
 
   const totalUnreadCount = openWindows.reduce((acc, w) => acc + w.unreadCount, 0);
 
