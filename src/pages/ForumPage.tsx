@@ -8,6 +8,8 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { toRelativeTime, formatDhakaDate } from '../utils/date';
 import { SEOHead } from '../components/common/SEOHead';
+import { AdPlacementBox } from '../components/ads/AdPlacementBox';
+import { ADSTERRA_CONFIG } from '../config/adsConfig';
 import {
   MessageSquare,
   Users,
@@ -329,6 +331,13 @@ export const ForumPage: React.FC = () => {
               {selectedTopic.content}
             </div>
 
+            {/* Ad between post content and replies */}
+            <AdPlacementBox 
+              slotId="forum-post-gap" 
+              position="content-gap" 
+              adUnitId={ADSTERRA_CONFIG.banner728x90}
+            />
+
             {/* Replies Section */}
             <div className="pt-6 border-t border-slate-800 space-y-4">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -465,55 +474,63 @@ export const ForumPage: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-3">
-              {topics.map((topic) => (
-                <div
-                  key={topic.id}
-                  onClick={() => loadTopicDetails(topic.id)}
-                  className="p-5 rounded-xl border border-slate-800 bg-[#0c1220] hover:border-slate-700/80 hover:bg-[#0f1628] transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                >
-                  <div className="space-y-1.5 flex-1 min-w-0">
-                    <div className="flex items-center gap-2 text-xs">
-                      {topic.pinned && (
-                        <span className="flex items-center gap-1 text-amber-400 font-semibold font-mono text-[10px] bg-amber-950/40 border border-amber-800/50 px-1.5 py-0.5 rounded">
-                          <Pin className="w-3 h-3" />
-                          <span>Pinned</span>
+              {topics.map((topic, index) => (
+                <React.Fragment key={topic.id}>
+                  <div
+                    onClick={() => loadTopicDetails(topic.id)}
+                    className="p-5 rounded-xl border border-slate-800 bg-[#0c1220] hover:border-slate-700/80 hover:bg-[#0f1628] transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 text-xs">
+                        {topic.pinned && (
+                          <span className="flex items-center gap-1 text-amber-400 font-semibold font-mono text-[10px] bg-amber-950/40 border border-amber-800/50 px-1.5 py-0.5 rounded">
+                            <Pin className="w-3 h-3" />
+                            <span>Pinned</span>
+                          </span>
+                        )}
+                        <span className="text-cyan-400 font-medium">
+                          {topic.categoryLabel[language]}
                         </span>
-                      )}
-                      <span className="text-cyan-400 font-medium">
-                        {topic.categoryLabel[language]}
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span className="text-slate-400 font-medium">{topic.author}</span>
-                      {topic.authorRole === 'admin' && (
-                        <span className="text-[9px] bg-violet-950 text-violet-300 border border-violet-800 px-1 py-0.5 rounded font-mono">
-                          Staff
-                        </span>
-                      )}
+                        <span aria-hidden="true">·</span>
+                        <span className="text-slate-400 font-medium">{topic.author}</span>
+                        {topic.authorRole === 'admin' && (
+                          <span className="text-[9px] bg-violet-950 text-violet-300 border border-violet-800 px-1 py-0.5 rounded font-mono">
+                            Staff
+                          </span>
+                        )}
+                      </div>
+
+                      <h3 className="text-base font-bold text-white hover:text-cyan-300 transition-colors truncate">
+                        {topic.title}
+                      </h3>
+
+                      <p className="text-xs text-slate-400 line-clamp-1">
+                        {topic.content}
+                      </p>
                     </div>
 
-                    <h3 className="text-base font-bold text-white hover:text-cyan-300 transition-colors truncate">
-                      {topic.title}
-                    </h3>
-
-                    <p className="text-xs text-slate-400 line-clamp-1">
-                      {topic.content}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-4 text-xs text-slate-400 font-mono shrink-0">
-                    <div className="flex items-center gap-1" title="Replies">
-                      <MessageCircle className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{topic.repliesCount}</span>
-                    </div>
-                    <div className="flex items-center gap-1" title="Views">
-                      <Eye className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{topic.viewsCount}</span>
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      {toRelativeTime(topic.lastActivity, language)}
+                    <div className="flex items-center gap-4 text-xs text-slate-400 font-mono shrink-0">
+                      <div className="flex items-center gap-1" title="Replies">
+                        <MessageCircle className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{topic.repliesCount}</span>
+                      </div>
+                      <div className="flex items-center gap-1" title="Views">
+                        <Eye className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{topic.viewsCount}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {toRelativeTime(topic.lastActivity, language)}
+                      </div>
                     </div>
                   </div>
-                </div>
+                  {index === 3 && (
+                    <AdPlacementBox 
+                      slotId="forum-list-gap" 
+                      position="content-gap" 
+                      adUnitId={ADSTERRA_CONFIG.banner728x90}
+                    />
+                  )}
+                </React.Fragment>
               ))}
             </div>
           )}

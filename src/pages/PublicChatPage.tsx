@@ -743,7 +743,7 @@ export const PublicChatPage: React.FC = () => {
   );
 
   return (
-    <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 py-4 h-[calc(100vh-5.5rem)] min-h-[580px] flex flex-col">
+    <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mt-4 mb-6 h-[calc(100vh-6.5rem)] min-h-[600px] flex flex-col">
       <SEOHead
         title={`${activeRoom.name[language] || activeRoom.name.en} – ChatLustora`}
         description={`Real-time adult public group chat and live conversations in ${activeRoom.name[language] || activeRoom.name.en} on ChatLustora.`}
@@ -751,17 +751,16 @@ export const PublicChatPage: React.FC = () => {
         noindex={true}
       />
 
-      {/* Top Ad Slot (renders null and consumes 0 space when unfilled) */}
+      {/* Top Ad Slot */}
       <AdPlacementBox 
         slotId="public-chatroom-top" 
-        provider="adsterra" 
         adUnitId={ADSTERRA_CONFIG.banner728x90} 
         position="top" 
       />
 
       {/* Outer Workspace with Left and Right Side Ads */}
-      <div className="flex-1 flex gap-3 overflow-hidden min-h-0">
-        {/* Left Ad Slot (Desktop / Large Screens only) */}
+      <div className="flex-1 flex gap-4 overflow-hidden min-h-0">
+        {/* Left Ad Slot (External space only) */}
         <AdPlacementBox 
           slotId="public-chatroom-left" 
           adUnitId={ADSTERRA_CONFIG.nativeUnitId} 
@@ -771,9 +770,9 @@ export const PublicChatPage: React.FC = () => {
 
         {/* Center Chatroom & Maximized Panes Container */}
         <div className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0">
-          {/* Header Bar */}
+          {/* Header Bar / Tab Bar (Participant Bar) */}
           <div className="p-3 border-b border-slate-800 bg-[#0c1324] flex items-center justify-between gap-3 shrink-0">
-            {/* Left: Brand/Room info & Switcher tabs */}
+            {/* ... tab buttons ... */}
             <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-x-auto no-scrollbar">
           <button
             onClick={() => navigate('/rooms')}
@@ -783,7 +782,7 @@ export const PublicChatPage: React.FC = () => {
             <Compass className="w-5 h-5 text-cyan-400" />
           </button>
 
-          {/* Public Room Tab (Rule 9: always preserved) */}
+          {/* Public Room Tab */}
           <button
             type="button"
             data-testid="public-room-tab"
@@ -803,7 +802,7 @@ export const PublicChatPage: React.FC = () => {
             )}
           </button>
 
-          {/* Maximized Private Conversation Tabs (Rule 6: ONLY rendered when displayMode === 'maximized') */}
+          {/* Maximized Private Conversation Tabs */}
           {maximizedWindows.map((win) => {
             const isTabActive = activeMainTab === win.conversationId;
             return (
@@ -1302,17 +1301,16 @@ export const PublicChatPage: React.FC = () => {
               </button>
             </div>
 
+            {/* Participant Box Horizontal Ad - Immediately below Participant Bar */}
+            <AdPlacementBox 
+              slotId="participant-box-horizontal" 
+              adUnitId={ADSTERRA_CONFIG.banner320x50} 
+              position="sidebar-horizontal"
+            />
+
             {/* TAB CONTENT 1: ONLINE USERS */}
             {sidebarTab === 'users' && (
               <div className="flex-1 flex flex-col p-3 overflow-hidden">
-                {/* Participant Box Horizontal Ad - Slim Banner (only inside Users tab) */}
-                <AdPlacementBox 
-                  slotId="participant-box-horizontal" 
-                  adUnitId={ADSTERRA_CONFIG.banner320x50} 
-                  position="sidebar-horizontal"
-                  className="mb-2"
-                />
-
                 {/* Search user filter */}
                 <div className="relative mb-2 shrink-0">
                   <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />

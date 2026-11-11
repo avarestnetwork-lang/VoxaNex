@@ -12,6 +12,9 @@ export const ADSTERRA_CONFIG = {
 
 export const MONETAG_CONFIG = {
   verificationTag: '416e702dd7d166aafe13107553d43a38',
+  multitagId: '308899', // From JS tag data-zone
+  workerZoneId: '12241124', // From SW content zoneId
+  enabled: false, // DEFERRED due to ID discrepancy (308899 vs 12241124)
 };
 
 export const JUICYADS_CONFIG = {
@@ -20,22 +23,14 @@ export const JUICYADS_CONFIG = {
 
 /**
  * Selection strategy: Priority list.
- * If a provider fails (unfilled/error), the AdPlacementBox should fallback to the next one.
- * Rotation is "fair" when we have multiple eligible providers.
+ * Fallback logic: Adsterra -> AdSense.
  */
 export const getProviderRotation = (position: string): AdProvider[] => {
-  // Currently, only AdSense and Adsterra have units configured.
-  // JuicyAds, ExoClick, and Monetag are in "Verification Only" status.
-  
-  if (position === 'footer') {
+  // Primary strategy: Adsterra first for adult/community slots, AdSense for general.
+  if (position === 'footer' || position === 'sidebar-horizontal' || position === 'content-gap') {
     return ['adsterra', 'adsense'];
   }
   
-  if (position === 'sidebar-horizontal') {
-    return ['adsterra', 'adsense'];
-  }
-
-  // Default rotation
   return ['adsense', 'adsterra'];
 };
 
@@ -67,7 +62,7 @@ export const isRouteExcludedFromFooterAds = (currentRoute: string): boolean => {
 };
 
 export const getAdsterraUnitForWidth = (width: number, position: string) => {
-  if (position === 'footer') {
+  if (position === 'footer' || position === 'content-gap') {
     if (width >= 728) return ADSTERRA_CONFIG.banner728x90;
     if (width >= 320) return ADSTERRA_CONFIG.banner320x50;
     if (width >= 300) return ADSTERRA_CONFIG.banner300x250;
