@@ -83,6 +83,7 @@ export const FloatingChatWindowView: React.FC<{ window: FloatingChatWindow }> = 
           id: user.id,
           nickname: user.nickname,
           avatar: user.avatar,
+          isGuest: user.isGuest,
         }}
         onClose={() => closeChat(win.conversationId)}
         onMinimize={() => minimizeChat(win.conversationId)}
