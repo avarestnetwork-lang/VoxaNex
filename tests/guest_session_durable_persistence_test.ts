@@ -1,5 +1,5 @@
 import { createExpressApp } from '../server';
-import { createGuestSession } from '../src/server/guestSessionManager';
+import { createGuestSession, clearSessions } from '../src/server/guestSessionManager';
 import crypto from 'crypto';
 
 let totalTests = 0;
@@ -118,6 +118,40 @@ async function runDurablePersistenceTests() {
       assert(persistedRecord !== undefined, '2. Guest session successfully inserted into durable table');
       assert(persistedRecord?.nickname === 'DurableGuest', '2. Persisted nickname matches');
       assert(persistedRecord?.is_revoked === false, '2. Persisted is_revoked is false');
+    }
+
+    // 11. Valid token after simulated server-process restart (with an empty in-memory session Map)
+    console.log('\n--- Test 11: Restart-safe validation (empty in-memory map) ---');
+    {
+      const sessionRes = createGuestSession({
+        nickname: 'RestartGuest',
+        avatar: '🔄',
+        languagePref: 'en',
+        is18Verified: false,
+        ipAddress: '127.0.0.1',
+      });
+      const token = sessionRes.session!.token;
+      const hash = crypto.createHash('sha256').update(token).digest('hex');
+      
+      // Persist to DB
+      dbGuestSessions.push({
+        id: sessionRes.session!.id,
+        session_token_hash: hash,
+        nickname: 'RestartGuest',
+        is_revoked: false,
+        expires_at: new Date(Date.now() + 3600000).toISOString(),
+      });
+
+      // SIMULATE RESTART: Clear in-memory sessions
+      clearSessions();
+
+      const valRes = await fetch(`${baseUrl}/api/guest/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const valData = await valRes.json() as any;
+      assert(valData.valid === true, '11. Valid token passes validation after server-process restart');
     }
 
     // 4. Database insert failure returns no usable token

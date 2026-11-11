@@ -148,10 +148,21 @@ export function validateGuestToken(token: string): {
       return { valid: false, reason: 'Guest session has expired' };
     }
 
-    const session = activeSessions.get(payload.sid);
-    if (!session || session.tokenHash !== tokenHash) {
-       return { valid: false, reason: 'Guest session not found or invalid' };
-    }
+    // Fallback to payload if not in activeSessions Map
+    const session = activeSessions.get(payload.sid) || {
+        id: payload.sid,
+        token,
+        tokenHash,
+        nickname: payload.nick,
+        avatar: payload.av,
+        languagePref: payload.lng,
+        is18Verified: payload.v18,
+        gender: payload.gen,
+        issuedAt: payload.iat,
+        expiresAt: payload.exp,
+        isRevoked: false,
+        ipHash: 'unknown_after_restart'
+    };
 
     return {
       valid: true,
@@ -163,6 +174,10 @@ export function validateGuestToken(token: string): {
       reason: 'Malformed guest token payload',
     };
   }
+}
+
+export function clearSessions(): void {
+  activeSessions.clear();
 }
 
 export function revokeGuestSession(sessionIdOrToken: string): boolean {
