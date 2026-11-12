@@ -38,9 +38,9 @@ DECLARE
     v_avatar TEXT;
 BEGIN
     -- Extract and sanitize nickname from user metadata, falling back to email prefix, then Member_<uuid_8>
-    v_nickname := pg_catalog.trim(pg_catalog.COALESCE(NEW.raw_user_meta_data->>'nickname', ''));
+    v_nickname := pg_catalog.btrim(COALESCE(NEW.raw_user_meta_data->>'nickname', ''));
     IF v_nickname = '' OR v_nickname IS NULL THEN
-        v_nickname := pg_catalog.trim(pg_catalog.COALESCE(pg_catalog.split_part(NEW.email, '@', 1), ''));
+        v_nickname := pg_catalog.btrim(COALESCE(pg_catalog.split_part(NEW.email, '@', 1), ''));
     END IF;
     IF v_nickname = '' OR v_nickname IS NULL THEN
         v_nickname := 'Member_' || pg_catalog.substr(NEW.id::text, 1, 8);
@@ -49,7 +49,7 @@ BEGIN
     v_nickname := pg_catalog.substr(v_nickname, 1, 32);
 
     -- Extract avatar with safe platform default
-    v_avatar := pg_catalog.trim(pg_catalog.COALESCE(NEW.raw_user_meta_data->>'avatar_url', ''));
+    v_avatar := pg_catalog.btrim(COALESCE(NEW.raw_user_meta_data->>'avatar_url', ''));
     IF v_avatar = '' OR v_avatar IS NULL THEN
         v_avatar := '🛡️';
     END IF;
@@ -122,14 +122,14 @@ INSERT INTO public.profiles (
 SELECT
     u.id,
     pg_catalog.substr(
-        pg_catalog.COALESCE(
-            pg_catalog.nullif(pg_catalog.trim(u.raw_user_meta_data->>'nickname'), ''),
-            pg_catalog.nullif(pg_catalog.trim(pg_catalog.split_part(u.email, '@', 1)), ''),
+        COALESCE(
+            NULLIF(pg_catalog.btrim(u.raw_user_meta_data->>'nickname'), ''),
+            NULLIF(pg_catalog.btrim(pg_catalog.split_part(u.email, '@', 1)), ''),
             'Member_' || pg_catalog.substr(u.id::text, 1, 8)
         ),
         1, 32
     ),
-    pg_catalog.COALESCE(pg_catalog.nullif(pg_catalog.trim(u.raw_user_meta_data->>'avatar_url'), ''), '🛡️'),
+    COALESCE(NULLIF(pg_catalog.btrim(u.raw_user_meta_data->>'avatar_url'), ''), '🛡️'),
     '',
     'user'::public.user_role,
     FALSE,
