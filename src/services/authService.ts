@@ -87,6 +87,7 @@ export const authService = {
         email,
         password,
         options: {
+          emailRedirectTo: `${window.location.origin}/dashboard`,
           data: {
             nickname: sanitizedNick,
             avatar_url: '🛡️',
