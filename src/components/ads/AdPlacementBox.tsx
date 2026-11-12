@@ -276,20 +276,28 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   }, [currentProvider, effectiveUnitId, renderAd, updateStatus, position, slotId, containerWidth, adStatus]);
 
   // 4. Layout & Visibility
-  if (adStatus === 'unfilled' || adStatus === 'error') return null;
+  const renderedContent = renderAd ? renderAd() : null;
+  if (renderAd) {
+    if (renderedContent === null) {
+      onStatusChange?.('unfilled');
+      return null;
+    } else {
+      onStatusChange?.('filled');
+    }
+  }
+  if (adStatus === 'unfilled' || adStatus === 'error' || (!effectiveUnitId && !renderAd)) return null;
 
   let posClasses = 'w-full flex justify-center overflow-hidden transition-all duration-300';
-  if (position === 'top') posClasses += ' mb-1 shrink-0';
+  if (position === 'top') posClasses += ' mb-2.5 shrink-0';
   else if (position === 'bottom' || position === 'footer') posClasses += ' mt-1 shrink-0';
   else if (position === 'left' || position === 'right') {
-    // Requirements: Side ads must never take space from chatroom if width is tight
-    posClasses = 'hidden 2xl:flex shrink-0 w-[160px] xl:w-[200px] max-w-[200px] justify-center overflow-hidden';
+    posClasses = 'hidden xl:flex shrink-0 w-[140px] xl:w-[160px] max-w-[200px] justify-center overflow-hidden';
   } else if (position === 'sidebar-horizontal') {
-    posClasses = 'w-full my-3 flex justify-center overflow-hidden px-2';
+    posClasses = 'w-full my-2 flex justify-center overflow-hidden';
   } else if (position === 'content-gap') {
     posClasses = 'w-full my-8 flex justify-center overflow-hidden';
   } else if (isVertical) {
-    posClasses = 'hidden lg:flex shrink-0 w-[160px] xl:w-[200px] max-w-[200px] justify-center overflow-hidden';
+    posClasses = 'hidden xl:flex shrink-0 w-[140px] xl:w-[160px] max-w-[200px] justify-center overflow-hidden';
   }
 
   const containerProps = {
@@ -298,7 +306,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     ref: adRef,
   };
 
-  if (renderAd) return <div {...containerProps}>{renderAd()}</div>;
+  if (renderAd) return <div {...containerProps}>{renderedContent}</div>;
   if (currentProvider === 'adsterra') return <div {...containerProps} />;
 
   return (

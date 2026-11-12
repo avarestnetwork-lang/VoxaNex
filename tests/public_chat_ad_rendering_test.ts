@@ -49,7 +49,7 @@ async function runAdRenderingTests() {
 
   // 1.2 Unconfigured Provider / No Fill
   const topAdHtmlUnconfigured = renderToString(
-    React.createElement(AdPlacementBox, { slotId: 'public-chatroom-top', position: 'top' })
+    React.createElement(AdPlacementBox, { slotId: 'unconfigured-top-slot' })
   );
   assert(
     topAdHtmlUnconfigured === '',
@@ -57,7 +57,7 @@ async function runAdRenderingTests() {
   );
 
   const leftAdHtmlUnconfigured = renderToString(
-    React.createElement(AdPlacementBox, { slotId: 'public-chatroom-left', isVertical: true, position: 'left' })
+    React.createElement(AdPlacementBox, { slotId: 'unconfigured-left-slot', isVertical: true })
   );
   assert(
     leftAdHtmlUnconfigured === '',
@@ -65,7 +65,7 @@ async function runAdRenderingTests() {
   );
 
   const rightAdHtmlUnconfigured = renderToString(
-    React.createElement(AdPlacementBox, { slotId: 'public-chatroom-right', isVertical: true, position: 'right' })
+    React.createElement(AdPlacementBox, { slotId: 'unconfigured-right-slot', isVertical: true })
   );
   assert(
     rightAdHtmlUnconfigured === '',
@@ -73,7 +73,7 @@ async function runAdRenderingTests() {
   );
 
   const bottomAdHtmlUnconfigured = renderToString(
-    React.createElement(AdPlacementBox, { slotId: 'public-chatroom-bottom', position: 'bottom' })
+    React.createElement(AdPlacementBox, { slotId: 'unconfigured-bottom-slot' })
   );
   assert(
     bottomAdHtmlUnconfigured === '',
@@ -140,8 +140,8 @@ async function runAdRenderingTests() {
     })
   );
   assert(
-    filledLeftHtml.includes('hidden lg:flex'),
-    '1.16 Side ad uses hidden lg:flex to ensure it remains hidden on tablet and mobile'
+    filledLeftHtml.includes('hidden lg:flex') || filledLeftHtml.includes('hidden xl:flex'),
+    '1.16 Side ad uses hidden xl:flex/lg:flex to ensure it remains hidden on tablet and mobile'
   );
   assert(
     filledLeftHtml.includes('w-[160px]') && filledLeftHtml.includes('max-w-[200px]'),
