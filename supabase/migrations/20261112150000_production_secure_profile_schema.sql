@@ -31,25 +31,25 @@ CREATE OR REPLACE FUNCTION public.handle_new_user_profile()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = ''
 AS $$
 DECLARE
     v_nickname TEXT;
     v_avatar TEXT;
 BEGIN
     -- Extract and sanitize nickname from user metadata, falling back to email prefix, then Member_<uuid_8>
-    v_nickname := trim(COALESCE(NEW.raw_user_meta_data->>'nickname', ''));
+    v_nickname := pg_catalog.trim(pg_catalog.COALESCE(NEW.raw_user_meta_data->>'nickname', ''));
     IF v_nickname = '' OR v_nickname IS NULL THEN
-        v_nickname := trim(COALESCE(split_part(NEW.email, '@', 1), ''));
+        v_nickname := pg_catalog.trim(pg_catalog.COALESCE(pg_catalog.split_part(NEW.email, '@', 1), ''));
     END IF;
     IF v_nickname = '' OR v_nickname IS NULL THEN
-        v_nickname := 'Member_' || substr(NEW.id::text, 1, 8);
+        v_nickname := 'Member_' || pg_catalog.substr(NEW.id::text, 1, 8);
     END IF;
     -- Enforce maximum 32 characters for profiles.nickname
-    v_nickname := substr(v_nickname, 1, 32);
+    v_nickname := pg_catalog.substr(v_nickname, 1, 32);
 
     -- Extract avatar with safe platform default
-    v_avatar := trim(COALESCE(NEW.raw_user_meta_data->>'avatar_url', ''));
+    v_avatar := pg_catalog.trim(pg_catalog.COALESCE(NEW.raw_user_meta_data->>'avatar_url', ''));
     IF v_avatar = '' OR v_avatar IS NULL THEN
         v_avatar := '🛡️';
     END IF;
@@ -79,8 +79,8 @@ BEGIN
         'pending',
         TRUE,
         TRUE,
-        timezone('utc'::text, now()),
-        timezone('utc'::text, now())
+        pg_catalog.timezone('utc'::text, pg_catalog.now()),
+        pg_catalog.timezone('utc'::text, pg_catalog.now())
     );
 
     RETURN NEW;
@@ -121,15 +121,15 @@ INSERT INTO public.profiles (
 )
 SELECT
     u.id,
-    substr(
-        COALESCE(
-            nullif(trim(u.raw_user_meta_data->>'nickname'), ''),
-            nullif(trim(split_part(u.email, '@', 1)), ''),
-            'Member_' || substr(u.id::text, 1, 8)
+    pg_catalog.substr(
+        pg_catalog.COALESCE(
+            pg_catalog.nullif(pg_catalog.trim(u.raw_user_meta_data->>'nickname'), ''),
+            pg_catalog.nullif(pg_catalog.trim(pg_catalog.split_part(u.email, '@', 1)), ''),
+            'Member_' || pg_catalog.substr(u.id::text, 1, 8)
         ),
         1, 32
     ),
-    COALESCE(nullif(trim(u.raw_user_meta_data->>'avatar_url'), ''), '🛡️'),
+    pg_catalog.COALESCE(pg_catalog.nullif(pg_catalog.trim(u.raw_user_meta_data->>'avatar_url'), ''), '🛡️'),
     '',
     'user'::public.user_role,
     FALSE,
@@ -137,7 +137,7 @@ SELECT
     TRUE,
     TRUE,
     u.created_at,
-    timezone('utc'::text, now())
+    pg_catalog.timezone('utc'::text, pg_catalog.now())
 FROM auth.users u
 LEFT JOIN public.profiles p ON p.id = u.id
 WHERE p.id IS NULL

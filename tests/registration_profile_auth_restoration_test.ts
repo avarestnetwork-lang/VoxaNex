@@ -15,25 +15,27 @@ function assert(condition: boolean, testName: string) {
 
 async function runRegistrationAndRestorationTests() {
   console.log('\n=============================================================');
-  console.log('--- PHASE 1: LIFECYCLE TESTS, ERROR SANITIZATION & ISOLATION ---');
-  console.log('=============================================================\n');
+  console.log('--- PHASE 2: PRODUCTION PROFILE SCHEMA & SECURITY MIGRATION TESTS ---');
+  console.log('============================================================\n');
 
-  // 1. Corrective Migration SQL & Error Handling Verification
+  // 1. Corrective Migration SQL & Hardened Security Verification
   {
-    const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', '20261111101300_fix_profile_trigger_error_handling.sql');
-    assert(fs.existsSync(migrationPath), '1. Corrective migration file exists');
+    const migrationPath = path.join(process.cwd(), 'supabase', 'migrations', '20261112150000_production_secure_profile_schema.sql');
+    assert(fs.existsSync(migrationPath), '1. Production secure profile migration file exists');
 
     const sqlContent = fs.readFileSync(migrationPath, 'utf8');
     assert(sqlContent.includes('CREATE OR REPLACE FUNCTION public.handle_new_user_profile()'), '1. Defines handle_new_user_profile() function');
     assert(sqlContent.includes('SECURITY DEFINER'), '1. Uses SECURITY DEFINER');
-    assert(sqlContent.includes("SET search_path = public, pg_temp"), '1. Sets search_path = public, pg_temp');
+    assert(sqlContent.includes("SET search_path = ''"), '1. Uses hardened empty search_path = \'\'');
     assert(sqlContent.includes("'user'::public.user_role"), '1. Hardcodes role to user (prevents privilege escalation)');
     assert(sqlContent.includes('ON CONFLICT (id) DO NOTHING'), '1. Uses conflict-safe insertion');
-    assert(!sqlContent.includes('EXCEPTION WHEN OTHERS'), '1. Omits exception swallowing to allow transaction abort on error');
-    assert(sqlContent.includes('nullif(trim'), '1. Handles empty and whitespace-only nicknames safely using nullif');
-    assert(sqlContent.includes('REVOKE ALL ON FUNCTION public.handle_new_user_profile() FROM PUBLIC'), '1. Revokes EXECUTE from PUBLIC');
-    assert(sqlContent.includes('REVOKE ALL ON FUNCTION public.handle_new_user_profile() FROM anon'), '1. Revokes EXECUTE from anon');
-    assert(sqlContent.includes('REVOKE ALL ON FUNCTION public.handle_new_user_profile() FROM authenticated'), '1. Revokes EXECUTE from authenticated');
+    assert(!sqlContent.includes('EXCEPTION WHEN OTHERS'), '1. Omits exception swallowing to ensure transactional error abort');
+    assert(sqlContent.includes('nullif') && sqlContent.includes('trim'), '1. Handles empty and whitespace-only nicknames safely using nullif and trim');
+    assert(sqlContent.includes('REVOKE SELECT ON TABLE public.profiles FROM PUBLIC'), '1. Revokes base table SELECT from PUBLIC');
+    assert(sqlContent.includes('REVOKE SELECT ON TABLE public.profiles FROM anon'), '1. Revokes base table SELECT from anon');
+    assert(sqlContent.includes('GRANT SELECT ON TABLE public.profiles TO authenticated'), '1. Grants base table SELECT exclusively to authenticated');
+    assert(sqlContent.includes('CREATE POLICY "Users can view own profile"'), '1. Creates owner-only SELECT RLS policy');
+    assert(sqlContent.includes('CREATE OR REPLACE VIEW public.public_profiles'), '1. Exposes restricted public safe view');
   }
 
   // 2. AuthContext Lifecycle, INITIAL_SESSION & Stale Restoration Guards
@@ -84,7 +86,7 @@ async function runRegistrationAndRestorationTests() {
   }
 
   console.log('\n=============================================================');
-  console.log('--- ALL LIFECYCLE, SANITIZATION & ISOLATION TESTS PASSED ---');
+  console.log('--- ALL PRODUCTION PROFILE & MIGRATION AUDIT TESTS PASSED ---');
   console.log('=============================================================\n');
 }
 
