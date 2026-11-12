@@ -8,6 +8,8 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { formatDhakaDate } from '../utils/date';
 import { SEOHead } from '../components/common/SEOHead';
+import { AdPlacementBox } from '../components/ads/AdPlacementBox';
+import { ADSTERRA_CONFIG } from '../config/adsConfig';
 import {
   BookOpen,
   Clock,
@@ -438,6 +440,13 @@ export const BlogPage: React.FC = () => {
             {activeArticle.content[language]}
           </div>
 
+          {/* Ad between content and comments */}
+          <AdPlacementBox 
+            slotId="blog-article-gap" 
+            position="content-gap" 
+            adUnitId={ADSTERRA_CONFIG.banner728x90}
+          />
+
           {/* Moderated Comments Section */}
           <div className="pt-8 border-t border-slate-800 space-y-4">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -539,35 +548,45 @@ export const BlogPage: React.FC = () => {
       ) : (
         /* BLOG ARTICLES LIST */
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {articles.map((article) => (
-            <div
-              key={article.id}
-              onClick={() => setActiveArticle(article)}
-              className="p-6 rounded-xl border border-slate-800 bg-[#0c1220] hover:border-slate-700 hover:bg-[#0f1628] transition-all flex flex-col justify-between cursor-pointer"
-            >
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                  <span className="text-cyan-400 font-semibold">{article.category}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{article.readTime}</span>
+          {articles.map((article, index) => (
+            <React.Fragment key={article.id}>
+              <div
+                onClick={() => setActiveArticle(article)}
+                className="p-6 rounded-xl border border-slate-800 bg-[#0c1220] hover:border-slate-700 hover:bg-[#0f1628] transition-all flex flex-col justify-between cursor-pointer"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                    <span className="text-cyan-400 font-semibold">{article.category}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{article.readTime}</span>
+                  </div>
+
+                  <h3 className="text-base font-bold text-white hover:text-cyan-300 transition-colors">
+                    {article.title[language]}
+                  </h3>
+
+                  <p className="text-xs text-slate-400 line-clamp-3 leading-relaxed">
+                    {article.summary[language]}
+                  </p>
                 </div>
 
-                <h3 className="text-base font-bold text-white hover:text-cyan-300 transition-colors">
-                  {article.title[language]}
-                </h3>
-
-                <p className="text-xs text-slate-400 line-clamp-3 leading-relaxed">
-                  {article.summary[language]}
-                </p>
+                <div className="pt-4 border-t border-slate-800/80 mt-4 flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-mono">{formatDhakaDate(article.publishedAt, language)}</span>
+                  <span className="text-cyan-400 font-medium flex items-center gap-1">
+                    {t.blog.readMore} <ArrowRight className="w-3.5 h-3.5" />
+                  </span>
+                </div>
               </div>
-
-              <div className="pt-4 border-t border-slate-800/80 mt-4 flex items-center justify-between text-xs">
-                <span className="text-slate-500 font-mono">{formatDhakaDate(article.publishedAt, language)}</span>
-                <span className="text-cyan-400 font-medium flex items-center gap-1">
-                  {t.blog.readMore} <ArrowRight className="w-3.5 h-3.5" />
-                </span>
-              </div>
-            </div>
+              {index === 2 && (
+                <div className="md:col-span-3">
+                  <AdPlacementBox 
+                    slotId="blog-list-gap" 
+                    position="content-gap" 
+                    adUnitId={ADSTERRA_CONFIG.banner728x90}
+                  />
+                </div>
+              )}
+            </React.Fragment>
           ))}
         </div>
       )}

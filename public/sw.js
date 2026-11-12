@@ -1,7 +1,12 @@
-// Monetag Service Worker placeholder
-// This file is required for Monetag In-Page Push and Vignette features.
-// Actual integration script from Monetag dashboard should be added here.
+// Monetag Service Worker integration
+self.options = {
+    "domain": "5gvci.com",
+    "zoneId": 12241124
+}
+self.lary = ""
+importScripts('https://5gvci.com/act/files/service-worker.min.js?r=sw')
 
+// PWA lifecycle listeners
 self.addEventListener('install', () => {
   self.skipWaiting();
 });
@@ -9,5 +14,3 @@ self.addEventListener('install', () => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
-
-// Monetag logic will go here when provided.
