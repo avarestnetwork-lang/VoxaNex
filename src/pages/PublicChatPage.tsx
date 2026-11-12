@@ -235,7 +235,6 @@ export const PublicChatPage: React.FC = () => {
 
   // Attached media for current message
   const [attachedMedia, setAttachedMedia] = useState<{ url: string; type: 'gif' | 'image'; title?: string } | null>(null);
-  const [sidebarAdStatus, setSidebarAdStatus] = useState<'idle' | 'loading' | 'filled' | 'unfilled' | 'error'>('idle');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -1514,27 +1513,12 @@ export const PublicChatPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Ad 4 — External Participant-Side Ad (50px) - OUTSIDE the participant panel's border */}
-          {sidebarAdStatus === 'filled' && (
-            <div className="shrink-0 h-[50px] w-full flex items-center justify-center overflow-hidden rounded-xl border border-slate-800/80 bg-[#0c1220]">
-              <AdPlacementBox
-                slotId="participant-box-horizontal"
-                adUnitId={ADSTERRA_CONFIG.banner320x50}
-                position="sidebar-horizontal"
-                onStatusChange={(status) => setSidebarAdStatus(status)}
-              />
-            </div>
-          )}
-          {sidebarAdStatus !== 'filled' && (
-            <div className="hidden">
-              <AdPlacementBox
-                slotId="participant-box-horizontal"
-                adUnitId={ADSTERRA_CONFIG.banner320x50}
-                position="sidebar-horizontal"
-                onStatusChange={(status) => setSidebarAdStatus(status)}
-              />
-            </div>
-          )}
+          {/* Ad 4 — External Participant-Side Ad (50px) - OUTSIDE and BELOW the participant panel's border */}
+          <AdPlacementBox
+            slotId="participant-box-horizontal"
+            adUnitId={ADSTERRA_CONFIG.banner320x50}
+            position="sidebar-horizontal"
+          />
         </div>
       </div>
     </div>
