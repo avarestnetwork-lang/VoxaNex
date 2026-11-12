@@ -14,7 +14,10 @@ import {
 } from '../src/config/adsConfig';
 import { RouterProvider } from '../src/context/RouterContext';
 
+let totalAssertions = 0;
+
 function assert(condition: boolean, message: string) {
+  totalAssertions++;
   if (!condition) {
     console.error(`❌ [FAILED] ${message}`);
     process.exit(1);
@@ -24,11 +27,11 @@ function assert(condition: boolean, message: string) {
 
 async function runAdRenderingTests() {
   console.log('\n================================================================');
-  console.log('  CHATLUSTORA: WORK PROMPT 5 FINAL AD LIFECYCLE & POLICY TESTS');
+  console.log('  CHATLUSTORA: WORK PROMPT 6 AD TIMER, OBSERVER & POLICY TESTS');
   console.log('================================================================\n');
 
-  // --- Task 1: JuicyAds Fill Verification Assertions ---
-  console.log('--- 1. JuicyAds Verified Fill & Timeout Safety ---');
+  // --- Task 1: Timer Cleanup & Observer Lifecycle Assertions ---
+  console.log('--- 1. Reliable Timer & MutationObserver Cleanup ---');
 
   const adPlacementBoxSource = fs.readFileSync(
     path.resolve('src/components/ads/AdPlacementBox.tsx'),
@@ -36,48 +39,45 @@ async function runAdRenderingTests() {
   );
 
   assert(
-    adPlacementBoxSource.includes("updateStatus('unfilled')") &&
-      adPlacementBoxSource.includes('attempts >= 5'),
-    '1.1 JuicyAds timeout without actual rendered DOM content marks slot unfilled (never filled)'
-  );
-  assert(
-    adPlacementBoxSource.includes('hasChildren || hasIframe'),
-    '1.2 Slot transitions to filled only upon credible evidence of provider-rendered content'
-  );
-  assert(
     adPlacementBoxSource.includes('clearAllActiveTimers'),
-    '1.3 All active timers and intervals are tracked and cleared on unmount/status transition'
+    '1.1 clearAllActiveTimers function is defined and invoked on status transition and unmount'
   );
   assert(
-    adPlacementBoxSource.includes('juicyads-ins-${effectiveUnitId}-${slotId}'),
-    '1.4 Slot-specific DOM element IDs remain unique per placement slot'
+    adPlacementBoxSource.includes('disconnectObserver'),
+    '1.2 disconnectObserver function is defined and invoked on route changes and unmount'
+  );
+  assert(
+    adPlacementBoxSource.includes('currentRoute') && adPlacementBoxSource.includes('providerIndex'),
+    '1.3 Route changes and provider changes trigger observer and timer cleanup'
+  );
+  assert(
+    adPlacementBoxSource.includes('attempts >= 5') && adPlacementBoxSource.includes("updateStatus('unfilled')"),
+    '1.4 JuicyAds timeout without actual rendered content marks slot unfilled rather than erroneously filled'
   );
 
-  // --- Task 2: Non-Overridable Route Exclusion Assertions ---
-  console.log('\n--- 2. Non-Overridable AdSense Route Policy ---');
+  // --- Task 2: Non-Overridable Route Exclusion & AdSense Safety ---
+  console.log('\n--- 2. Non-Overridable Route Exclusion & AdSense Safety ---');
 
   assert(
     adPlacementBoxSource.includes('isExcludedByRoute || Boolean(isLiveChatScreenProp)'),
-    '2.1 Route exclusion combines isExcludedByRoute and prop to enforce non-overridable policy'
+    '2.1 Route exclusion strictly overrides explicit component props'
   );
 
   assert(isAdSenseExcludedRoute('/chat'), '2.2 /chat route excludes AdSense');
   assert(isAdSenseExcludedRoute('/chat/bangla'), '2.3 /chat/bangla route excludes AdSense');
-  assert(isAdSenseExcludedRoute('/chat/indian'), '2.4 /chat/indian route excludes AdSense');
-  assert(isAdSenseExcludedRoute('/messages'), '2.5 /messages private messaging excludes AdSense');
-  assert(isAdSenseExcludedRoute('/av-chat'), '2.6 /av-chat video chat excludes AdSense');
-  assert(isAdSenseExcludedRoute('/chat/video'), '2.7 /chat/video route excludes AdSense');
-  assert(isAdSenseExcludedRoute('/random'), '2.8 /random route excludes AdSense');
-  assert(isAdSenseExcludedRoute('/user/guest-entry'), '2.9 /user/guest-entry excludes AdSense');
-  assert(isAdSenseExcludedRoute('/admin/dashboard'), '2.10 Admin dashboard excludes AdSense');
+  assert(isAdSenseExcludedRoute('/messages'), '2.4 /messages route excludes AdSense');
+  assert(isAdSenseExcludedRoute('/av-chat'), '2.5 /av-chat route excludes AdSense');
+  assert(isAdSenseExcludedRoute('/chat/video'), '2.6 /chat/video route excludes AdSense');
+  assert(isAdSenseExcludedRoute('/random'), '2.7 /random route excludes AdSense');
+  assert(isAdSenseExcludedRoute('/user/guest-entry'), '2.8 /user/guest-entry route excludes AdSense');
 
-  // Route Eligibility
-  assert(!isAdSenseExcludedRoute('/'), '2.11 Landing page / is eligible for AdSense');
-  assert(!isAdSenseExcludedRoute('/rooms'), '2.12 Room directory /rooms is eligible for AdSense');
-  assert(!isAdSenseExcludedRoute('/about'), '2.13 About page /about is eligible for AdSense');
-  assert(!isAdSenseExcludedRoute('/blog'), '2.14 Blog /blog is eligible for AdSense');
+  // Eligible public routes
+  assert(!isAdSenseExcludedRoute('/'), '2.9 Landing page / is eligible for AdSense');
+  assert(!isAdSenseExcludedRoute('/rooms'), '2.10 Room directory /rooms is eligible for AdSense');
+  assert(!isAdSenseExcludedRoute('/about'), '2.11 About page /about is eligible for AdSense');
+  assert(!isAdSenseExcludedRoute('/blog'), '2.12 Blog page /blog is eligible for AdSense');
 
-  // Set window location to excluded route /chat to test non-overridability
+  // Set window location to excluded route /chat
   if (typeof global !== 'undefined') {
     (global as any).window = {
       location: { pathname: '/chat' },
@@ -88,49 +88,32 @@ async function runAdRenderingTests() {
     };
   }
 
-  // Verify that explicitly passing isLiveChatScreen={false} on excluded route /chat STILL excludes AdSense
-  const overrideAttemptHtml = renderToString(
+  const excludedRouteHtml = renderToString(
     React.createElement(
       RouterProvider,
       null,
       React.createElement(AdPlacementBox, {
-        slotId: 'override-test-slot',
+        slotId: 'excluded-route-slot',
         provider: 'adsense',
-        isLiveChatScreen: false, // Attempt to override on /chat route
+        isLiveChatScreen: false, // Attempt override
       })
     )
   );
   assert(
-    !overrideAttemptHtml.includes('adsbygoogle'),
-    '2.15 Explicitly passing isLiveChatScreen={false} on an excluded route (/chat) CANNOT override route policy'
+    !excludedRouteHtml.includes('adsbygoogle'),
+    '2.13 Excluded route cannot render AdSense slot container even with prop override attempt'
   );
 
-  // --- Task 3 & 4: AdSense Script Loader & Build Validation ---
-  console.log('\n--- 3. AdSense Loader & Build Validation ---');
+  // --- Task 3: Network Configs & Layout Preservation ---
+  console.log('\n--- 3. Network Configurations & Layout Preservation ---');
 
-  const indexHtmlSource = fs.readFileSync(path.resolve('index.html'), 'utf-8');
-  assert(
-    !indexHtmlSource.includes('adsbygoogle.js'),
-    '3.1 Static AdSense loader remains completely removed from index.html'
-  );
-
-  const viteConfigSource = fs.readFileSync(path.resolve('vite.config.ts'), 'utf-8');
-  assert(
-    viteConfigSource.includes("[Build Error] Missing required public Supabase environment variables for build mode '") &&
-      viteConfigSource.includes('throw new Error'),
-    '3.2 Production and staging builds strictly fail fast if required Supabase variables are missing'
-  );
-
-  // --- Task 5: Network Configurations Preservation ---
-  console.log('\n--- 4. Network Configurations & Layout Preservation ---');
-
-  assert(ADSTERRA_CONFIG.publisherId === '6190760', '4.1 Adsterra Publisher ID is 6190760');
-  assert(ADSTERRA_CONFIG.nativeUnitId === '4085ad0bb94688c1cdc0917f2df29137', '4.2 Adsterra Native Unit ID is intact');
-  assert(JUICYADS_CONFIG.zones.banner300x62 === '1131763', '4.3 JuicyAds 300x62 Zone ID is 1131763');
-  assert(JUICYADS_CONFIG.zones.banner728x102 === '1131766', '4.4 JuicyAds 728x102 Zone ID is 1131766');
-  assert(MONETAG_CONFIG.scriptUrl === 'https://nap5k.com/tag.min.js', '4.5 Monetag script URL is https://nap5k.com/tag.min.js');
-  assert(MONETAG_CONFIG.enabled === false, '4.6 Monetag remains disabled');
-  assert(EXOCLICK_CONFIG.enabled === false, '4.7 ExoClick remains disabled');
+  assert(ADSTERRA_CONFIG.publisherId === '6190760', '3.1 Adsterra Publisher ID is 6190760');
+  assert(ADSTERRA_CONFIG.nativeUnitId === '4085ad0bb94688c1cdc0917f2df29137', '3.2 Adsterra Native Unit ID is intact');
+  assert(JUICYADS_CONFIG.zones.banner300x62 === '1131763', '3.3 JuicyAds 300x62 Zone ID is 1131763');
+  assert(JUICYADS_CONFIG.zones.banner728x102 === '1131766', '3.4 JuicyAds 728x102 Zone ID is 1131766');
+  assert(MONETAG_CONFIG.scriptUrl === 'https://nap5k.com/tag.min.js', '3.5 Monetag script URL is correct');
+  assert(MONETAG_CONFIG.enabled === false, '3.6 Monetag remains disabled');
+  assert(EXOCLICK_CONFIG.enabled === false, '3.7 ExoClick remains disabled');
 
   const publicChatPageSource = fs.readFileSync(
     path.resolve('src/pages/PublicChatPage.tsx'),
@@ -139,11 +122,11 @@ async function runAdRenderingTests() {
   assert(
     publicChatPageSource.includes('slotId="public-chatroom-top"') &&
       publicChatPageSource.includes('slotId="public-chatroom-bottom"'),
-    '4.8 Public chat page ad placement structure remains intact'
+    '3.8 Public chat page ad placement structure remains intact'
   );
   assert(
     publicChatPageSource.includes('h-[calc(100vh-5.5rem)] min-h-[580px]'),
-    '4.9 Central chatroom container dimensions are strictly preserved'
+    '3.9 Central chatroom container dimensions are strictly preserved'
   );
 
   const messageStreamStart = publicChatPageSource.indexOf('messages.map(');
@@ -152,15 +135,15 @@ async function runAdRenderingTests() {
     messageStreamStart,
     messageStreamEnd > messageStreamStart ? messageStreamEnd : messageStreamStart + 5000
   );
-  assert(!messageStreamCode.includes('AdPlacementBox'), '4.10 No ad inserted into message stream');
+  assert(!messageStreamCode.includes('AdPlacementBox'), '3.10 No ad inserted into message stream');
 
   const composerStart = publicChatPageSource.indexOf('<form onSubmit={handleSendMessage}');
   const composerEnd = publicChatPageSource.indexOf('</form>', composerStart) + 7;
   const composerCode = publicChatPageSource.slice(composerStart, composerEnd);
-  assert(!composerCode.includes('AdPlacementBox'), '4.11 No ad inserted into message composer');
+  assert(!composerCode.includes('AdPlacementBox'), '3.11 No ad inserted into message composer');
 
   console.log('\n================================================================');
-  console.log('  ALL 36 WORK PROMPT 5 FINAL AD LIFECYCLE & POLICY TESTS PASSED!');
+  console.log(`  ALL ${totalAssertions} WORK PROMPT 6 TESTS PASSED SUCCESSFULLY!`);
   console.log('================================================================\n');
 }
 

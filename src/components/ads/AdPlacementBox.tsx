@@ -66,7 +66,6 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const { currentRoute } = useRouter();
 
   // TASK 2: Non-Overridable AdSense Route Exclusion Policy
-  // Route exclusion takes absolute precedence over any explicit isLiveChatScreen={false} prop
   const isExcludedByRoute = isAdSenseExcludedRoute(currentRoute);
   const effectiveIsLiveChatScreen = isExcludedByRoute || Boolean(isLiveChatScreenProp);
 
@@ -82,9 +81,25 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const activeTimersRef = useRef<Array<number | NodeJS.Timeout>>([]);
 
   const clearAllActiveTimers = useCallback(() => {
-    activeTimersRef.current.forEach((t) => clearInterval(t as any));
+    activeTimersRef.current.forEach((t) => {
+      clearInterval(t as any);
+      clearTimeout(t as any);
+    });
     activeTimersRef.current = [];
   }, []);
+
+  const disconnectObserver = useCallback(() => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+  }, []);
+
+  // Clean up timers and observers on route changes or provider changes
+  useEffect(() => {
+    disconnectObserver();
+    clearAllActiveTimers();
+  }, [currentRoute, providerIndex, disconnectObserver, clearAllActiveTimers]);
 
   const rotation = getProviderRotation(position || '', effectiveIsLiveChatScreen);
   const currentProvider = explicitProvider || rotation[providerIndex];
@@ -105,7 +120,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
     // Reject Publisher ID if accidentally passed as a unit ID
     if (primaryAdUnitId && primaryAdUnitId === ADSTERRA_CONFIG.publisherId) {
-      // Invalid unit ID, fall back to proper slot configuration
+      // Invalid unit ID
     } else if (primaryAdUnitId && p === rotation[0]) {
       return primaryAdUnitId;
     }
@@ -147,14 +162,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const updateStatus = useCallback((status: 'filled' | 'unfilled' | 'error') => {
     if (!isMountedRef.current) return;
 
+    // TASK 1: Clear timers when reaching terminal status
+    clearAllActiveTimers();
+    disconnectObserver();
+
     if (status !== 'filled' && !explicitProvider && providerIndex < rotation.length - 1) {
       setProviderIndex(prev => prev + 1);
       setAdStatus('idle');
-      
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-        observerRef.current = null;
-      }
     } else {
       setAdStatus(status);
       if (lastReportedStatusRef.current !== status) {
@@ -162,7 +176,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         onStatusChange?.(status);
       }
     }
-  }, [onStatusChange, explicitProvider, providerIndex, rotation.length]);
+  }, [onStatusChange, explicitProvider, providerIndex, rotation.length, clearAllActiveTimers, disconnectObserver]);
 
   // 2. Lifecycle & Measurement
   useEffect(() => {
@@ -181,10 +195,10 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     return () => {
       isMountedRef.current = false;
       clearAllActiveTimers();
+      disconnectObserver();
       resizeObserver.disconnect();
-      if (observerRef.current) observerRef.current.disconnect();
     };
-  }, [clearAllActiveTimers]);
+  }, [clearAllActiveTimers, disconnectObserver]);
 
   // 3. Orchestration Effect
   useEffect(() => {
@@ -238,11 +252,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x262) { width = 300; height = 262; }
         else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x112) { width = 300; height = 112; }
 
-        // TASK 1: Slot-specific unique DOM ID
         const domId = `juicyads-ins-${effectiveUnitId}-${slotId}`;
         adRef.current.innerHTML = `<ins id="${domId}" data-width="${width}" data-height="${height}"></ins>`;
 
-        // Ensure JuicyAds library script is injected into head
         let script = document.querySelector(`script[src="${JUICYADS_CONFIG.scriptUrl}"]`) as HTMLScriptElement;
         if (!script) {
           script = document.createElement('script');
@@ -254,12 +266,10 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           document.head.appendChild(script);
         }
 
-        // Push adzone to adsbyjuicy array
         const win = window as any;
         win.adsbyjuicy = win.adsbyjuicy || [];
         win.adsbyjuicy.push({ adzone: effectiveUnitId, id: domId });
 
-        // TASK 1: Strict Fill Verification Poll. NEVER mark 'filled' merely on timeout!
         let attempts = 0;
         const checkFillTimer = setInterval(() => {
           if (!isMountedRef.current) {
@@ -275,7 +285,6 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             updateStatus('filled');
           } else if (attempts >= 5) {
             clearInterval(checkFillTimer);
-            // TASK 1 RULE: Timeout without verified content results in UNFILLED, never FILLED
             updateStatus('unfilled');
           }
           attempts++;
@@ -347,7 +356,6 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
                 resolve();
               } else if (attempts >= 5) {
                 clearInterval(checkNativeFill);
-                // TASK 1 RULE: Timeout without verified content results in UNFILLED
                 updateStatus('unfilled');
                 resolve();
               }
