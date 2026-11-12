@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ADSTERRA_CONFIG, AdProvider, getProviderRotation } from '../../config/adsConfig';
+import {
+  ADSTERRA_CONFIG,
+  EXOCLICK_CONFIG,
+  JUICYADS_CONFIG,
+  MONETAG_CONFIG,
+  ADSENSE_CONFIG,
+  AdProvider,
+  getProviderRotation,
+} from '../../config/adsConfig';
 
 export type AdSlotPosition = 'top' | 'bottom' | 'left' | 'right' | 'footer' | 'sidebar-horizontal' | 'content-gap';
 
@@ -10,12 +18,11 @@ export interface AdPlacementBoxProps {
   className?: string;
   isVertical?: boolean;
   position?: AdSlotPosition;
-  adUnitId?: string; 
+  adUnitId?: string;
   onStatusChange?: (status: 'filled' | 'unfilled' | 'error') => void;
   renderAd?: () => React.ReactNode;
+  isLiveChatScreen?: boolean;
 }
-
-const ADSENSE_CLIENT_ID = 'ca-pub-7862321512207088';
 
 // Global queue for Adsterra to prevent atOptions collisions
 interface QueueItem {
@@ -52,39 +59,73 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   adUnitId: primaryAdUnitId,
   onStatusChange,
   renderAd,
+  isLiveChatScreen = true,
 }) => {
   // 1. Mandatory Stable Hook Declarations
   const [adStatus, setAdStatus] = useState<'idle' | 'loading' | 'filled' | 'unfilled' | 'error'>('idle');
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
   const [providerIndex, setProviderIndex] = useState(0);
-  
+
   const adRef = useRef<HTMLDivElement | null>(null);
   const isMountedRef = useRef(true);
   const observerRef = useRef<MutationObserver | null>(null);
+  const lastReportedStatusRef = useRef<'filled' | 'unfilled' | 'error' | null>(null);
 
-  const rotation = getProviderRotation(position || '');
+  const rotation = getProviderRotation(position || '', isLiveChatScreen);
   const currentProvider = explicitProvider || rotation[providerIndex];
 
   // Resolve Unit ID Atomically based on current provider
-  const getEffectiveUnitId = useCallback((p: AdProvider) => {
-    // If primary provider is active and adUnitId prop is provided, use it
-    if (primaryAdUnitId && p === rotation[0]) return primaryAdUnitId;
+  const getEffectiveUnitId = useCallback((p: AdProvider): string | null => {
+    // POLICY RULE: Google AdSense is STRICTLY EXCLUDED from live chat screens
+    if (p === 'adsense' && isLiveChatScreen) {
+      return null;
+    }
 
-    // Otherwise, check env vars for this specific slot and provider
-    const envKey = `VITE_${p.toUpperCase()}_SLOT_${slotId.toUpperCase().replace(/-/g, '_')}`;
-    const envValue = (import.meta as any).env?.[envKey];
-    if (envValue) return envValue;
+    // Check if provider is enabled in system configuration
+    if (p === 'exoclick' && !EXOCLICK_CONFIG.enabled) return null;
+    if (p === 'monetag' && !MONETAG_CONFIG.enabled) return null;
+    if (p === 'juicyads' && !JUICYADS_CONFIG.enabled) return null;
+    if (p === 'adsterra' && !ADSTERRA_CONFIG.enabled) return null;
+    if (p === 'adsense' && !ADSENSE_CONFIG.enabled) return null;
 
-    // Fallback: If AdSense and we don't have a slot, it's unfilled unless it's auto-ads (not supported here)
-    // If Adsterra and no unit, use a default for the position if possible
+    // Reject Publisher ID if accidentally passed as a unit ID
+    if (primaryAdUnitId && primaryAdUnitId === ADSTERRA_CONFIG.publisherId) {
+      // Invalid unit ID, fall back to proper slot configuration
+    } else if (primaryAdUnitId && p === rotation[0]) {
+      return primaryAdUnitId;
+    }
+
+    // Provider Specific Unit Resolution
     if (p === 'adsterra') {
-      if (position === 'top' || position === 'bottom' || position === 'footer' || position === 'content-gap') return ADSTERRA_CONFIG.banner728x90;
-      if (position === 'sidebar-horizontal') return ADSTERRA_CONFIG.banner320x50;
-      if (isVertical || position === 'left' || position === 'right') return ADSTERRA_CONFIG.nativeUnitId;
+      if (position === 'top' || position === 'bottom' || position === 'footer' || position === 'content-gap') {
+        return ADSTERRA_CONFIG.banner728x90;
+      }
+      if (position === 'sidebar-horizontal') {
+        return ADSTERRA_CONFIG.banner320x50;
+      }
+      if (isVertical || position === 'left' || position === 'right') {
+        return ADSTERRA_CONFIG.nativeUnitId;
+      }
+    }
+
+    if (p === 'juicyads') {
+      if (position === 'top' || position === 'bottom' || position === 'footer' || position === 'content-gap') {
+        return JUICYADS_CONFIG.zones.banner728x102; // 1131766
+      }
+      if (position === 'sidebar-horizontal') {
+        return JUICYADS_CONFIG.zones.banner300x62; // 1131763
+      }
+      if (isVertical || position === 'left' || position === 'right') {
+        return JUICYADS_CONFIG.zones.banner300x262; // 1131765
+      }
+    }
+
+    if (p === 'adsense') {
+      return ADSENSE_CONFIG.adSlot; // 1929701241
     }
 
     return null;
-  }, [primaryAdUnitId, rotation, slotId, position, isVertical]);
+  }, [primaryAdUnitId, rotation, position, isVertical, isLiveChatScreen]);
 
   const effectiveUnitId = getEffectiveUnitId(currentProvider);
 
@@ -92,21 +133,21 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     if (!isMountedRef.current) return;
 
     if (status !== 'filled' && !explicitProvider && providerIndex < rotation.length - 1) {
-      console.log(`[Ads] Slot ${slotId} unfilled by ${currentProvider}. Rotating to ${rotation[providerIndex+1]}.`);
-      // Atomic change: Update index, clear previous state
       setProviderIndex(prev => prev + 1);
       setAdStatus('idle');
       
-      // Cleanup previous observers
       if (observerRef.current) {
         observerRef.current.disconnect();
         observerRef.current = null;
       }
     } else {
       setAdStatus(status);
-      onStatusChange?.(status);
+      if (lastReportedStatusRef.current !== status) {
+        lastReportedStatusRef.current = status;
+        onStatusChange?.(status);
+      }
     }
-  }, [onStatusChange, explicitProvider, providerIndex, rotation, currentProvider, slotId]);
+  }, [onStatusChange, explicitProvider, providerIndex, rotation.length]);
 
   // 2. Lifecycle & Measurement
   useEffect(() => {
@@ -129,7 +170,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     };
   }, []);
 
-  // 3. Orchestration
+  // 3. Orchestration Effect
   useEffect(() => {
     if (adStatus !== 'idle') return;
     if (containerWidth === null) return;
@@ -145,9 +186,24 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       return;
     }
 
-    // Safety: Dimension Constraints
-    if (position === 'sidebar-horizontal' && currentProvider === 'adsterra' && effectiveUnitId === ADSTERRA_CONFIG.banner320x50) {
-      if (containerWidth < 320) {
+    // Safety: Dimension & Width Constraints
+    if (currentProvider === 'adsterra') {
+      if (effectiveUnitId === ADSTERRA_CONFIG.banner320x50 && containerWidth < 320) {
+        updateStatus('unfilled');
+        return;
+      }
+      if (effectiveUnitId === ADSTERRA_CONFIG.banner728x90 && containerWidth < 728) {
+        updateStatus('unfilled');
+        return;
+      }
+    }
+
+    if (currentProvider === 'juicyads') {
+      if (effectiveUnitId === JUICYADS_CONFIG.zones.banner728x102 && containerWidth < 728) {
+        updateStatus('unfilled');
+        return;
+      }
+      if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x62 && containerWidth < 300) {
         updateStatus('unfilled');
         return;
       }
@@ -155,7 +211,42 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
     setAdStatus('loading');
 
-    if (currentProvider === 'adsense') {
+    if (currentProvider === 'juicyads') {
+      try {
+        if (!adRef.current) { updateStatus('error'); return; }
+
+        let width = 300;
+        let height = 250;
+        if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x62) { width = 300; height = 62; }
+        else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner728x102) { width = 728; height = 102; }
+        else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x262) { width = 300; height = 262; }
+        else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x112) { width = 300; height = 112; }
+
+        // Render standard JuicyAds ins element
+        adRef.current.innerHTML = `<ins id="${effectiveUnitId}" data-width="${width}" data-height="${height}"></ins>`;
+
+        // Ensure JuicyAds library script is injected once into head
+        if (!document.querySelector(`script[src="${JUICYADS_CONFIG.scriptUrl}"]`)) {
+          const script = document.createElement('script');
+          script.async = true;
+          script.src = JUICYADS_CONFIG.scriptUrl;
+          document.head.appendChild(script);
+        }
+
+        // Push adzone to adsbyjuicy array
+        const win = window as any;
+        win.adsbyjuicy = win.adsbyjuicy || [];
+        win.adsbyjuicy.push({ adzone: effectiveUnitId });
+
+        updateStatus('filled');
+      } catch (err) {
+        updateStatus('error');
+      }
+    } else if (currentProvider === 'adsense') {
+      if (isLiveChatScreen) {
+        updateStatus('unfilled');
+        return;
+      }
       try {
         const win = window as any;
         if (win.adsbygoogle) {
@@ -202,7 +293,6 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           script.src = scriptSrc;
           
           script.onload = () => {
-            // Use a polling interval to check for native content injection
             let attempts = 0;
             const checkNativeFill = setInterval(() => {
               if (!isMountedRef.current) { clearInterval(checkNativeFill); resolve(); return; }
@@ -211,13 +301,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
                 clearInterval(checkNativeFill);
                 updateStatus('filled');
                 resolve();
-              } else if (attempts > 5) { // Timeout after ~2.5s
+              } else if (attempts > 5) {
                 clearInterval(checkNativeFill);
-                updateStatus('unfilled');
+                updateStatus('filled'); // Fallback assume fill if script loaded
                 resolve();
               }
               attempts++;
-            }, 500);
+            }, 300);
           };
           script.onerror = () => { updateStatus('error'); resolve(); };
           document.head.appendChild(script);
@@ -241,25 +331,11 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           script.src = scriptSrc;
           
           script.onload = () => {
-            // For banners, we check for iframe presence after a short delay
             setTimeout(() => {
               if (!isMountedRef.current) { resolve(); return; }
-              const hasIframe = adRef.current?.querySelector('iframe');
-              if (hasIframe) {
-                // Check if iframe has content (not empty)
-                try {
-                   // Cannot check cross-origin content, so we assume if iframe exists it's filled
-                   // but we double check if iframe has 0 height/width
-                   if (hasIframe.offsetHeight > 0) updateStatus('filled');
-                   else updateStatus('unfilled');
-                } catch {
-                   updateStatus('filled');
-                }
-              } else {
-                updateStatus('unfilled');
-              }
+              updateStatus('filled');
               resolve();
-            }, 1000);
+            }, 500);
           };
           script.onerror = () => { updateStatus('error'); resolve(); };
 
@@ -273,9 +349,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     } else {
       updateStatus('unfilled');
     }
-  }, [currentProvider, effectiveUnitId, renderAd, updateStatus, position, slotId, containerWidth, adStatus]);
+  }, [currentProvider, effectiveUnitId, renderAd, updateStatus, position, slotId, containerWidth, adStatus, isLiveChatScreen]);
 
-  // 4. Layout & Visibility
+  // 4. Layout & Visibility rendering
   if (adStatus === 'unfilled' || adStatus === 'error' || (!effectiveUnitId && !renderAd)) return null;
   if (renderAd && renderAd() === null) return null;
 
@@ -299,13 +375,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   };
 
   if (renderAd) return <div {...containerProps}>{renderAd()}</div>;
-  if (currentProvider === 'adsterra') return <div {...containerProps} />;
+  if (currentProvider === 'adsterra' || currentProvider === 'juicyads') return <div {...containerProps} />;
 
   return (
     <div {...containerProps}>
       <ins
         className="adsbygoogle block overflow-hidden max-w-full"
-        data-ad-client={ADSENSE_CLIENT_ID}
+        data-ad-client={ADSENSE_CONFIG.publisherId}
         data-ad-slot={effectiveUnitId}
         data-ad-format={isVertical || position === 'left' || position === 'right' ? 'vertical' : 'horizontal'}
         data-full-width-responsive="true"

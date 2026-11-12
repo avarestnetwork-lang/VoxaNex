@@ -1,4 +1,4 @@
-export type AdProvider = 'adsense' | 'adsterra' | 'juicyads' | 'monetag' | 'exoclick';
+export type AdProvider = 'adsterra' | 'juicyads' | 'exoclick' | 'monetag' | 'adsense';
 
 export const ADSTERRA_CONFIG = {
   publisherId: '6190760',
@@ -8,38 +8,62 @@ export const ADSTERRA_CONFIG = {
   banner728x90: 'd8696ddef865fbc92f612a0124ae627f',
   bannerDomain: 'www.highrevenueformat.com',
   nativeDomain: 'pl32301907.profitableratecpmnetwork.com',
+  enabled: true,
 };
 
-export const MONETAG_CONFIG = {
-  verificationTag: '416e702dd7d166aafe13107553d43a38',
-  multitagId: '308899', // JS-based multitag for In-Page Push/Vignette (if enabled)
-  workerZoneId: '12241124', // Service Worker zone for background formats
-  enabled: false, // DEFERRED until manual verification of dual-zone behavior
+export const EXOCLICK_CONFIG = {
+  zoneId: '6087300',
+  scriptUrl: 'https://a.magsrv.com/ad-provider.js',
+  elementClass: 'eas6a97888e2',
+  verificationFile: '28befc4532cb8837aa59edffca607a5a.html',
+  enabled: false, // Inactive in visual chat slots until zone format & dimensions are confirmed from publisher dashboard
 };
 
 export const JUICYADS_CONFIG = {
   verificationTag: '97a6aeec522d11d21efa5f84c86eb958',
-  enabled: false, // NO SERVING ZONE DEFINED
+  scriptUrl: 'https://poweredby.jads.co/js/jads.js',
+  zones: {
+    banner300x62: '1131763',
+    banner300x262: '1131765',
+    banner728x102: '1131766',
+    banner300x112: '1131767',
+  },
+  enabled: true, // Active for verified compatible placements
 };
 
-export const EXOCLICK_CONFIG = {
-  verificationFile: '28befc4532cb8837aa59edffca607a5a.html',
-  enabled: false, // NO SERVING ZONE DEFINED
+export const MONETAG_CONFIG = {
+  verificationTag: '416e702dd7d166aafe13107553d43a38',
+  zoneId: '12241585',
+  scriptUrl: 'https://nap5k.com/tag.min.js',
+  enabled: false, // Inactive in visual chat slots until zone format is confirmed from publisher dashboard
+};
+
+export const ADSENSE_CONFIG = {
+  publisherId: 'ca-pub-7862321512207088',
+  adSlot: '1929701241',
+  enabled: true, // Enabled for non-chat pages ONLY; strictly excluded from live-chat routes
 };
 
 /**
  * Selection strategy: Priority list.
- * Fallback logic: Adsterra -> AdSense.
- * 
- * STRICT POLICY: No pop-ups, pop-unders, redirects, or push notification ads.
+ * CRITICAL POLICY: Google AdSense is STRICTLY EXCLUDED from live-chat screens (/chat).
  */
-export const getProviderRotation = (position: string): AdProvider[] => {
-  // Primary strategy: Adsterra first for adult/community slots, AdSense for general.
-  if (position === 'footer' || position === 'sidebar-horizontal' || position === 'content-gap') {
-    return ['adsterra', 'adsense'];
+export const getProviderRotation = (position: string, isLiveChatScreen: boolean = true): AdProvider[] => {
+  if (isLiveChatScreen) {
+    if (position === 'sidebar-horizontal') {
+      return ['adsterra', 'juicyads'];
+    }
+    if (position === 'top' || position === 'bottom') {
+      return ['adsterra', 'juicyads'];
+    }
+    if (position === 'left' || position === 'right') {
+      return ['adsterra'];
+    }
+    return ['adsterra', 'juicyads'];
   }
-  
-  return ['adsense', 'adsterra'];
+
+  // Non-chat pages (e.g. static landing pages)
+  return ['adsense', 'adsterra', 'juicyads'];
 };
 
 export const FOOTER_EXCLUDED_ROUTES = [
@@ -69,10 +93,6 @@ export const isRouteExcludedFromFooterAds = (currentRoute: string): boolean => {
   );
 };
 
-/**
- * Atomic Unit Mapping for Adsterra.
- * Ensures the unit ID changes atomically with the width and position.
- */
 export const getAdsterraUnitForWidth = (width: number, position: string): string | null => {
   if (position === 'footer' || position === 'content-gap') {
     if (width >= 728) return ADSTERRA_CONFIG.banner728x90;

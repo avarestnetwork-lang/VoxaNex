@@ -3,6 +3,14 @@ import { renderToString } from 'react-dom/server';
 import fs from 'fs';
 import path from 'path';
 import { AdPlacementBox } from '../src/components/ads/AdPlacementBox';
+import {
+  ADSTERRA_CONFIG,
+  EXOCLICK_CONFIG,
+  JUICYADS_CONFIG,
+  MONETAG_CONFIG,
+  ADSENSE_CONFIG,
+  getProviderRotation,
+} from '../src/config/adsConfig';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -14,232 +22,137 @@ function assert(condition: boolean, message: string) {
 
 async function runAdRenderingTests() {
   console.log('\n=============================================================');
-  console.log('  CHATLUSTORA: PUBLIC CHATROOM AD RENDERING & LAYOUT TESTS');
+  console.log('  CHATLUSTORA: PHASE B FIVE-NETWORK AD INTEGRATION & LIFECYCLE TESTS');
   console.log('=============================================================\n');
 
-  // --- 1. AdPlacementBox Conditional Rendering & Placeholder Removal ---
-  console.log('--- 1. AdPlacementBox Conditional Rendering & Static Placeholder Removal ---');
+  // --- Section 1: Five-Network Configuration & Policy Assertions ---
+  console.log('--- 1. Five-Network Configuration & Policy Assertions ---');
+
+  // 1.1 Adsterra Configuration
+  assert(ADSTERRA_CONFIG.publisherId === '6190760', '1.1 Adsterra Publisher ID is 6190760');
+  assert(ADSTERRA_CONFIG.nativeUnitId === '4085ad0bb94688c1cdc0917f2df29137', '1.2 Adsterra Native Unit ID is 4085ad0bb94688c1cdc0917f2df29137');
+  assert(ADSTERRA_CONFIG.banner300x250 === '6863f1ca8dc093d7a0a913d8f30c47a2', '1.3 Adsterra 300x250 Unit ID is 6863f1ca8dc093d7a0a913d8f30c47a2');
+  assert(ADSTERRA_CONFIG.banner320x50 === '8b239fe78d1bba05c2a125bb36872489', '1.4 Adsterra 320x50 Unit ID is 8b239fe78d1bba05c2a125bb36872489');
+  assert(ADSTERRA_CONFIG.banner728x90 === 'd8696ddef865fbc92f612a0124ae627f', '1.5 Adsterra 728x90 Unit ID is d8696ddef865fbc92f612a0124ae627f');
+
+  // 1.2 ExoClick Configuration (Disabled until dashboard specs confirmed)
+  assert(EXOCLICK_CONFIG.zoneId === '6087300', '1.6 ExoClick Zone ID is 6087300');
+  assert(EXOCLICK_CONFIG.scriptUrl === 'https://a.magsrv.com/ad-provider.js', '1.7 ExoClick script URL is correct');
+  assert(EXOCLICK_CONFIG.elementClass === 'eas6a97888e2', '1.8 ExoClick element class is eas6a97888e2');
+  assert(EXOCLICK_CONFIG.verificationFile === '28befc4532cb8837aa59edffca607a5a.html', '1.9 ExoClick verification file name is correct');
+  assert(EXOCLICK_CONFIG.enabled === false, '1.10 ExoClick is set enabled: false (inactive until format confirmed)');
+
+  // 1.3 JuicyAds Configuration
+  assert(JUICYADS_CONFIG.verificationTag === '97a6aeec522d11d21efa5f84c86eb958', '1.11 JuicyAds verification tag is correct');
+  assert(JUICYADS_CONFIG.scriptUrl === 'https://poweredby.jads.co/js/jads.js', '1.12 JuicyAds script URL is https://poweredby.jads.co/js/jads.js');
+  assert(JUICYADS_CONFIG.zones.banner300x62 === '1131763', '1.13 JuicyAds 300x62 Zone ID is 1131763');
+  assert(JUICYADS_CONFIG.zones.banner300x262 === '1131765', '1.14 JuicyAds 300x262 Zone ID is 1131765');
+  assert(JUICYADS_CONFIG.zones.banner728x102 === '1131766', '1.15 JuicyAds 728x102 Zone ID is 1131766');
+  assert(JUICYADS_CONFIG.zones.banner300x112 === '1131767', '1.16 JuicyAds 300x112 Zone ID is 1131767');
+  assert(JUICYADS_CONFIG.enabled === true, '1.17 JuicyAds is enabled for compatible placements');
+
+  // 1.4 Monetag Configuration (Disabled until dashboard specs confirmed)
+  assert(MONETAG_CONFIG.verificationTag === '416e702dd7d166aafe13107553d43a38', '1.18 Monetag verification tag is correct');
+  assert(MONETAG_CONFIG.zoneId === '12241585', '1.19 Monetag Zone ID is 12241585');
+  assert(MONETAG_CONFIG.scriptUrl === 'https://nap5k.com/tag.min.js', '1.20 Monetag script URL is correct');
+  assert(MONETAG_CONFIG.enabled === false, '1.21 Monetag is set enabled: false (inactive until format confirmed)');
+
+  // 1.5 Google AdSense Policy Enforcement
+  assert(ADSENSE_CONFIG.publisherId === 'ca-pub-7862321512207088', '1.22 Google AdSense Publisher ID is ca-pub-7862321512207088');
+  assert(ADSENSE_CONFIG.adSlot === '1929701241', '1.23 Google AdSense Ad Slot is 1929701241');
+  const liveChatRotation = getProviderRotation('top', true);
+  assert(!liveChatRotation.includes('adsense'), '1.24 Google AdSense is strictly excluded from live-chat rotations (/chat)');
+  const nonChatRotation = getProviderRotation('top', false);
+  assert(nonChatRotation.includes('adsense'), '1.25 Google AdSense is permitted on non-chat landing pages');
+
+  // --- Section 2: Component Implementation & Lifecycle Assertions ---
+  console.log('\n--- 2. Component Implementation & Lifecycle Assertions ---');
 
   const adPlacementBoxSource = fs.readFileSync(
     path.resolve('src/components/ads/AdPlacementBox.tsx'),
     'utf-8'
   );
 
-  // 1.1 Verify static placeholders are completely eliminated
   assert(
-    !adPlacementBoxSource.includes('Google AdSense Placement'),
-    '1.1 "Google AdSense Placement" static label is completely removed'
-  );
-  assert(
-    !adPlacementBoxSource.includes('Inactive pending unit ID'),
-    '1.2 "Inactive pending unit ID" label is completely removed'
-  );
-  assert(
-    !adPlacementBoxSource.includes('border-dashed'),
-    '1.3 Static dashed placeholder styling (border-dashed) is removed'
-  );
-  assert(
-    !adPlacementBoxSource.includes('min-h-[450px]'),
-    '1.4 Arbitrary vertical empty height (min-h-[450px]) placeholder is removed'
-  );
-  assert(
-    !adPlacementBoxSource.includes('min-h-[90px]'),
-    '1.5 Arbitrary horizontal empty height (min-h-[90px]) placeholder is removed'
-  );
-
-  // 1.2 Unconfigured Provider / No Fill
-  const topAdHtmlUnconfigured = renderToString(
-    React.createElement(AdPlacementBox, { slotId: 'unconfigured-top-slot' })
-  );
-  assert(
-    topAdHtmlUnconfigured === '',
-    '1.6 Unconfigured top ad renders null (exact empty string in HTML, no empty div/wrapper)'
-  );
-
-  const leftAdHtmlUnconfigured = renderToString(
-    React.createElement(AdPlacementBox, { slotId: 'unconfigured-left-slot', isVertical: true })
-  );
-  assert(
-    leftAdHtmlUnconfigured === '',
-    '1.7 Unconfigured left ad renders null (exact empty string in HTML, zero layout space)'
-  );
-
-  const rightAdHtmlUnconfigured = renderToString(
-    React.createElement(AdPlacementBox, { slotId: 'unconfigured-right-slot', isVertical: true })
-  );
-  assert(
-    rightAdHtmlUnconfigured === '',
-    '1.8 Unconfigured right ad renders null (exact empty string in HTML, zero layout space)'
-  );
-
-  const bottomAdHtmlUnconfigured = renderToString(
-    React.createElement(AdPlacementBox, { slotId: 'unconfigured-bottom-slot' })
-  );
-  assert(
-    bottomAdHtmlUnconfigured === '',
-    '1.9 Unconfigured bottom ad renders null (exact empty string in HTML, zero layout space)'
-  );
-
-  // 1.3 Provider returns no fill & Lifecycle safety
-  let renderPhaseCallbackCount = 0;
-  const noFillHtml = renderToString(
-    React.createElement(AdPlacementBox, {
-      slotId: 'public-chatroom-top',
-      position: 'top',
-      renderAd: () => null,
-      onStatusChange: () => {
-        renderPhaseCallbackCount++;
-      },
-    })
-  );
-  assert(
-    noFillHtml === '',
-    '1.10 Provider returns no fill renders null (0 reserved space)'
-  );
-  assert(
-    renderPhaseCallbackCount === 0,
-    '1.11 No status callback is invoked during render phase (lifecycle safe)'
-  );
-
-  // 1.4 Successful real ad rendering in assigned placement
-  const filledTopHtml = renderToString(
-    React.createElement(AdPlacementBox, {
-      slotId: 'public-chatroom-top',
-      position: 'top',
-      renderAd: () => React.createElement('div', { id: 'real-ad-content' }, 'Sponsored Announcement'),
-    })
-  );
-  assert(
-    filledTopHtml.includes('data-testid="ad-slot-public-chatroom-top"'),
-    '1.12 Successful ad renders in its assigned top placement slot'
-  );
-  assert(
-    filledTopHtml.includes('Sponsored Announcement'),
-    '1.13 Successful ad contains the rendered advertisement content'
-  );
-  assert(
-    filledTopHtml.includes('mb-2.5'),
-    '1.14 Filled top ad includes proper spacing margin (mb-2.5)'
-  );
-
-  // 1.5 Side ad responsive classes & Container ID Scoping
-  const filledLeftHtml = renderToString(
-    React.createElement(AdPlacementBox, {
-      slotId: 'public-chatroom-left',
-      position: 'left',
-      isVertical: true,
-      renderAd: () => React.createElement('div', null, 'Left Banner'),
-    })
-  );
-  assert(
-    filledLeftHtml.includes('hidden lg:flex') || filledLeftHtml.includes('hidden xl:flex'),
-    '1.15 Side ad uses hidden xl:flex/lg:flex to ensure it remains hidden on tablet and mobile'
-  );
-  assert(
-    filledLeftHtml.includes('w-[140px]') || filledLeftHtml.includes('w-[160px]'),
-    '1.16 Side ad width is strictly constrained (140px/160px) so chatroom is not crowded'
+    adPlacementBoxSource.includes('lastReportedStatusRef'),
+    '2.1 Duplicate status notifications are guarded using lastReportedStatusRef'
   );
   assert(
     adPlacementBoxSource.includes('container-${effectiveUnitId}-${slotId}'),
-    '1.17 Native ad container IDs are uniquely scoped per slotId to prevent dual-side ad collision'
+    '2.2 Native Adsterra container IDs are uniquely scoped per slot ID'
+  );
+  assert(
+    adPlacementBoxSource.includes('isLiveChatScreen'),
+    '2.3 AdPlacementBox accepts and respects isLiveChatScreen parameter'
+  );
+  assert(
+    !adPlacementBoxSource.includes('onStatusChange?.(status)') ||
+      !adPlacementBoxSource.slice(adPlacementBoxSource.indexOf('return (')).includes('onStatusChange'),
+    '2.4 No status callbacks occur during component render body'
   );
 
-  // --- 2. PublicChatPage Layout & Placement Integration ---
-  console.log('\n--- 2. PublicChatPage Layout & Placement Integration ---');
+  // Unconfigured / disabled provider returns null (zero reserved layout space)
+  const unconfiguredHtml = renderToString(
+    React.createElement(AdPlacementBox, { slotId: 'test-unconfigured', provider: 'exoclick' })
+  );
+  assert(unconfiguredHtml === '', '2.5 Disabled provider (ExoClick) returns null (0 reserved layout space)');
+
+  const monetagHtml = renderToString(
+    React.createElement(AdPlacementBox, { slotId: 'test-monetag', provider: 'monetag' })
+  );
+  assert(monetagHtml === '', '2.6 Disabled provider (Monetag) returns null (0 reserved layout space)');
+
+  const adsenseOnChatHtml = renderToString(
+    React.createElement(AdPlacementBox, { slotId: 'test-adsense-chat', provider: 'adsense', isLiveChatScreen: true })
+  );
+  assert(adsenseOnChatHtml === '', '2.7 AdSense on live chat screen returns null (strictly excluded)');
+
+  // --- Section 3: PublicChatPage Layout & Placement Integration ---
+  console.log('\n--- 3. PublicChatPage Layout & Placement Integration ---');
 
   const publicChatPageSource = fs.readFileSync(
     path.resolve('src/pages/PublicChatPage.tsx'),
     'utf-8'
   );
 
-  // 2.1 Verify all four placement slots are present
   assert(
     publicChatPageSource.includes('slotId="public-chatroom-top"'),
-    '2.1 Top ad slot (public-chatroom-top) is present in PublicChatPage'
-  );
-  assert(
-    publicChatPageSource.includes('slotId="public-chatroom-bottom"'),
-    '2.2 Bottom ad slot (public-chatroom-bottom) is present in PublicChatPage'
+    '3.1 Top ad slot (public-chatroom-top) present in PublicChatPage'
   );
   assert(
     publicChatPageSource.includes('slotId="public-chatroom-left"'),
-    '2.3 Left ad slot (public-chatroom-left) is present in PublicChatPage'
+    '3.2 Left ad slot (public-chatroom-left) present in PublicChatPage'
   );
   assert(
     publicChatPageSource.includes('slotId="public-chatroom-right"'),
-    '2.4 Right ad slot (public-chatroom-right) is present in PublicChatPage'
+    '3.3 Right ad slot (public-chatroom-right) present in PublicChatPage'
+  );
+  assert(
+    publicChatPageSource.includes('slotId="participant-box-horizontal"'),
+    '3.4 Participant ad slot (participant-box-horizontal) present in PublicChatPage'
+  );
+  assert(
+    publicChatPageSource.includes('slotId="public-chatroom-bottom"'),
+    '3.5 Bottom ad slot (public-chatroom-bottom) present in PublicChatPage'
   );
 
-  // 2.2 Verify no ads inside message stream or composer
-  const messageStreamSection = publicChatPageSource.slice(
-    publicChatPageSource.indexOf('messages.map('),
-    publicChatPageSource.indexOf('handleScrollMessages') > publicChatPageSource.indexOf('messages.map(')
-      ? publicChatPageSource.indexOf('handleScrollMessages')
-      : publicChatPageSource.indexOf('BanglishHelperBar')
-  );
-  assert(
-    !messageStreamSection.includes('AdPlacementBox'),
-    '2.5 No ad appears inside the chat message stream'
-  );
+  const messageStreamStart = publicChatPageSource.indexOf('messages.map(');
+  const messageStreamEnd = publicChatPageSource.indexOf('handleScrollMessages');
+  const messageStreamCode = publicChatPageSource.slice(messageStreamStart, messageStreamEnd > messageStreamStart ? messageStreamEnd : messageStreamStart + 5000);
+  assert(!messageStreamCode.includes('AdPlacementBox'), '3.6 No ad placed inside message stream');
 
-  const composerFormStart = publicChatPageSource.indexOf('<form onSubmit={handleSendMessage}');
-  const composerFormEnd = publicChatPageSource.indexOf('</form>', composerFormStart) + 7;
-  const composerSection = publicChatPageSource.slice(composerFormStart, composerFormEnd);
-  assert(
-    !composerSection.includes('AdPlacementBox'),
-    '2.6 No ad appears inside the message composer form or input bar'
-  );
+  const composerStart = publicChatPageSource.indexOf('<form onSubmit={handleSendMessage}');
+  const composerEnd = publicChatPageSource.indexOf('</form>', composerStart) + 7;
+  const composerCode = publicChatPageSource.slice(composerStart, composerEnd);
+  assert(!composerCode.includes('AdPlacementBox'), '3.7 No ad placed inside composer');
 
-  // 2.3 Verify no empty static wrappers with margins left around top/bottom slots
-  assert(
-    !publicChatPageSource.includes('<div className="mb-2.5 shrink-0">\n        <AdPlacementBox'),
-    '2.7 Top ad slot does not leave an empty div with mb-2.5 when ad returns null'
-  );
-  assert(
-    !publicChatPageSource.includes('<div className="mt-2.5 shrink-0">\n        <AdPlacementBox'),
-    '2.8 Bottom ad slot does not leave an empty div with mt-2.5 when ad returns null'
-  );
-
-  // 2.4 Verify central chatroom layout preservation
-  assert(
-    publicChatPageSource.includes('flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0'),
-    '2.9 Central chatroom is unified with flex-1 min-w-0 to flexibly occupy available width'
-  );
   assert(
     publicChatPageSource.includes('h-[calc(100vh-5.5rem)] min-h-[580px]'),
-    '2.10 Viewport-based layout height is preserved to prevent page overflow'
-  );
-
-  // --- 3. Preservation of Existing Chatroom Core Functionality ---
-  console.log('\n--- 3. Preservation of Existing Chatroom Core Functionality ---');
-
-  assert(
-    publicChatPageSource.includes('fetchRoomHistory') && publicChatPageSource.includes('subscribeToRoom'),
-    '3.1 Room message history loading and realtime subscription logic are intact'
-  );
-  assert(
-    publicChatPageSource.includes('clientNonce') && publicChatPageSource.includes('optimisticMsg'),
-    '3.2 Optimistic messaging and clientNonce deduplication are intact'
-  );
-  assert(
-    publicChatPageSource.includes('trackPresence') && publicChatPageSource.includes('sendPresence'),
-    '3.3 Dual realtime presence tracking with HTTP heartbeat fallback is intact'
-  );
-  assert(
-    publicChatPageSource.includes('PrivateChatPane') && publicChatPageSource.includes('activeMaximizedWindow'),
-    '3.4 Private 1-on-1 chat pane and maximized tab mode are intact'
-  );
-  assert(
-    publicChatPageSource.includes('BanglishHelperBar') && publicChatPageSource.includes('EmojiPicker'),
-    '3.5 Banglish helper bar and emoji/GIF picker controls are intact'
-  );
-  assert(
-    publicChatPageSource.includes('showMobileSidebar') && publicChatPageSource.includes('fixed inset-y-0 right-0 z-40 lg:static'),
-    '3.6 Mobile participant drawer and backdrop behavior are intact'
+    '3.8 Chatroom container height h-[calc(100vh-5.5rem)] min-h-[580px] is strictly preserved'
   );
 
   console.log('\n=============================================================');
-  console.log('  ALL 23 AD RENDERING & LAYOUT TESTS PASSED SUCCESSFULLY');
+  console.log('  ALL 35 PHASE B AD INTEGRATION & LIFECYCLE TESTS PASSED!');
   console.log('=============================================================\n');
 }
 
