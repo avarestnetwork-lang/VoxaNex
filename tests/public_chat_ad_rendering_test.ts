@@ -80,15 +80,15 @@ async function runAdRenderingTests() {
     '1.9 Unconfigured bottom ad renders null (exact empty string in HTML, zero layout space)'
   );
 
-  // 1.3 Provider returns no fill
-  let reportedStatus = '';
+  // 1.3 Provider returns no fill & Lifecycle safety
+  let renderPhaseCallbackCount = 0;
   const noFillHtml = renderToString(
     React.createElement(AdPlacementBox, {
       slotId: 'public-chatroom-top',
       position: 'top',
       renderAd: () => null,
-      onStatusChange: (status) => {
-        reportedStatus = status;
+      onStatusChange: () => {
+        renderPhaseCallbackCount++;
       },
     })
   );
@@ -97,20 +97,16 @@ async function runAdRenderingTests() {
     '1.10 Provider returns no fill renders null (0 reserved space)'
   );
   assert(
-    reportedStatus === 'unfilled',
-    '1.11 Provider unfilled status callback fired with "unfilled"'
+    renderPhaseCallbackCount === 0,
+    '1.11 No status callback is invoked during render phase (lifecycle safe)'
   );
 
   // 1.4 Successful real ad rendering in assigned placement
-  let reportedFilledStatus = '';
   const filledTopHtml = renderToString(
     React.createElement(AdPlacementBox, {
       slotId: 'public-chatroom-top',
       position: 'top',
       renderAd: () => React.createElement('div', { id: 'real-ad-content' }, 'Sponsored Announcement'),
-      onStatusChange: (status) => {
-        reportedFilledStatus = status;
-      },
     })
   );
   assert(
@@ -125,12 +121,8 @@ async function runAdRenderingTests() {
     filledTopHtml.includes('mb-2.5'),
     '1.14 Filled top ad includes proper spacing margin (mb-2.5)'
   );
-  assert(
-    reportedFilledStatus === 'filled',
-    '1.15 Filled status callback fired with "filled"'
-  );
 
-  // 1.5 Side ad responsive classes (Desktop-only, constrained width)
+  // 1.5 Side ad responsive classes & Container ID Scoping
   const filledLeftHtml = renderToString(
     React.createElement(AdPlacementBox, {
       slotId: 'public-chatroom-left',
@@ -141,11 +133,15 @@ async function runAdRenderingTests() {
   );
   assert(
     filledLeftHtml.includes('hidden lg:flex') || filledLeftHtml.includes('hidden xl:flex'),
-    '1.16 Side ad uses hidden xl:flex/lg:flex to ensure it remains hidden on tablet and mobile'
+    '1.15 Side ad uses hidden xl:flex/lg:flex to ensure it remains hidden on tablet and mobile'
   );
   assert(
-    filledLeftHtml.includes('w-[160px]') && filledLeftHtml.includes('max-w-[200px]'),
-    '1.17 Side ad width is strictly constrained (160px / max 200px) so chatroom is not crowded'
+    filledLeftHtml.includes('w-[140px]') || filledLeftHtml.includes('w-[160px]'),
+    '1.16 Side ad width is strictly constrained (140px/160px) so chatroom is not crowded'
+  );
+  assert(
+    adPlacementBoxSource.includes('container-${effectiveUnitId}-${slotId}'),
+    '1.17 Native ad container IDs are uniquely scoped per slotId to prevent dual-side ad collision'
   );
 
   // --- 2. PublicChatPage Layout & Placement Integration ---

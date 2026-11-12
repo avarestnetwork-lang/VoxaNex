@@ -182,7 +182,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         if (!isMountedRef.current) { resolve(); return; }
 
         if (isNative) {
-          const containerId = `container-${ADSTERRA_CONFIG.nativeUnitId}`;
+          const containerId = `container-${effectiveUnitId}-${slotId}`;
           const existing = document.getElementById(containerId);
           
           if (existing && !adRef.current?.contains(existing)) {
@@ -276,16 +276,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   }, [currentProvider, effectiveUnitId, renderAd, updateStatus, position, slotId, containerWidth, adStatus]);
 
   // 4. Layout & Visibility
-  const renderedContent = renderAd ? renderAd() : null;
-  if (renderAd) {
-    if (renderedContent === null) {
-      onStatusChange?.('unfilled');
-      return null;
-    } else {
-      onStatusChange?.('filled');
-    }
-  }
   if (adStatus === 'unfilled' || adStatus === 'error' || (!effectiveUnitId && !renderAd)) return null;
+  if (renderAd && renderAd() === null) return null;
 
   let posClasses = 'w-full flex justify-center overflow-hidden transition-all duration-300';
   if (position === 'top') posClasses += ' mb-2.5 shrink-0';
@@ -306,7 +298,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     ref: adRef,
   };
 
-  if (renderAd) return <div {...containerProps}>{renderedContent}</div>;
+  if (renderAd) return <div {...containerProps}>{renderAd()}</div>;
   if (currentProvider === 'adsterra') return <div {...containerProps} />;
 
   return (
