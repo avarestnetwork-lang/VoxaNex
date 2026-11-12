@@ -10,7 +10,7 @@ export const MonetagScript: React.FC = () => {
 
     const script = document.createElement('script');
     script.id = scriptId;
-    script.src = 'https://quge5.com/88/tag.min.js';
+    script.src = MONETAG_CONFIG.scriptUrl;
     script.setAttribute('data-zone', MONETAG_CONFIG.zoneId);
     script.async = true;
     script.setAttribute('data-cfasync', 'false');

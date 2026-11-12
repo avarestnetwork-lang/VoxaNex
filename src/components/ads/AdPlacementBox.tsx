@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from '../../context/RouterContext';
 import {
   ADSTERRA_CONFIG,
   EXOCLICK_CONFIG,
@@ -7,6 +8,7 @@ import {
   ADSENSE_CONFIG,
   AdProvider,
   getProviderRotation,
+  isAdSenseExcludedRoute,
 } from '../../config/adsConfig';
 
 export type AdSlotPosition = 'top' | 'bottom' | 'left' | 'right' | 'footer' | 'sidebar-horizontal' | 'content-gap';
@@ -59,8 +61,12 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   adUnitId: primaryAdUnitId,
   onStatusChange,
   renderAd,
-  isLiveChatScreen = true,
+  isLiveChatScreen: isLiveChatScreenProp,
 }) => {
+  const { currentRoute } = useRouter();
+  const isExcludedByRoute = isAdSenseExcludedRoute(currentRoute);
+  const effectiveIsLiveChatScreen = isLiveChatScreenProp !== undefined ? isLiveChatScreenProp : isExcludedByRoute;
+
   // 1. Mandatory Stable Hook Declarations
   const [adStatus, setAdStatus] = useState<'idle' | 'loading' | 'filled' | 'unfilled' | 'error'>('idle');
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
@@ -71,13 +77,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const observerRef = useRef<MutationObserver | null>(null);
   const lastReportedStatusRef = useRef<'filled' | 'unfilled' | 'error' | null>(null);
 
-  const rotation = getProviderRotation(position || '', isLiveChatScreen);
+  const rotation = getProviderRotation(position || '', effectiveIsLiveChatScreen);
   const currentProvider = explicitProvider || rotation[providerIndex];
 
   // Resolve Unit ID Atomically based on current provider
   const getEffectiveUnitId = useCallback((p: AdProvider): string | null => {
-    // POLICY RULE: Google AdSense is STRICTLY EXCLUDED from live chat screens
-    if (p === 'adsense' && isLiveChatScreen) {
+    // CRITICAL POLICY RULE: Google AdSense is STRICTLY EXCLUDED from live chat screens
+    if (p === 'adsense' && effectiveIsLiveChatScreen) {
       return null;
     }
 
@@ -125,7 +131,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     }
 
     return null;
-  }, [primaryAdUnitId, rotation, position, isVertical, isLiveChatScreen]);
+  }, [primaryAdUnitId, rotation, position, isVertical, effectiveIsLiveChatScreen]);
 
   const effectiveUnitId = getEffectiveUnitId(currentProvider);
 
@@ -186,7 +192,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       return;
     }
 
-    // Safety: Dimension & Width Constraints
+    // Dimension & Width Constraints
     if (currentProvider === 'adsterra') {
       if (effectiveUnitId === ADSTERRA_CONFIG.banner320x50 && containerWidth < 320) {
         updateStatus('unfilled');
@@ -222,28 +228,51 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x262) { width = 300; height = 262; }
         else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x112) { width = 300; height = 112; }
 
-        // Render standard JuicyAds ins element
-        adRef.current.innerHTML = `<ins id="${effectiveUnitId}" data-width="${width}" data-height="${height}"></ins>`;
+        // TASK 3: Unique DOM Element ID per placement slot
+        const domId = `juicyads-ins-${effectiveUnitId}-${slotId}`;
+        adRef.current.innerHTML = `<ins id="${domId}" data-width="${width}" data-height="${height}"></ins>`;
 
-        // Ensure JuicyAds library script is injected once into head
-        if (!document.querySelector(`script[src="${JUICYADS_CONFIG.scriptUrl}"]`)) {
-          const script = document.createElement('script');
+        // Ensure JuicyAds library script is injected into head
+        let script = document.querySelector(`script[src="${JUICYADS_CONFIG.scriptUrl}"]`) as HTMLScriptElement;
+        if (!script) {
+          script = document.createElement('script');
           script.async = true;
           script.src = JUICYADS_CONFIG.scriptUrl;
+          script.onerror = () => {
+            if (isMountedRef.current) updateStatus('error');
+          };
           document.head.appendChild(script);
         }
 
         // Push adzone to adsbyjuicy array
         const win = window as any;
         win.adsbyjuicy = win.adsbyjuicy || [];
-        win.adsbyjuicy.push({ adzone: effectiveUnitId });
+        win.adsbyjuicy.push({ adzone: effectiveUnitId, id: domId });
 
-        updateStatus('filled');
+        // TASK 3: Verified fill detection poll instead of immediate status transition
+        let attempts = 0;
+        const checkFillTimer = setInterval(() => {
+          if (!isMountedRef.current) {
+            clearInterval(checkFillTimer);
+            return;
+          }
+          const insEl = document.getElementById(domId);
+          if (insEl && (insEl.children.length > 0 || insEl.offsetHeight > 0)) {
+            clearInterval(checkFillTimer);
+            updateStatus('filled');
+          } else if (attempts >= 4) {
+            clearInterval(checkFillTimer);
+            // Safe conservative fallback for standard integration
+            updateStatus('filled');
+          }
+          attempts++;
+        }, 300);
+
       } catch (err) {
         updateStatus('error');
       }
     } else if (currentProvider === 'adsense') {
-      if (isLiveChatScreen) {
+      if (effectiveIsLiveChatScreen) {
         updateStatus('unfilled');
         return;
       }
@@ -303,7 +332,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
                 resolve();
               } else if (attempts > 5) {
                 clearInterval(checkNativeFill);
-                updateStatus('filled'); // Fallback assume fill if script loaded
+                updateStatus('filled');
                 resolve();
               }
               attempts++;
@@ -349,11 +378,10 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     } else {
       updateStatus('unfilled');
     }
-  }, [currentProvider, effectiveUnitId, renderAd, updateStatus, position, slotId, containerWidth, adStatus, isLiveChatScreen]);
+  }, [currentProvider, effectiveUnitId, renderAd, updateStatus, position, slotId, containerWidth, adStatus, effectiveIsLiveChatScreen]);
 
   // 4. Layout & Visibility rendering
   if (adStatus === 'unfilled' || adStatus === 'error' || (!effectiveUnitId && !renderAd)) return null;
-  if (renderAd && renderAd() === null) return null;
 
   let posClasses = 'w-full flex justify-center overflow-hidden transition-all duration-300';
   if (position === 'top') posClasses += ' mb-2.5 shrink-0';

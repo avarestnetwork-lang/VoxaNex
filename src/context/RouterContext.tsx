@@ -139,7 +139,7 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
 
 export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [routeState, setRouteState] = useState<{ route: AppRoute; params: Record<string, string> }>(() => {
-    const initial = window.location.pathname;
+    const initial = typeof window !== 'undefined' ? window.location.pathname : '/';
     return parsePath(initial);
   });
 
@@ -149,21 +149,26 @@ export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       cleanPath = `/chat/${newParams.roomId}`;
     }
 
-    // Update history state with clean URL
-    window.history.pushState(newParams, '', cleanPath);
+    if (typeof window !== 'undefined') {
+      window.history.pushState(newParams, '', cleanPath);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
     const parsed = parsePath(cleanPath);
     setRouteState({
       route: parsed.route,
       params: { ...parsed.params, ...newParams },
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   const goBack = useCallback(() => {
-    window.history.back();
+    if (typeof window !== 'undefined') {
+      window.history.back();
+    }
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+
     const handlePopState = () => {
       const current = window.location.pathname;
       setRouteState(parsePath(current));

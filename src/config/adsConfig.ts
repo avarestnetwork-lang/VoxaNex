@@ -44,6 +44,38 @@ export const ADSENSE_CONFIG = {
   enabled: true, // Enabled for non-chat pages ONLY; strictly excluded from live-chat routes
 };
 
+export const ADSENSE_EXCLUDED_ROUTES = [
+  '/chat',
+  '/messages',
+  '/random',
+  '/av-chat',
+  '/chat/video',
+  '/guest-entry',
+  '/age-gate',
+  '/register',
+  '/auth',
+  '/user/guest-entry',
+  '/user/register',
+  '/user/login',
+  '/admin',
+  '/moderator',
+];
+
+export const isAdSenseExcludedRoute = (currentRoute: string): boolean => {
+  const normalized = (currentRoute || '').toLowerCase();
+  if (!normalized) return false;
+  
+  return ADSENSE_EXCLUDED_ROUTES.some((route) =>
+    normalized === route ||
+    normalized.startsWith(`${route}/`) ||
+    normalized.startsWith('/chat/') ||
+    normalized.startsWith('/admin/') ||
+    normalized.startsWith('/moderator/') ||
+    normalized.includes('/messages') ||
+    normalized.includes('/av-chat')
+  );
+};
+
 /**
  * Selection strategy: Priority list.
  * CRITICAL POLICY: Google AdSense is STRICTLY EXCLUDED from live-chat screens (/chat).
@@ -62,7 +94,7 @@ export const getProviderRotation = (position: string, isLiveChatScreen: boolean 
     return ['adsterra', 'juicyads'];
   }
 
-  // Non-chat pages (e.g. static landing pages)
+  // Non-chat pages (e.g. static landing pages, blog, about, contact)
   return ['adsense', 'adsterra', 'juicyads'];
 };
 
@@ -81,7 +113,7 @@ export const FOOTER_EXCLUDED_ROUTES = [
 ];
 
 export const isRouteExcludedFromFooterAds = (currentRoute: string): boolean => {
-  const normalized = currentRoute.toLowerCase();
+  const normalized = (currentRoute || '').toLowerCase();
   return FOOTER_EXCLUDED_ROUTES.some(route => 
     normalized === route || 
     normalized.startsWith('/chat/') || 
