@@ -1,5 +1,6 @@
 import React from 'react';
 import { useRouter } from '../context/RouterContext';
+import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { SEOHead } from '../components/common/SEOHead';
@@ -23,6 +24,7 @@ interface RoomLandingPageProps {
 
 export const RoomLandingPage: React.FC<RoomLandingPageProps> = ({ roomSlug }) => {
   const { navigate } = useRouter();
+  const { hasActiveSession } = useAuth();
   const { language } = useLanguage();
 
   const room = ROOMS_CONFIG.find((r) => r.slug === roomSlug) || {
@@ -101,7 +103,13 @@ export const RoomLandingPage: React.FC<RoomLandingPageProps> = ({ roomSlug }) =>
 
           <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
             <button
-              onClick={() => navigate('/user/guest-entry', { targetRoom: room.slug })}
+              onClick={() => {
+                if (hasActiveSession) {
+                  navigate('/chat', { roomId: room.slug });
+                  return;
+                }
+                navigate('/user/guest-entry', { targetRoom: room.slug });
+              }}
               className="inline-flex items-center justify-center bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-700 hover:to-orange-600 text-white text-base sm:text-lg font-bold px-8 py-3.5 rounded-xl shadow-lg shadow-rose-600/25 transition-all transform hover:-translate-y-0.5 cursor-pointer"
             >
               <span>{language === 'bn' ? 'রুমে প্রবেশ করুন' : `Enter ${room.name.en}`}</span>
