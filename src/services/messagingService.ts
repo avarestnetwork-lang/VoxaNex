@@ -1126,12 +1126,12 @@ export const messagingService = {
 
   async searchGifs(query = ''): Promise<GifItem[]> {
     const fallbackGifs: GifItem[] = [
-      { id: 'gif-1', title: 'Thumbs Up / Good Job', url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80', tags: ['thumbsup', 'nice', 'valo'] },
-      { id: 'gif-2', title: 'Celebrate / Party', url: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=400&q=80', tags: ['party', 'celebrate', 'anondo'] },
-      { id: 'gif-3', title: 'Wave / Hello Dhaka', url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80', tags: ['hello', 'hi', 'kmn acho'] },
-      { id: 'gif-4', title: 'Tea Cup / Cha Adda', url: 'https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=400&q=80', tags: ['tea', 'cha', 'adda'] },
-      { id: 'gif-5', title: 'Laughing / Haha', url: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?auto=format&fit=crop&w=400&q=80', tags: ['laugh', 'haha', 'lol'] },
-      { id: 'gif-6', title: 'Love & Heart', url: 'https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=400&q=80', tags: ['love', 'heart', 'valobashi'] },
+      { id: 'gif-1', title: 'Thumbs Up / Good Job', url: 'https://media.giphy.com/media/3o7TKSjRrfIPjeiDiM/giphy.gif', tags: ['thumbsup', 'nice', 'valo'] },
+      { id: 'gif-2', title: 'Celebrate / Party', url: 'https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif', tags: ['party', 'celebrate', 'anondo'] },
+      { id: 'gif-3', title: 'Wave / Hello Dhaka', url: 'https://media.giphy.com/media/l0HlHFRbmaZtBRhXG/giphy.gif', tags: ['hello', 'hi', 'kmn acho'] },
+      { id: 'gif-4', title: 'Tea Cup / Cha Adda', url: 'https://media.giphy.com/media/26BRv0ThflsHCqDrG/giphy.gif', tags: ['tea', 'cha', 'adda'] },
+      { id: 'gif-5', title: 'Laughing / Haha', url: 'https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif', tags: ['laugh', 'haha', 'lol'] },
+      { id: 'gif-6', title: 'Love & Heart', url: 'https://media.giphy.com/media/3o7btQgJ34CAWBUah2/giphy.gif', tags: ['love', 'heart', 'valobashi'] },
     ];
     try {
       const res = await fetch(`${API_BASE}/api/gifs/search?q=${encodeURIComponent(query)}`);
