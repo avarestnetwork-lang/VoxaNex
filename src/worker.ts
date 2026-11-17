@@ -1006,9 +1006,16 @@ export default {
             }
 
             const verifiedId = authResult.verifiedUserId;
-            const isParticipant = rows.some(r => r.user_id === verifiedId || r.guest_id === verifiedId);
+            const isGuest = authResult.isGuestCaller;
+            const isParticipant = rows.some(r => {
+              if (isGuest) {
+                return r.guest_id === verifiedId && (!r.user_id || r.user_id === null);
+              } else {
+                return r.user_id === verifiedId && (!r.guest_id || r.guest_id === null);
+              }
+            });
             if (!isParticipant) {
-              return jsonResponse({ success: false, error: 'Forbidden: Caller is not a participant in this conversation.' }, 403);
+              return jsonResponse({ success: false, error: 'Forbidden: Caller is not an authorized participant in this conversation.' }, 403);
             }
           } catch (dbErr: any) {
             return jsonResponse({ success: false, error: 'Database error verifying conversation membership.' }, 503);
@@ -1120,7 +1127,14 @@ export default {
             }
 
             const verifiedId = authResult.verifiedUserId;
-            const isParticipant = rows.some(r => r.user_id === verifiedId || r.guest_id === verifiedId);
+            const isGuest = authResult.isGuestCaller;
+            const isParticipant = rows.some(r => {
+              if (isGuest) {
+                return r.guest_id === verifiedId && (!r.user_id || r.user_id === null);
+              } else {
+                return r.user_id === verifiedId && (!r.guest_id || r.guest_id === null);
+              }
+            });
             if (!isParticipant) {
               return jsonResponse({ success: false, error: 'Forbidden: Unauthorized access to private conversation media.' }, 403);
             }
