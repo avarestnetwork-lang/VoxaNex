@@ -258,10 +258,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const clean = nickname.trim().slice(0, 24);
     if (!clean) return { success: false, error: 'Nickname cannot be empty.' };
 
-    if (!user.isGuest && isSupabaseActive) {
+    // Registered member updates must always fail closed if persistence fails or Supabase is unavailable
+    if (!user.isGuest) {
       const res = await authService.updateProfile(user.id, { nickname: clean });
       if (!res.success) {
-        return res;
+        return { success: false, error: res.error || 'Failed to update nickname.' };
       }
     }
 
@@ -270,10 +271,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const setAvatar = async (avatar: string): Promise<{ success: boolean; error?: string }> => {
-    if (!user.isGuest && isSupabaseActive) {
+    // Registered member updates must always fail closed if persistence fails or Supabase is unavailable
+    if (!user.isGuest) {
       const res = await authService.updateProfile(user.id, { avatar });
       if (!res.success) {
-        return res;
+        return { success: false, error: res.error || 'Failed to update avatar.' };
       }
     }
 
@@ -453,16 +455,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updatePreferences = async (prefs: Partial<UserProfile>): Promise<{ success: boolean; error?: string }> => {
-    if (!user.isGuest && isSupabaseActive) {
-      const res = await authService.updateProfile(user.id, prefs);
+    const normalizedPrefs: Partial<UserProfile> = { ...prefs };
+    if (typeof normalizedPrefs.nickname === 'string') {
+      const cleanNick = normalizedPrefs.nickname.trim().slice(0, 24);
+      if (!cleanNick) {
+        return { success: false, error: 'Nickname cannot be empty.' };
+      }
+      normalizedPrefs.nickname = cleanNick;
+    }
+
+    // Registered member updates must always fail closed if persistence fails or Supabase is unavailable
+    if (!user.isGuest) {
+      const res = await authService.updateProfile(user.id, normalizedPrefs);
       if (!res.success) {
-        return res;
+        return { success: false, error: res.error || 'Failed to save profile changes.' };
       }
     }
 
     setUser(prev => ({
       ...prev,
-      ...prefs,
+      ...normalizedPrefs,
     }));
     return { success: true };
   };

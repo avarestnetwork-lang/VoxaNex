@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth, GUEST_AVATARS } from '../context/AuthContext';
@@ -44,7 +44,7 @@ const INTERESTS_OPTIONS = [
 export const ProfileSettingsPage: React.FC = () => {
   const { navigate } = useRouter();
   const { language, setLanguage, t } = useLanguage();
-  const { user, is18Verified, setNickname, setAvatar, updatePreferences, logout, deleteAccount } = useAuth();
+  const { user, is18Verified, setAvatar, updatePreferences, logout, deleteAccount } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'profile' | 'privacy' | 'blocked' | 'connections'>('profile');
 
@@ -58,7 +58,13 @@ export const ProfileSettingsPage: React.FC = () => {
   const [safeFilter, setSafeFilter] = useState(user.safeFilterEnabled);
   const [sounds, setSounds] = useState(user.notificationSounds);
 
+  // Dirty-tracking to sync async session restoration without overwriting unsaved edits
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const lastSyncedUserIdRef = useRef<string>(user.id);
+  const saveSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Status feedback
+  const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
@@ -74,7 +80,37 @@ export const ProfileSettingsPage: React.FC = () => {
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
+    return () => {
+      if (saveSuccessTimerRef.current) {
+        clearTimeout(saveSuccessTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const userChanged = lastSyncedUserIdRef.current !== user.id;
+    if (userChanged) {
+      lastSyncedUserIdRef.current = user.id;
+      setHasUnsavedChanges(false);
+    }
+
+    if (userChanged || !hasUnsavedChanges) {
+      setNicknameInput(user.nickname);
+      setBioInput(user.bio || '');
+      if (user.interests && user.interests.length > 0) {
+        setSelectedInterests(user.interests);
+      }
+      setOnlineVisibility(user.onlineVisibility || 'online');
+      setAllowDiscoverability(user.allowDiscoverability !== false);
+      setDmPolicy(user.allowDirectMessages || 'everyone');
+      setSafeFilter(user.safeFilterEnabled);
+      setSounds(user.notificationSounds);
+    }
+  }, [user, hasUnsavedChanges]);
+
+  useEffect(() => {
     async function loadBlockedAndConnections() {
+      if (!user.id) return;
       const blocks = await safetyService.getBlockedUsers(user.id);
       setBlockedUsers(blocks);
 
@@ -87,9 +123,11 @@ export const ProfileSettingsPage: React.FC = () => {
   const toggleInterest = (interest: string) => {
     if (selectedInterests.includes(interest)) {
       setSelectedInterests(selectedInterests.filter((i) => i !== interest));
+      setHasUnsavedChanges(true);
     } else {
       if (selectedInterests.length >= 6) return;
       setSelectedInterests([...selectedInterests, interest]);
+      setHasUnsavedChanges(true);
     }
   };
 
@@ -108,10 +146,9 @@ export const ProfileSettingsPage: React.FC = () => {
     return true;
   };
 
-  const [saving, setSaving] = useState(false);
-
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     if (!validateNickname(nicknameInput)) {
       return;
     }
@@ -119,33 +156,62 @@ export const ProfileSettingsPage: React.FC = () => {
     setSaving(true);
     setValidationError(null);
     setSaveSuccess(false);
+    if (saveSuccessTimerRef.current) {
+      clearTimeout(saveSuccessTimerRef.current);
+      saveSuccessTimerRef.current = null;
+    }
 
-    const nickRes = await setNickname(nicknameInput.trim());
-    if (!nickRes.success) {
+    try {
+      // Submit nickname and bio together in a single authenticated profile update request
+      const prefRes = await updatePreferences({
+        nickname: nicknameInput.trim(),
+        bio: bioInput.trim(),
+        interests: selectedInterests,
+        onlineVisibility,
+        allowDiscoverability,
+        allowDirectMessages: dmPolicy,
+        safeFilterEnabled: safeFilter,
+        notificationSounds: sounds,
+      });
+
+      if (!prefRes.success) {
+        setValidationError(prefRes.error || 'Failed to update profile preferences.');
+        return;
+      }
+
+      setHasUnsavedChanges(false);
+      setSaveSuccess(true);
+      saveSuccessTimerRef.current = setTimeout(() => setSaveSuccess(false), 2500);
+    } catch {
+      setValidationError('Unexpected error while saving profile changes. Please try again.');
+    } finally {
       setSaving(false);
-      setValidationError(nickRes.error || 'Failed to update nickname.');
-      return;
+    }
+  };
+
+  const handleAvatarChange = async (av: string) => {
+    if (saving) return;
+    setSaving(true);
+    setValidationError(null);
+    setSaveSuccess(false);
+    if (saveSuccessTimerRef.current) {
+      clearTimeout(saveSuccessTimerRef.current);
+      saveSuccessTimerRef.current = null;
     }
 
-    const prefRes = await updatePreferences({
-      bio: bioInput.trim(),
-      interests: selectedInterests,
-      onlineVisibility,
-      allowDiscoverability,
-      allowDirectMessages: dmPolicy,
-      safeFilterEnabled: safeFilter,
-      notificationSounds: sounds,
-    });
-
-    setSaving(false);
-
-    if (!prefRes.success) {
-      setValidationError(prefRes.error || 'Failed to update profile preferences.');
-      return;
+    try {
+      const res = await setAvatar(av);
+      if (!res.success) {
+        setValidationError(res.error || 'Failed to update avatar.');
+        return;
+      }
+      setSaveSuccess(true);
+      saveSuccessTimerRef.current = setTimeout(() => setSaveSuccess(false), 2500);
+    } catch {
+      setValidationError('Unexpected error while updating avatar. Please try again.');
+    } finally {
+      setSaving(false);
     }
-
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2500);
   };
 
   const handleUnblock = async (targetId: string) => {
@@ -319,13 +385,9 @@ export const ProfileSettingsPage: React.FC = () => {
                   <button
                     key={av}
                     type="button"
-                    onClick={async () => {
-                      const res = await setAvatar(av);
-                      if (!res.success) {
-                        setValidationError(res.error || 'Failed to update avatar.');
-                      }
-                    }}
-                    className={`h-9 rounded-lg flex items-center justify-center text-base border transition-all ${
+                    disabled={saving}
+                    onClick={() => handleAvatarChange(av)}
+                    className={`h-9 rounded-lg flex items-center justify-center text-base border transition-all disabled:opacity-50 ${
                       user.avatar === av
                         ? 'border-cyan-400 bg-cyan-950/40 text-cyan-300'
                         : 'border-slate-800 bg-[#101729] hover:bg-slate-800'
@@ -381,6 +443,7 @@ export const ProfileSettingsPage: React.FC = () => {
                     value={nicknameInput}
                     onChange={(e) => {
                       setNicknameInput(e.target.value);
+                      setHasUnsavedChanges(true);
                       validateNickname(e.target.value);
                     }}
                     maxLength={24}
@@ -416,7 +479,10 @@ export const ProfileSettingsPage: React.FC = () => {
                   rows={2}
                   maxLength={250}
                   value={bioInput}
-                  onChange={(e) => setBioInput(e.target.value)}
+                  onChange={(e) => {
+                    setBioInput(e.target.value);
+                    setHasUnsavedChanges(true);
+                  }}
                   placeholder="e.g. Dhaka explorer · Music listener & tech enthusiast"
                   className="w-full bg-[#101729] border border-slate-800 rounded-lg p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
                 />
@@ -449,9 +515,9 @@ export const ProfileSettingsPage: React.FC = () => {
               </div>
 
               <div className="pt-3 border-t border-slate-800 flex justify-end">
-                <Button type="submit" variant="primary" size="md">
+                <Button type="submit" variant="primary" size="md" disabled={saving}>
                   <Save className="w-4 h-4 mr-1.5" />
-                  <span>Save Profile Changes</span>
+                  <span>{saving ? (language === 'bn' ? 'সংরক্ষণ হচ্ছে...' : 'Saving...') : 'Save Profile Changes'}</span>
                 </Button>
               </div>
             </div>
@@ -483,7 +549,10 @@ export const ProfileSettingsPage: React.FC = () => {
                     <button
                       key={mode.id}
                       type="button"
-                      onClick={() => setOnlineVisibility(mode.id as any)}
+                      onClick={() => {
+                        setOnlineVisibility(mode.id as any);
+                        setHasUnsavedChanges(true);
+                      }}
                       className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
                         onlineVisibility === mode.id
                           ? 'border-cyan-500 bg-cyan-950/30 text-white'
@@ -504,7 +573,10 @@ export const ProfileSettingsPage: React.FC = () => {
                 </label>
                 <select
                   value={dmPolicy}
-                  onChange={(e) => setDmPolicy(e.target.value as any)}
+                  onChange={(e) => {
+                    setDmPolicy(e.target.value as any);
+                    setHasUnsavedChanges(true);
+                  }}
                   className="w-full bg-[#101729] border border-slate-800 rounded-lg px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
                 >
                   <option value="everyone">Everyone (Open communication)</option>
@@ -525,7 +597,10 @@ export const ProfileSettingsPage: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={allowDiscoverability}
-                    onChange={(e) => setAllowDiscoverability(e.target.checked)}
+                    onChange={(e) => {
+                      setAllowDiscoverability(e.target.checked);
+                      setHasUnsavedChanges(true);
+                    }}
                     className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-violet-600 focus:ring-violet-500"
                   />
                 </label>
@@ -543,7 +618,10 @@ export const ProfileSettingsPage: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={safeFilter}
-                    onChange={(e) => setSafeFilter(e.target.checked)}
+                    onChange={(e) => {
+                      setSafeFilter(e.target.checked);
+                      setHasUnsavedChanges(true);
+                    }}
                     className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-violet-600 focus:ring-violet-500"
                   />
                 </label>
@@ -560,9 +638,9 @@ export const ProfileSettingsPage: React.FC = () => {
                 <span>Delete Account & Purge Data</span>
               </button>
 
-              <Button type="submit" variant="primary" size="md">
+              <Button type="submit" variant="primary" size="md" disabled={saving}>
                 <Save className="w-4 h-4 mr-1.5" />
-                <span>Save Privacy Settings</span>
+                <span>{saving ? (language === 'bn' ? 'সংরক্ষণ হচ্ছে...' : 'Saving...') : 'Save Privacy Settings'}</span>
               </Button>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth, GUEST_AVATARS } from '../context/AuthContext';
@@ -57,7 +57,6 @@ export const MemberDashboardPage: React.FC = () => {
     user,
     hasActiveSession,
     is18Verified,
-    setNickname,
     setAvatar,
     updatePreferences,
     logout,
@@ -81,9 +80,17 @@ export const MemberDashboardPage: React.FC = () => {
   const [safeFilter, setSafeFilter] = useState(user.safeFilterEnabled);
   const [sounds, setSounds] = useState(user.notificationSounds);
 
+  // Dirty-tracking to sync async session restoration without overwriting unsaved edits
+  const [hasUnsavedIdentityChanges, setHasUnsavedIdentityChanges] = useState(false);
+  const [hasUnsavedPrivacyChanges, setHasUnsavedPrivacyChanges] = useState(false);
+  const lastSyncedUserIdRef = useRef<string>(user.id);
+  const saveSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Status feedback
+  const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
 
   // Blocked users & connections
   const [blockedUsers, setBlockedUsers] = useState<BlockedUserEntry[]>([]);
@@ -101,12 +108,37 @@ export const MemberDashboardPage: React.FC = () => {
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
-    setNicknameInput(user.nickname);
-    setBioInput(user.bio || '');
-    if (user.interests && user.interests.length > 0) {
-      setSelectedInterests(user.interests);
+    return () => {
+      if (saveSuccessTimerRef.current) {
+        clearTimeout(saveSuccessTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const userChanged = lastSyncedUserIdRef.current !== user.id;
+    if (userChanged) {
+      lastSyncedUserIdRef.current = user.id;
+      setHasUnsavedIdentityChanges(false);
+      setHasUnsavedPrivacyChanges(false);
     }
-  }, [user]);
+
+    if (userChanged || !hasUnsavedIdentityChanges) {
+      setNicknameInput(user.nickname);
+      setBioInput(user.bio || '');
+      if (user.interests && user.interests.length > 0) {
+        setSelectedInterests(user.interests);
+      }
+    }
+
+    if (userChanged || !hasUnsavedPrivacyChanges) {
+      setOnlineVisibility(user.onlineVisibility || 'online');
+      setAllowDiscoverability(user.allowDiscoverability !== false);
+      setDmPolicy(user.allowDirectMessages || 'everyone');
+      setSafeFilter(user.safeFilterEnabled);
+      setSounds(user.notificationSounds);
+    }
+  }, [user, hasUnsavedIdentityChanges, hasUnsavedPrivacyChanges]);
 
   useEffect(() => {
     async function loadBlockedAndConnections() {
@@ -186,9 +218,11 @@ export const MemberDashboardPage: React.FC = () => {
   const toggleInterest = (interest: string) => {
     if (selectedInterests.includes(interest)) {
       setSelectedInterests(selectedInterests.filter((i) => i !== interest));
+      setHasUnsavedIdentityChanges(true);
     } else {
       if (selectedInterests.length >= 6) return;
       setSelectedInterests([...selectedInterests, interest]);
+      setHasUnsavedIdentityChanges(true);
     }
   };
 
@@ -207,10 +241,9 @@ export const MemberDashboardPage: React.FC = () => {
     return true;
   };
 
-  const [saving, setSaving] = useState(false);
-
   const handleSaveIdentity = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     if (!validateNickname(nicknameInput)) {
       return;
     }
@@ -218,53 +251,99 @@ export const MemberDashboardPage: React.FC = () => {
     setSaving(true);
     setValidationError(null);
     setSaveSuccess(false);
+    if (saveSuccessTimerRef.current) {
+      clearTimeout(saveSuccessTimerRef.current);
+      saveSuccessTimerRef.current = null;
+    }
 
-    const nickRes = await setNickname(nicknameInput.trim());
-    if (!nickRes.success) {
+    try {
+      // Submit nickname and bio together in one authenticated profile update request
+      const prefRes = await updatePreferences({
+        nickname: nicknameInput.trim(),
+        bio: bioInput.trim(),
+        interests: selectedInterests,
+      });
+
+      if (!prefRes.success) {
+        setValidationError(prefRes.error || 'Failed to update identity profile.');
+        return;
+      }
+
+      setHasUnsavedIdentityChanges(false);
+      setSaveSuccess(true);
+      saveSuccessTimerRef.current = setTimeout(() => setSaveSuccess(false), 2500);
+    } catch {
+      setValidationError('Unexpected error while saving profile changes. Please try again.');
+    } finally {
       setSaving(false);
-      setValidationError(nickRes.error || 'Failed to update nickname.');
-      return;
     }
-
-    const prefRes = await updatePreferences({
-      bio: bioInput.trim(),
-      interests: selectedInterests,
-    });
-
-    setSaving(false);
-
-    if (!prefRes.success) {
-      setValidationError(prefRes.error || 'Failed to update identity profile.');
-      return;
-    }
-
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2500);
   };
 
   const handleSavePrivacy = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
+
     setSaving(true);
     setValidationError(null);
     setSaveSuccess(false);
-
-    const prefRes = await updatePreferences({
-      onlineVisibility,
-      allowDiscoverability,
-      allowDirectMessages: dmPolicy,
-      safeFilterEnabled: safeFilter,
-      notificationSounds: sounds,
-    });
-
-    setSaving(false);
-
-    if (!prefRes.success) {
-      setValidationError(prefRes.error || 'Failed to update privacy settings.');
-      return;
+    if (saveSuccessTimerRef.current) {
+      clearTimeout(saveSuccessTimerRef.current);
+      saveSuccessTimerRef.current = null;
     }
 
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2500);
+    try {
+      const prefRes = await updatePreferences({
+        onlineVisibility,
+        allowDiscoverability,
+        allowDirectMessages: dmPolicy,
+        safeFilterEnabled: safeFilter,
+        notificationSounds: sounds,
+      });
+
+      if (!prefRes.success) {
+        setValidationError(prefRes.error || 'Failed to update privacy settings.');
+        return;
+      }
+
+      setHasUnsavedPrivacyChanges(false);
+      setSaveSuccess(true);
+      saveSuccessTimerRef.current = setTimeout(() => setSaveSuccess(false), 2500);
+    } catch {
+      setValidationError('Unexpected error while saving privacy settings. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSelectAvatar = async (av: string) => {
+    if (saving) return;
+    setSaving(true);
+    setAvatarError(null);
+    setValidationError(null);
+    setSaveSuccess(false);
+    if (saveSuccessTimerRef.current) {
+      clearTimeout(saveSuccessTimerRef.current);
+      saveSuccessTimerRef.current = null;
+    }
+
+    try {
+      const res = await setAvatar(av);
+      if (!res.success) {
+        const msg = res.error || 'Failed to update avatar.';
+        setAvatarError(msg);
+        setValidationError(msg);
+        return;
+      }
+      setAvatarModalOpen(false);
+      setSaveSuccess(true);
+      saveSuccessTimerRef.current = setTimeout(() => setSaveSuccess(false), 2500);
+    } catch {
+      const msg = 'Unexpected error while updating avatar. Please try again.';
+      setAvatarError(msg);
+      setValidationError(msg);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleUnblock = async (targetId: string) => {
@@ -432,7 +511,10 @@ export const MemberDashboardPage: React.FC = () => {
             {/* Avatar with click to change */}
             <div className="relative group">
               <div
-                onClick={() => setAvatarModalOpen(true)}
+                onClick={() => {
+                  setAvatarError(null);
+                  setAvatarModalOpen(true);
+                }}
                 className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-rose-500 to-orange-400 flex items-center justify-center text-4xl shadow-md cursor-pointer group-hover:scale-105 transition-transform"
                 title="Click to change avatar"
               >
@@ -440,7 +522,10 @@ export const MemberDashboardPage: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={() => setAvatarModalOpen(true)}
+                onClick={() => {
+                  setAvatarError(null);
+                  setAvatarModalOpen(true);
+                }}
                 className="absolute -bottom-1 -right-1 p-1 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 shadow-sm cursor-pointer"
                 title="Change Avatar"
               >
@@ -655,7 +740,10 @@ export const MemberDashboardPage: React.FC = () => {
                   type="text"
                   required
                   value={nicknameInput}
-                  onChange={(e) => setNicknameInput(e.target.value)}
+                  onChange={(e) => {
+                    setNicknameInput(e.target.value);
+                    setHasUnsavedIdentityChanges(true);
+                  }}
                   placeholder="e.g. Dhaka_Explorer"
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-rose-500 font-semibold"
                 />
@@ -672,7 +760,15 @@ export const MemberDashboardPage: React.FC = () => {
                   <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-950/60 flex items-center justify-center text-xl font-bold">
                     {user.avatar || '⚡'}
                   </div>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => setAvatarModalOpen(true)}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setAvatarError(null);
+                      setAvatarModalOpen(true);
+                    }}
+                  >
                     Change Avatar
                   </Button>
                 </div>
@@ -686,7 +782,10 @@ export const MemberDashboardPage: React.FC = () => {
               <textarea
                 rows={3}
                 value={bioInput}
-                onChange={(e) => setBioInput(e.target.value)}
+                onChange={(e) => {
+                  setBioInput(e.target.value);
+                  setHasUnsavedIdentityChanges(true);
+                }}
                 placeholder="Share your interests, hobbies, and conversation style..."
                 maxLength={250}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-rose-500"
@@ -721,9 +820,9 @@ export const MemberDashboardPage: React.FC = () => {
             </div>
 
             <div className="pt-2 flex justify-end">
-              <Button type="submit" variant="primary" size="md" className="font-bold">
+              <Button type="submit" variant="primary" size="md" className="font-bold" disabled={saving}>
                 <Save className="w-4 h-4 mr-1.5" />
-                <span>Save Profile Changes</span>
+                <span>{saving ? (language === 'bn' ? 'সংরক্ষণ হচ্ছে...' : 'Saving...') : 'Save Profile Changes'}</span>
               </Button>
             </div>
           </form>
@@ -748,7 +847,10 @@ export const MemberDashboardPage: React.FC = () => {
                 </label>
                 <select
                   value={onlineVisibility}
-                  onChange={(e: any) => setOnlineVisibility(e.target.value)}
+                  onChange={(e: any) => {
+                    setOnlineVisibility(e.target.value);
+                    setHasUnsavedPrivacyChanges(true);
+                  }}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-rose-500 font-semibold"
                 >
                   <option value="online">Online (Visible in rooms & matchmaking)</option>
@@ -763,7 +865,10 @@ export const MemberDashboardPage: React.FC = () => {
                 </label>
                 <select
                   value={dmPolicy}
-                  onChange={(e: any) => setDmPolicy(e.target.value)}
+                  onChange={(e: any) => {
+                    setDmPolicy(e.target.value);
+                    setHasUnsavedPrivacyChanges(true);
+                  }}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-rose-500 font-semibold"
                 >
                   <option value="everyone">Allow DMs from Everyone</option>
@@ -778,7 +883,10 @@ export const MemberDashboardPage: React.FC = () => {
                 <input
                   type="checkbox"
                   checked={allowDiscoverability}
-                  onChange={(e) => setAllowDiscoverability(e.target.checked)}
+                  onChange={(e) => {
+                    setAllowDiscoverability(e.target.checked);
+                    setHasUnsavedPrivacyChanges(true);
+                  }}
                   className="w-4 h-4 mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
                 />
                 <div>
@@ -795,7 +903,10 @@ export const MemberDashboardPage: React.FC = () => {
                 <input
                   type="checkbox"
                   checked={safeFilter}
-                  onChange={(e) => setSafeFilter(e.target.checked)}
+                  onChange={(e) => {
+                    setSafeFilter(e.target.checked);
+                    setHasUnsavedPrivacyChanges(true);
+                  }}
                   className="w-4 h-4 mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
                 />
                 <div>
@@ -812,7 +923,10 @@ export const MemberDashboardPage: React.FC = () => {
                 <input
                   type="checkbox"
                   checked={sounds}
-                  onChange={(e) => setSounds(e.target.checked)}
+                  onChange={(e) => {
+                    setSounds(e.target.checked);
+                    setHasUnsavedPrivacyChanges(true);
+                  }}
                   className="w-4 h-4 mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
                 />
                 <div>
@@ -827,9 +941,9 @@ export const MemberDashboardPage: React.FC = () => {
             </div>
 
             <div className="pt-2 flex justify-end">
-              <Button type="submit" variant="primary" size="md" className="font-bold">
+              <Button type="submit" variant="primary" size="md" className="font-bold" disabled={saving}>
                 <Save className="w-4 h-4 mr-1.5" />
-                <span>Save Privacy Settings</span>
+                <span>{saving ? (language === 'bn' ? 'সংরক্ষণ হচ্ছে...' : 'Saving...') : 'Save Privacy Settings'}</span>
               </Button>
             </div>
           </form>
@@ -989,20 +1103,24 @@ export const MemberDashboardPage: React.FC = () => {
       {avatarModalOpen && (
         <Modal
           isOpen={avatarModalOpen}
-          onClose={() => setAvatarModalOpen(false)}
+          onClose={() => !saving && setAvatarModalOpen(false)}
           title="Choose Your Avatar"
           subtitle="Select an avatar icon for your profile and messages"
         >
+          {avatarError && (
+            <div className="mt-2 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-300 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+              <span>{avatarError}</span>
+            </div>
+          )}
           <div className="grid grid-cols-4 sm:grid-cols-6 gap-3 py-4">
             {GUEST_AVATARS.map((av) => (
               <button
                 type="button"
                 key={av}
-                onClick={() => {
-                  setAvatar(av);
-                  setAvatarModalOpen(false);
-                }}
-                className={`w-14 h-14 rounded-2xl text-2xl flex items-center justify-center transition-all cursor-pointer ${
+                disabled={saving}
+                onClick={() => handleSelectAvatar(av)}
+                className={`w-14 h-14 rounded-2xl text-2xl flex items-center justify-center transition-all cursor-pointer disabled:opacity-50 ${
                   user.avatar === av
                     ? 'bg-rose-100 dark:bg-rose-950 border-2 border-rose-500 scale-105 shadow-md'
                     : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'

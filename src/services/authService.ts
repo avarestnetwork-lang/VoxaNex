@@ -319,55 +319,119 @@ export const authService = {
   },
 
   /**
-   * Update user profile in public.profiles table
+   * Update user profile in public.profiles table via authenticated Worker audit layer.
+   * Fails closed if Supabase client or authenticated member session is unavailable.
    */
   async updateProfile(userId: string, updates: Partial<UserProfile>): Promise<{ success: boolean; error?: string }> {
     const supabase = getSupabaseClient();
-    if (!supabase) return { success: true };
+    if (!supabase) {
+      return {
+        success: false,
+        error: 'Database service is unavailable. Profile changes could not be saved.',
+      };
+    }
 
     try {
-      // Resolve active session token for authoritative audit
-      const { data: sessionData } = await supabase.auth.getSession();
+      // Resolve active session token for authoritative server-side verification
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
+      const sessionUserId = sessionData?.session?.user?.id;
 
-      if (!token) {
-        console.warn('[authService] Generic profile update failed: No active member session found.');
-        return { success: false, error: 'No active member session found. Please sign in again.' };
+      if (sessionError || !token) {
+        console.warn('[authService] Profile update aborted: No active member session found.');
+        return {
+          success: false,
+          error: 'Authentication required: No active member session found. Please sign in again.',
+        };
       }
 
-      // Generic profile update path must never attempt to modify trusted verification fields.
-      const { 
-        is18Verified: _ignored1, 
-        verifiedAt: _ignored2, 
-        verificationMethod: _ignored3, 
-        ...safeUpdates 
-      } = updates;
+      if (sessionUserId && userId && sessionUserId !== userId) {
+        console.warn('[authService] Profile update aborted: Session user mismatch.');
+        return {
+          success: false,
+          error: 'Authentication mismatch. Please sign in again.',
+        };
+      }
 
-      // Route via worker audit layer
+      // Build payload using only supported, non-privileged profile fields.
+      // Trusted verification fields and role fields must never be sent on generic profile updates.
+      const supportedUpdates: Record<string, unknown> = {};
+      if (updates.nickname !== undefined) supportedUpdates.nickname = updates.nickname;
+      if (updates.bio !== undefined) supportedUpdates.bio = updates.bio;
+      if (updates.avatar !== undefined) supportedUpdates.avatar = updates.avatar;
+      if (updates.safeFilterEnabled !== undefined) supportedUpdates.safeFilterEnabled = updates.safeFilterEnabled;
+      if (updates.notificationSounds !== undefined) supportedUpdates.notificationSounds = updates.notificationSounds;
+
+      // Route via authoritative Worker audit layer
       const res = await fetch('/api/auth/profile/update', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ updates: safeUpdates }),
+        body: JSON.stringify({ updates: supportedUpdates }),
       });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        const errMessage = errData.error || `Profile update failed (HTTP ${res.status}).`;
-        console.error(`[authService] Worker profile update audit failed:`, errMessage);
-        return { success: false, error: errMessage };
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
       }
 
-      const data = await res.json().catch(() => ({}));
-      if (data.success === true) {
-        return { success: true };
+      if (!res.ok) {
+        console.error(`[authService] Worker profile update failed (HTTP ${res.status}).`);
+        if (res.status === 401) {
+          return {
+            success: false,
+            error: 'Your session is invalid or has expired. Please sign in again.',
+          };
+        }
+        if (res.status === 403) {
+          return {
+            success: false,
+            error: 'Profile updates are restricted to registered members.',
+          };
+        }
+        if (res.status === 404) {
+          return {
+            success: false,
+            error: 'Profile record could not be found. Please sign in again.',
+          };
+        }
+        if (res.status === 400) {
+          return {
+            success: false,
+            error: 'Invalid profile update request. Please review your input and try again.',
+          };
+        }
+        if (res.status === 503) {
+          return {
+            success: false,
+            error: 'Profile persistence service is unavailable. Please try again later.',
+          };
+        }
+        return {
+          success: false,
+          error: 'Unable to save profile changes right now. Please try again.',
+        };
       }
-      return { success: false, error: data.error || 'Server did not confirm profile update.' };
-    } catch (err: any) {
+
+      if (!data || typeof data !== 'object' || data.success !== true) {
+        console.error('[authService] Worker returned non-confirming or malformed profile update response.');
+        return {
+          success: false,
+          error: 'Server did not confirm that profile changes were saved.',
+        };
+      }
+
+      return { success: true };
+    } catch (err) {
       console.error('[authService] Unexpected error during profile update audit:', err);
-      return { success: false, error: err?.message || 'Network error during profile update.' };
+      return {
+        success: false,
+        error: 'Network error while saving profile changes. Please check your connection and try again.',
+      };
     }
   },
 
