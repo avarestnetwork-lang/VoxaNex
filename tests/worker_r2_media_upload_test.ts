@@ -864,27 +864,177 @@ async function runSuite() {
       assert(!cacheControl.includes('public'), 'E9.1: Malformed conversation media never receives public cache headers');
     }
 
-    // E10: Object with malformed/unsupported metadataVersion rejected (400, no public cache)
+    // E10: Comprehensive metadataVersion enforcement tests
+    // E10.1: Missing metadataVersion rejected (400, no public cache, no body returned)
     {
-      const testKey = 'media/objects/med_bad_meta_version';
+      const testKey = 'media/objects/med_missing_meta_version';
       await mockR2.put(testKey, VALID_PNG_BYTES, {
         httpMetadata: { contentType: 'image/png' },
         customMetadata: {
-          mediaId: 'med_bad_meta_version',
+          mediaId: 'med_missing_meta_version',
           contextType: 'room',
           contextId: 'general',
-          metadataVersion: '99.0_incompatible',
+          // metadataVersion omitted entirely
         },
       });
 
-      const req = new Request('https://chatlustora.com/api/media/med_bad_meta_version', {
+      const req = new Request('https://chatlustora.com/api/media/med_missing_meta_version', {
         method: 'GET',
         headers: { 'Authorization': 'Bearer jwt_alice' },
       });
       const res = await worker.fetch(req, defaultEnv, {});
-      assert(res.status === 400, 'E10: Incompatible metadataVersion returns HTTP 400');
+      assert(res.status === 400, 'E10.1: Missing metadataVersion returns HTTP 400');
       const cacheControl = res.headers.get('Cache-Control') || '';
-      assert(!cacheControl.includes('public'), 'E10.1: Incompatible metadataVersion never receives public cache headers');
+      assert(!cacheControl.includes('public'), 'E10.1a: Missing metadataVersion never receives public cache headers');
+      const data: any = await res.json();
+      assert(data.success === false && data.error, 'E10.1b: Missing metadataVersion returns JSON error response');
+    }
+
+    // E10.2: null metadataVersion rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_null_meta_version';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_null_meta_version',
+          contextType: 'room',
+          contextId: 'general',
+          metadataVersion: null as any,
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_null_meta_version', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E10.2: Null metadataVersion returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E10.2a: Null metadataVersion never receives public cache headers');
+      const data: any = await res.json();
+      assert(data.success === false, 'E10.2b: Null metadataVersion returns JSON error');
+    }
+
+    // E10.3: Empty string metadataVersion rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_empty_meta_version';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_empty_meta_version',
+          contextType: 'room',
+          contextId: 'general',
+          metadataVersion: '',
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_empty_meta_version', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E10.3: Empty metadataVersion returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E10.3a: Empty metadataVersion never receives public cache headers');
+      const data: any = await res.json();
+      assert(data.success === false, 'E10.3b: Empty metadataVersion returns JSON error');
+    }
+
+    // E10.4: Whitespace-only metadataVersion rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_whitespace_meta_version';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_whitespace_meta_version',
+          contextType: 'room',
+          contextId: 'general',
+          metadataVersion: '     ',
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_whitespace_meta_version', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E10.4: Whitespace-only metadataVersion returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E10.4a: Whitespace metadataVersion never receives public cache headers');
+      const data: any = await res.json();
+      assert(data.success === false, 'E10.4b: Whitespace metadataVersion returns JSON error');
+    }
+
+    // E10.5: Numeric or other non-string metadataVersion rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_numeric_meta_version';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_numeric_meta_version',
+          contextType: 'room',
+          contextId: 'general',
+          metadataVersion: 1.2 as any,
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_numeric_meta_version', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E10.5: Numeric metadataVersion returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E10.5a: Numeric metadataVersion never receives public cache headers');
+      const data: any = await res.json();
+      assert(data.success === false, 'E10.5b: Numeric metadataVersion returns JSON error');
+    }
+
+    // E10.6: Unsupported/incompatible metadataVersion rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_unsupported_meta_version';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_unsupported_meta_version',
+          contextType: 'room',
+          contextId: 'general',
+          metadataVersion: '2.0',
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_unsupported_meta_version', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E10.6: Unsupported metadataVersion 2.0 returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E10.6a: Unsupported metadataVersion never receives public cache headers');
+      const data: any = await res.json();
+      assert(data.success === false, 'E10.6b: Unsupported metadataVersion returns JSON error');
+    }
+
+    // E10.7: Valid metadataVersion 1.2 succeeds for authorized room media
+    {
+      const testKey = 'media/objects/med_valid_meta_version';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_valid_meta_version',
+          contextType: 'room',
+          contextId: 'general',
+          metadataVersion: '1.2',
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_valid_meta_version', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 200, 'E10.7: Valid metadataVersion 1.2 returns HTTP 200');
+      assert(res.headers.get('Cache-Control') === 'public, max-age=86400', 'E10.7a: Public cache header set for valid 1.2 room media');
     }
 
     // -------------------------------------------------------------------------

@@ -1291,15 +1291,15 @@ export default {
           }, 400);
         }
 
-        // 3. Validate metadataVersion if present or required by storage contract
-        if (typeof meta.metadataVersion !== 'undefined') {
-          const metaVer = typeof meta.metadataVersion === 'string' ? meta.metadataVersion.trim() : '';
-          if (!metaVer || metaVer !== '1.2') {
-            return jsonResponse({
-              success: false,
-              error: 'Malformed or unsupported media metadata version.',
-            }, 400);
-          }
+        // 3. Mandatory metadata version enforcement (storage contract requires exactly '1.2')
+        if (
+          typeof meta.metadataVersion !== 'string' ||
+          meta.metadataVersion.trim() !== '1.2'
+        ) {
+          return jsonResponse({
+            success: false,
+            error: 'Malformed, missing, or unsupported media metadata version.',
+          }, 400);
         }
 
         // 4. Context-specific fail-closed authorization checks
