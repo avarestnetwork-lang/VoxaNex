@@ -13,6 +13,7 @@ interface AuthContextType {
   is18Verified: boolean;
   ageDeclarationAccepted: boolean;
   verify18: () => void;
+  declareAge18: () => Promise<{ success: boolean; error?: string }>;
   revoke18: () => void;
   setNickname: (nickname: string) => Promise<{ success: boolean; error?: string }>;
   setAvatar: (avatar: string) => Promise<{ success: boolean; error?: string }>;
@@ -325,6 +326,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
   };
 
+  const declareAge18 = async (): Promise<{ success: boolean; error?: string }> => {
+    const result = user.isGuest
+      ? await guestSessionService.declareAge18()
+      : await authService.declareAge18();
+
+    if (!result.success) {
+      return { success: false, error: result.error || 'Unable to save your 18+ declaration.' };
+    }
+
+    setUser((prev) => ({
+      ...prev,
+      ageDeclarationAccepted: true,
+      is18Verified: prev.isGuest ? false : prev.is18Verified,
+      verifiedAt: prev.isGuest ? undefined : prev.verifiedAt,
+      verificationMethod: prev.isGuest ? ('self_declaration' as const) : prev.verificationMethod,
+    }));
+    return { success: true };
+  };
+
   const revoke18 = () => {
     setUser((prev) => ({
       ...prev,
@@ -434,9 +454,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: false, error: res.error || 'Authentication failed' };
   };
 
-  const registerWithAccount = async (email: string, password: string, nickname: string, gender?: string) => {
+  const registerWithAccount = async (
+    email: string,
+    password: string,
+    nickname: string,
+    gender?: string,
+    ageDeclarationAccepted: boolean = false
+  ) => {
     isRecoveryModeRef.current = false;
-    const res = await authService.register(email, password, nickname, gender, user.languagePreference);
+    const res = await authService.register(
+      email,
+      password,
+      nickname,
+      gender,
+      user.languagePreference,
+      ageDeclarationAccepted
+    );
     if (res.success) {
       if (res.user) {
         ++restoreSeqRef.current;
@@ -597,6 +630,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginGuest,
         loginWithAccount,
         registerWithAccount,
+        declareAge18,
         requestPasswordReset,
         passwordRecoveryStatus,
         passwordRecoveryError,
