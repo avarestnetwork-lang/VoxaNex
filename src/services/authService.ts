@@ -184,7 +184,8 @@ export const authService = {
     password: string,
     nickname: string,
     gender: string = 'prefer_not_to_say',
-    languagePref: AppLanguage = 'en'
+    languagePref: AppLanguage = 'en',
+    ageDeclarationAccepted: boolean = false
   ): Promise<AuthResponse> {
     const supabase = getSupabaseClient();
     const sanitizedNick = nickname.trim().slice(0, 32) || email.split('@')[0] || 'User';
@@ -219,6 +220,8 @@ export const authService = {
             nickname: sanitizedNick,
             avatar_url: '🛡️',
             gender,
+            age_declaration_accepted: Boolean(ageDeclarationAccepted),
+            age_declaration_at: ageDeclarationAccepted ? new Date().toISOString() : null,
           },
         },
       });
@@ -298,6 +301,31 @@ export const authService = {
       // Retrieve full profile from database and merge auth metadata
       const profile = await this.getProfile(data.user.id, data.user);
       return { success: true, user: profile || undefined };
+    } catch (err: any) {
+      return { success: false, error: sanitizeAuthError(err) };
+    }
+  },
+
+  /**
+   * Persist the member's explicit 18+ self-declaration in Supabase Auth metadata.
+   * This is a declaration only and never sets trusted identity verification fields.
+   */
+  async declareAge18(): Promise<{ success: boolean; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return { success: false, error: 'Authentication service is unavailable.' };
+    }
+    try {
+      const { data, error } = await supabase.auth.updateUser({
+        data: {
+          age_declaration_accepted: true,
+          age_declaration_at: new Date().toISOString(),
+        },
+      });
+      if (error || !data.user?.id) {
+        return { success: false, error: sanitizeAuthError(error || new Error('Age declaration could not be saved.')) };
+      }
+      return { success: true };
     } catch (err: any) {
       return { success: false, error: sanitizeAuthError(err) };
     }
@@ -578,6 +606,7 @@ export const authService = {
                gender: user.user_metadata?.gender,
                isGuest: false,
                is18Verified: false,
+               ageDeclarationAccepted: Boolean(user.user_metadata?.age_declaration_accepted),
                languagePreference: 'en',
                safeFilterEnabled: true,
                notificationSounds: true,
@@ -598,6 +627,7 @@ export const authService = {
         bio: data.bio || '',
         isGuest: false,
         is18Verified: Boolean(data.is_18_verified),
+        ageDeclarationAccepted: Boolean(metadata.age_declaration_accepted),
         verifiedAt: data.verified_at,
         verificationMethod: data.verification_method,
         languagePreference: 'en',
