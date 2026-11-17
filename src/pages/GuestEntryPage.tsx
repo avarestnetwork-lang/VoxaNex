@@ -35,12 +35,14 @@ export const GuestEntryPage: React.FC = () => {
 
   const handleTabChange = (tab: 'guest' | 'login' | 'register') => {
     setActiveTab(tab);
+    const routeParams = targetRoom ? { targetRoom: targetRoom.slug } : undefined;
+
     if (tab === 'register') {
-      navigate('/user/register');
+      navigate('/user/register', routeParams);
     } else if (tab === 'login') {
-      navigate('/user/login');
+      navigate('/user/login', routeParams);
     } else {
-      navigate('/user/guest-entry');
+      navigate('/user/guest-entry', routeParams);
     }
   };
 
