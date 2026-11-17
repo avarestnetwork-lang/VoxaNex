@@ -8,6 +8,7 @@ import { Modal } from '../components/ui/Modal';
 import { AppLanguage, Room, UserGender } from '../types';
 import { User, Shuffle, ArrowRight, Check, Lock, Mail, ShieldAlert, AlertTriangle, Sparkles, CheckCircle2, Globe, Github } from 'lucide-react';
 import { SEOHead } from '../components/common/SEOHead';
+import { guestSessionService } from '../services/guestSessionService';
 
 export const GuestEntryPage: React.FC = () => {
   const { navigate, params, currentRoute } = useRouter();
@@ -331,7 +332,7 @@ export const GuestEntryPage: React.FC = () => {
     }
   };
 
-  const handleAuthenticatedAgeSubmit = (e: React.FormEvent) => {
+  const handleAuthenticatedAgeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const isNumericAge = /^\d+$/.test(age);
     const parsedAge = isNumericAge ? parseInt(age, 10) : NaN;
@@ -355,11 +356,29 @@ export const GuestEntryPage: React.FC = () => {
     }
 
     setGuestError(null);
-    verify18();
-    if (targetRoomSlug) {
-      navigate('/chat', { roomId: targetRoom?.slug || targetRoomSlug });
-    } else {
-      navigate('/user/dashboard');
+    setLoading(true);
+    try {
+      if (user.isGuest) {
+        const declaration = await guestSessionService.declareAge18();
+        if (!declaration.success) {
+          setGuestError(
+            declaration.error ||
+              (language === 'bn'
+                ? 'আপনার ১৮+ ঘোষণা সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।'
+                : 'Your 18+ declaration could not be saved. Please try again.')
+          );
+          return;
+        }
+      }
+
+      verify18();
+      if (targetRoomSlug) {
+        navigate('/chat', { roomId: targetRoom?.slug || targetRoomSlug });
+      } else {
+        navigate('/user/dashboard');
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
