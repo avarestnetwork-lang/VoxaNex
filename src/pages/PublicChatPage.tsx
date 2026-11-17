@@ -122,11 +122,15 @@ export const GenderBadge = ({ gender }: { gender?: string }) => {
 export const PublicChatPage: React.FC = () => {
   const { params, navigate } = useRouter();
   const { language, t } = useLanguage();
-  const { user, hasActiveSession, is18Verified, ageDeclarationAccepted } = useAuth();
+  const { user, hasActiveSession, isLoading, is18Verified, ageDeclarationAccepted } = useAuth();
   const { openChat, openWindows, minimizeChat, closeChat } = usePrivateChat();
 
   const currentRoomSlug = params.roomId || 'bangla';
   const activeRoom = ROOMS_CONFIG.find((r) => r.slug === currentRoomSlug) || ROOMS_CONFIG[0];
+  const hasAgeAccess = Boolean(
+    is18Verified || user.is18Verified || ageDeclarationAccepted || user.ageDeclarationAccepted
+  );
+  const canAccessRoom = !isLoading && hasActiveSession && (!activeRoom.is18Plus || hasAgeAccess);
 
   // Authoritative main view tab: 'room' for public group chat, or conversationId for maximized private chat
   const [activeMainTab, setActiveMainTab] = useState<'room' | string>('room');
@@ -158,15 +162,15 @@ export const PublicChatPage: React.FC = () => {
 
   // Mandatory Sign-In Gateway & 18+ Access Gate enforcement
   useEffect(() => {
+    if (isLoading) return;
     if (!hasActiveSession) {
       navigate('/user/guest-entry', { targetRoom: activeRoom.slug });
       return;
     }
-    const hasAgeAccess = Boolean(is18Verified || user.is18Verified || ageDeclarationAccepted || user.ageDeclarationAccepted);
     if (activeRoom.is18Plus && !hasAgeAccess) {
-      navigate('/user/guest-entry', { targetRoom: activeRoom.slug });
+      navigate('/age-gate', { targetRoom: activeRoom.slug });
     }
-  }, [hasActiveSession, activeRoom, is18Verified, user.is18Verified, ageDeclarationAccepted, user.ageDeclarationAccepted, navigate]);
+  }, [isLoading, hasActiveSession, activeRoom.slug, activeRoom.is18Plus, hasAgeAccess, navigate]);
 
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -255,6 +259,7 @@ export const PublicChatPage: React.FC = () => {
 
   // 1. Initial message history load with deduplication
   useEffect(() => {
+    if (!canAccessRoom) return;
     let cancel = false;
     async function loadHistory() {
       setLoadingHistory(true);
@@ -293,10 +298,11 @@ export const PublicChatPage: React.FC = () => {
     return () => {
       cancel = true;
     };
-  }, [activeRoom.id, language, scrollToBottom]);
+  }, [canAccessRoom, activeRoom.id, language, scrollToBottom]);
 
   // 2. Realtime SSE & Supabase Realtime stream subscription
   useEffect(() => {
+    if (!canAccessRoom) return;
     const unsubscribe = messagingService.subscribeToRoom(activeRoom.id, {
       onMessage: (newMsg) => {
         setMessages((prev) => {
@@ -373,11 +379,11 @@ export const PublicChatPage: React.FC = () => {
     return () => {
       unsubscribe();
     };
-  }, [activeRoom.id, user.nickname, scrollToBottom]);
+  }, [canAccessRoom, activeRoom.id, user.nickname, scrollToBottom]);
 
   // 3. Presence Tracking via Supabase Realtime Presence & HTTP fallback
   useEffect(() => {
-    if (!user.id) return;
+    if (!canAccessRoom || !user.id) return;
     let isMounted = true;
 
     // 1. Subscribe to true Supabase Realtime Presence if configured
@@ -433,7 +439,7 @@ export const PublicChatPage: React.FC = () => {
         messagingService.leaveRoom(activeRoom.id, user.id);
       }
     };
-  }, [activeRoom.id, user]);
+  }, [canAccessRoom, activeRoom.id, user]);
 
   // Handle typing input with mention autocomplete detection
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -741,6 +747,20 @@ export const PublicChatPage: React.FC = () => {
   const filteredMembers = onlineMembers.filter((m) =>
     m.nickname.toLowerCase().includes(userSearchQuery.toLowerCase())
   );
+
+  if (!canAccessRoom) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center px-4">
+        <div className="text-sm text-slate-400 font-medium">
+          {isLoading
+            ? 'Validating session...'
+            : !hasActiveSession
+            ? 'Redirecting to room entry...'
+            : 'Redirecting to 18+ age confirmation...'}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-full overflow-x-hidden min-h-[calc(100vh-5.5rem)] flex flex-col">

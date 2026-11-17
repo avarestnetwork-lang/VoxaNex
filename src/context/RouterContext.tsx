@@ -171,9 +171,21 @@ export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const handlePopState = () => {
+    const handlePopState = (event: PopStateEvent) => {
       const current = window.location.pathname;
-      setRouteState(parsePath(current));
+      const parsed = parsePath(current);
+      const historyParams: Record<string, string> = {};
+      if (event.state && typeof event.state === 'object') {
+        for (const [key, val] of Object.entries(event.state as Record<string, unknown>)) {
+          if (typeof val === 'string') {
+            historyParams[key] = val;
+          }
+        }
+      }
+      setRouteState({
+        route: parsed.route,
+        params: { ...parsed.params, ...historyParams },
+      });
     };
 
     window.addEventListener('popstate', handlePopState);

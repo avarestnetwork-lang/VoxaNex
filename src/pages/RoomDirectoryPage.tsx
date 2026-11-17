@@ -25,10 +25,32 @@ import {
   Users,
 } from 'lucide-react';
 
+export interface RoomJoinNavigationDecision {
+  route: '/chat' | '/age-gate' | '/user/guest-entry';
+  params: Record<string, string>;
+}
+
+export function resolveRoomJoinNavigation(params: {
+  roomSlug: string;
+  roomIs18Plus: boolean;
+  hasActiveSession: boolean;
+  isLoading: boolean;
+  hasAgeAccess: boolean;
+}): RoomJoinNavigationDecision | null {
+  if (params.isLoading) return null;
+  if (params.hasActiveSession) {
+    if (params.roomIs18Plus && !params.hasAgeAccess) {
+      return { route: '/age-gate', params: { targetRoom: params.roomSlug } };
+    }
+    return { route: '/chat', params: { roomId: params.roomSlug } };
+  }
+  return { route: '/user/guest-entry', params: { targetRoom: params.roomSlug } };
+}
+
 export const RoomDirectoryPage: React.FC = () => {
   const { navigate } = useRouter();
   const { language, t } = useLanguage();
-  const { is18Verified, ageDeclarationAccepted, user } = useAuth();
+  const { hasActiveSession, isLoading, is18Verified, ageDeclarationAccepted, user } = useAuth();
   const hasAgeAccess = Boolean(is18Verified || user?.is18Verified || ageDeclarationAccepted || user?.ageDeclarationAccepted);
 
   const [rooms, setRooms] = useState<Room[]>(ROOMS_CONFIG);
@@ -119,7 +141,16 @@ export const RoomDirectoryPage: React.FC = () => {
   }, [rooms, searchQuery, selectedCategory, selectedMode, selectedLanguage, selectedRegion, language]);
 
   const handleJoin = (room: Room) => {
-    navigate('/user/guest-entry', { targetRoom: room.slug });
+    const decision = resolveRoomJoinNavigation({
+      roomSlug: room.slug,
+      roomIs18Plus: room.is18Plus,
+      hasActiveSession,
+      isLoading,
+      hasAgeAccess,
+    });
+    if (!decision) return;
+    setInspectingRoom(null);
+    navigate(decision.route, decision.params);
   };
 
   return (

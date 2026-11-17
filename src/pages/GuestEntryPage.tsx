@@ -12,11 +12,31 @@ import { SEOHead } from '../components/common/SEOHead';
 export const GuestEntryPage: React.FC = () => {
   const { navigate, params, currentRoute } = useRouter();
   const { language, setLanguage, t } = useLanguage();
-  const { user, loginGuest, setAvatar, loginWithAccount, registerWithAccount, requestPasswordReset, isSupabaseActive, verify18 } = useAuth();
+  const {
+    user,
+    hasActiveSession,
+    isLoading,
+    is18Verified,
+    ageDeclarationAccepted,
+    loginGuest,
+    setAvatar,
+    loginWithAccount,
+    registerWithAccount,
+    requestPasswordReset,
+    verify18,
+    revoke18,
+  } = useAuth();
 
   // Determine target room from params
   const targetRoomSlug = params.targetRoom || params.roomId;
   const targetRoom: Room | undefined = ROOMS_CONFIG.find((r) => r.slug === targetRoomSlug);
+  const hasAgeAccess = Boolean(
+    is18Verified || user.is18Verified || ageDeclarationAccepted || user.ageDeclarationAccepted
+  );
+  const effectiveTargetIs18Plus = targetRoom ? targetRoom.is18Plus : Boolean(targetRoomSlug);
+  const requiresAuthenticatedAgeGate =
+    hasActiveSession &&
+    (currentRoute === '/age-gate' || (Boolean(targetRoomSlug) && effectiveTargetIs18Plus && !hasAgeAccess));
 
   // Mode tabs: 'guest' | 'login' | 'register'
   const getTabFromRoute = (route: string): 'guest' | 'login' | 'register' => {
@@ -33,14 +53,23 @@ export const GuestEntryPage: React.FC = () => {
     setActiveTab(getTabFromRoute(currentRoute));
   }, [currentRoute]);
 
+  // Redirect already-authenticated sessions directly to permitted target room
+  React.useEffect(() => {
+    if (isLoading || !hasActiveSession || !targetRoomSlug) return;
+    if (!effectiveTargetIs18Plus || hasAgeAccess) {
+      navigate('/chat', { roomId: targetRoom?.slug || targetRoomSlug });
+    }
+  }, [isLoading, hasActiveSession, targetRoomSlug, targetRoom?.slug, effectiveTargetIs18Plus, hasAgeAccess, navigate]);
+
   const handleTabChange = (tab: 'guest' | 'login' | 'register') => {
     setActiveTab(tab);
+    const nextParams = targetRoomSlug ? { targetRoom: targetRoomSlug } : undefined;
     if (tab === 'register') {
-      navigate('/user/register');
+      navigate('/user/register', nextParams);
     } else if (tab === 'login') {
-      navigate('/user/login');
+      navigate('/user/login', nextParams);
     } else {
-      navigate('/user/guest-entry');
+      navigate('/user/guest-entry', nextParams);
     }
   };
 
@@ -141,13 +170,13 @@ export const GuestEntryPage: React.FC = () => {
     }
     setAvatar(selectedAvatar);
 
-    if (targetRoom?.is18Plus || adultConfirmed) {
+    if (adultConfirmed) {
       verify18();
     }
 
-    // Navigate to target room or room directory
-    if (targetRoom) {
-      navigate('/chat', { roomId: targetRoom.slug });
+    // Navigate to target room or dashboard
+    if (targetRoomSlug) {
+      navigate('/chat', { roomId: targetRoom?.slug || targetRoomSlug });
     } else {
       navigate('/user/dashboard');
     }
@@ -196,6 +225,13 @@ export const GuestEntryPage: React.FC = () => {
         setAccountError(language === 'bn' ? 'আপনাকে কমিউনিটি আচরণবিধি মেনে চলতে হবে।' : 'Please accept the safety pledge.');
         return;
       }
+    } else if (effectiveTargetIs18Plus && !adultConfirmed) {
+      setAccountError(
+        language === 'bn'
+          ? 'চ্যাটলুস্টোরায় প্রবেশের পূর্বে আপনার বয়স ১৮ বা তার বেশি নিশ্চিত করে ঘোষণা দিন।'
+          : 'You must confirm you are 18 years of age or older to enter ChatLustora.'
+      );
+      return;
     }
 
     setLoading(true);
@@ -230,13 +266,13 @@ export const GuestEntryPage: React.FC = () => {
         }
       }
 
-      if (targetRoom?.is18Plus || adultConfirmed) {
+      if (adultConfirmed) {
         verify18();
       }
 
       setLoading(false);
-      if (targetRoom) {
-        navigate('/chat', { roomId: targetRoom.slug });
+      if (targetRoomSlug) {
+        navigate('/chat', { roomId: targetRoom?.slug || targetRoomSlug });
       } else {
         navigate('/user/dashboard');
       }
@@ -295,25 +331,207 @@ export const GuestEntryPage: React.FC = () => {
     }
   };
 
+  const handleAuthenticatedAgeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const isNumericAge = /^\d+$/.test(age);
+    const parsedAge = isNumericAge ? parseInt(age, 10) : NaN;
+
+    if (!age || !isNumericAge || isNaN(parsedAge) || parsedAge < 18 || parsedAge > 120) {
+      setGuestError(
+        language === 'bn'
+          ? 'অনুগ্রহ করে একটি বৈধ বয়স প্রদান করুন (১৮-১২০ এর মধ্যে এবং শুধুমাত্র সংখ্যা)।'
+          : 'Please provide a valid age (between 18 and 120, whole numbers only).'
+      );
+      return;
+    }
+
+    if (!adultConfirmed) {
+      setGuestError(
+        language === 'bn'
+          ? 'চ্যাটলুস্টোরায় প্রবেশের পূর্বে আপনার বয়স ১৮ বা তার বেশি নিশ্চিত করে ঘোষণা দিন।'
+          : 'You must confirm you are 18 years of age or older to enter ChatLustora.'
+      );
+      return;
+    }
+
+    setGuestError(null);
+    verify18();
+    if (targetRoomSlug) {
+      navigate('/chat', { roomId: targetRoom?.slug || targetRoomSlug });
+    } else {
+      navigate('/user/dashboard');
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="max-w-xl mx-auto px-4 sm:px-6 py-12">
+        <div className="p-8 rounded-2xl border border-slate-800 bg-[#0d1322] text-center text-sm text-slate-400">
+          Validating active session...
+        </div>
+      </div>
+    );
+  }
+
+  if (requiresAuthenticatedAgeGate) {
+    return (
+      <div className="max-w-xl mx-auto px-4 sm:px-6 py-12">
+        <SEOHead
+          title={language === 'bn' ? '১৮+ বয়স নিশ্চিতকরণ – ChatLustora' : '18+ Age Confirmation – ChatLustora'}
+          description="Confirm 18+ age eligibility for your active ChatLustora session."
+          canonicalPath="/age-gate"
+          noindex={true}
+        />
+        <div className="p-6 sm:p-8 rounded-2xl border border-slate-800 bg-[#0d1322] shadow-2xl space-y-6">
+          {targetRoomSlug && (
+            <div className="p-3.5 rounded-xl bg-orange-950/30 border border-orange-800/50 flex items-center justify-between text-xs text-orange-200">
+              <div className="flex items-center gap-2">
+                <span className="text-base select-none">💬</span>
+                <div>
+                  <span className="font-bold text-white block">
+                    {targetRoom
+                      ? language === 'bn'
+                        ? `রুম: ${targetRoom.name.bn}`
+                        : `Joining: ${targetRoom.name.en}`
+                      : `Joining: ${targetRoomSlug}`}
+                  </span>
+                  <span className="text-[11px] text-orange-300">18+ Adult Gated Lounge</span>
+                </div>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-950/60 border border-rose-800 text-rose-300">
+                18+ Only
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between p-3.5 rounded-xl bg-[#101728] border border-slate-800 text-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="text-lg select-none">{user.avatar || '👤'}</span>
+              <div>
+                <div className="font-bold text-white">{user.nickname}</div>
+                <div className="text-[11px] text-emerald-400">
+                  {user.isGuest ? 'Active Guest Session' : 'Signed In Member Session'}
+                </div>
+              </div>
+            </div>
+            <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
+          </div>
+
+          {!hasAgeAccess ? (
+            <form onSubmit={handleAuthenticatedAgeSubmit} className="space-y-4">
+              <div className="space-y-1">
+                <h1 className="text-xl font-bold text-white">
+                  {language === 'bn' ? '১৮+ বয়স নিশ্চিতকরণ প্রয়োজন' : '18+ Age Confirmation Required'}
+                </h1>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  {language === 'bn'
+                    ? 'আপনার বর্তমান সেশনটি সক্রিয় রয়েছে। ১৮+ রুমে প্রবেশ করতে কেবল বয়স নিশ্চিত করুন।'
+                    : 'Your existing session is preserved. Confirm your 18+ age eligibility below to continue directly into the room.'}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                  {language === 'bn' ? 'বয়স (বছর)' : 'Age (Years)'}
+                </label>
+                <input
+                  type="number"
+                  required
+                  min={18}
+                  max={120}
+                  value={age}
+                  onChange={(e) => {
+                    setAge(e.target.value);
+                    setGuestError(null);
+                  }}
+                  className="w-full bg-[#101728] border border-slate-800 rounded-lg px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-rose-950 bg-rose-950/20 space-y-2">
+                <div className="flex items-center gap-1.5 text-rose-300 text-xs font-semibold">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>18+ Age Eligibility Requirement</span>
+                </div>
+                <label className="flex items-start gap-2.5 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={adultConfirmed}
+                    onChange={(e) => {
+                      setAdultConfirmed(e.target.checked);
+                      setGuestError(null);
+                    }}
+                    className="w-4 h-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-rose-600 focus:ring-rose-500"
+                  />
+                  <span className="text-xs text-slate-200">
+                    I confirm under penalty of platform ban that I am 18 years of age or older.
+                  </span>
+                </label>
+              </div>
+
+              {guestError && (
+                <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900 text-xs text-rose-300">
+                  {guestError}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3">
+                <Button type="button" variant="outline" size="md" onClick={() => navigate('/rooms')}>
+                  Back to Rooms
+                </Button>
+                <Button type="submit" variant="primary" size="md" fullWidth>
+                  <span>{targetRoom ? `Confirm & Join ${targetRoom.name.en}` : 'Confirm 18+ Eligibility'}</span>
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-xl border border-emerald-900/60 bg-emerald-950/20 text-xs text-emerald-200 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Your active session already has 18+ age confirmation enabled.</span>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button type="button" variant="primary" size="sm" onClick={() => navigate('/rooms')}>
+                  Browse Public Rooms
+                </Button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => navigate('/user/dashboard')}>
+                  Go to Dashboard
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => revoke18()}>
+                  Revoke 18+ Declaration
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-xl mx-auto px-4 sm:px-6 py-12">
       <div className="p-6 sm:p-8 rounded-2xl border border-slate-800 bg-[#0d1322] shadow-2xl space-y-6">
         
         {/* Target Room Destination Banner if joining a specific room */}
-        {targetRoom && (
+        {(targetRoom || targetRoomSlug) && (
           <div className="p-3.5 rounded-xl bg-orange-950/30 border border-orange-800/50 flex items-center justify-between text-xs text-orange-200">
             <div className="flex items-center gap-2">
               <span className="text-base select-none">💬</span>
               <div>
                 <span className="font-bold text-white block">
-                  {language === 'bn' ? `রুম: ${targetRoom.name.bn}` : `Joining: ${targetRoom.name.en}`}
+                  {targetRoom
+                    ? language === 'bn'
+                      ? `রুম: ${targetRoom.name.bn}`
+                      : `Joining: ${targetRoom.name.en}`
+                    : `Joining: ${targetRoomSlug}`}
                 </span>
                 <span className="text-[11px] text-orange-300">
-                  {targetRoom.is18Plus ? '18+ Adult Gated Lounge' : 'General Community Lounge'}
+                  {effectiveTargetIs18Plus ? '18+ Adult Gated Lounge' : 'General Community Lounge'}
                 </span>
               </div>
             </div>
-            {targetRoom.is18Plus && (
+            {effectiveTargetIs18Plus && (
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-950/60 border border-rose-800 text-rose-300">
                 18+ Only
               </span>
@@ -535,7 +753,13 @@ export const GuestEntryPage: React.FC = () => {
             )}
 
             <Button type="submit" variant="primary" size="lg" fullWidth>
-              <span>{targetRoom ? `Join ${targetRoom.name.en}` : 'Enter Chat Lounge'}</span>
+              <span>
+                {targetRoom
+                  ? `Join ${targetRoom.name.en}`
+                  : targetRoomSlug
+                  ? `Join ${targetRoomSlug}`
+                  : 'Enter Chat Lounge'}
+              </span>
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </form>
@@ -652,7 +876,7 @@ export const GuestEntryPage: React.FC = () => {
             </div>
 
             {/* Adult Confirmation Checkbox (Always required for ChatLustora 18+ adult community / Registration) */}
-            {(activeTab === 'register' || targetRoom?.is18Plus) && (
+            {(activeTab === 'register' || (Boolean(targetRoomSlug) && effectiveTargetIs18Plus)) && (
               <div className="p-3.5 rounded-xl border border-rose-950 bg-rose-950/20 space-y-2">
                 <div className="flex items-center gap-1.5 text-rose-300 text-xs font-semibold">
                   <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
