@@ -108,14 +108,26 @@ export const ProfileSettingsPage: React.FC = () => {
     return true;
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateNickname(nicknameInput)) {
       return;
     }
 
-    setNickname(nicknameInput.trim());
-    updatePreferences({
+    setSaving(true);
+    setValidationError(null);
+    setSaveSuccess(false);
+
+    const nickRes = await setNickname(nicknameInput.trim());
+    if (!nickRes.success) {
+      setSaving(false);
+      setValidationError(nickRes.error || 'Failed to update nickname.');
+      return;
+    }
+
+    const prefRes = await updatePreferences({
       bio: bioInput.trim(),
       interests: selectedInterests,
       onlineVisibility,
@@ -124,6 +136,13 @@ export const ProfileSettingsPage: React.FC = () => {
       safeFilterEnabled: safeFilter,
       notificationSounds: sounds,
     });
+
+    setSaving(false);
+
+    if (!prefRes.success) {
+      setValidationError(prefRes.error || 'Failed to update profile preferences.');
+      return;
+    }
 
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
@@ -300,7 +319,12 @@ export const ProfileSettingsPage: React.FC = () => {
                   <button
                     key={av}
                     type="button"
-                    onClick={() => setAvatar(av)}
+                    onClick={async () => {
+                      const res = await setAvatar(av);
+                      if (!res.success) {
+                        setValidationError(res.error || 'Failed to update avatar.');
+                      }
+                    }}
                     className={`h-9 rounded-lg flex items-center justify-center text-base border transition-all ${
                       user.avatar === av
                         ? 'border-cyan-400 bg-cyan-950/40 text-cyan-300'

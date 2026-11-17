@@ -12,8 +12,8 @@ interface AuthContextType {
   ageDeclarationAccepted: boolean;
   verify18: () => void;
   revoke18: () => void;
-  setNickname: (nickname: string) => void;
-  setAvatar: (avatar: string) => void;
+  setNickname: (nickname: string) => Promise<{ success: boolean; error?: string }>;
+  setAvatar: (avatar: string) => Promise<{ success: boolean; error?: string }>;
   loginGuest: (nickname?: string, lang?: AppLanguage, gender?: string, ageDeclarationAccepted?: boolean) => Promise<{ success: boolean; error?: string }>;
   loginWithAccount: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   registerWithAccount: (
@@ -25,7 +25,7 @@ interface AuthContextType {
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
   deleteAccount: () => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<{ success: boolean; error?: string }>;
-  updatePreferences: (prefs: Partial<UserProfile>) => Promise<void>;
+  updatePreferences: (prefs: Partial<UserProfile>) => Promise<{ success: boolean; error?: string }>;
   isSupabaseActive: boolean;
   hasPermission: (featureId: 'PROFILE_EDIT' | 'ACCOUNT_SETTINGS' | 'PRIVATE_DM' | 'PUBLIC_CHAT' | 'VOICE_VIDEO') => boolean;
 }
@@ -254,26 +254,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
   };
 
-  const setNickname = (nickname: string) => {
+  const setNickname = async (nickname: string): Promise<{ success: boolean; error?: string }> => {
     const clean = nickname.trim().slice(0, 24);
-    if (!clean) return;
-    setUser(prev => {
-      const updated = { ...prev, nickname: clean };
-      if (!prev.isGuest && isSupabaseActive) {
-        authService.updateProfile(prev.id, { nickname: clean });
+    if (!clean) return { success: false, error: 'Nickname cannot be empty.' };
+
+    if (!user.isGuest && isSupabaseActive) {
+      const res = await authService.updateProfile(user.id, { nickname: clean });
+      if (!res.success) {
+        return res;
       }
-      return updated;
-    });
+    }
+
+    setUser(prev => ({ ...prev, nickname: clean }));
+    return { success: true };
   };
 
-  const setAvatar = (avatar: string) => {
-    setUser(prev => {
-      const updated = { ...prev, avatar };
-      if (!prev.isGuest && isSupabaseActive) {
-        authService.updateProfile(prev.id, { avatar });
+  const setAvatar = async (avatar: string): Promise<{ success: boolean; error?: string }> => {
+    if (!user.isGuest && isSupabaseActive) {
+      const res = await authService.updateProfile(user.id, { avatar });
+      if (!res.success) {
+        return res;
       }
-      return updated;
-    });
+    }
+
+    setUser(prev => ({ ...prev, avatar }));
+    return { success: true };
   };
 
   const loginGuest = async (
@@ -447,14 +452,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  const updatePreferences = async (prefs: Partial<UserProfile>) => {
-    setUser(prev => {
-      const updated = { ...prev, ...prefs };
-      if (!prev.isGuest && isSupabaseActive) {
-        authService.updateProfile(prev.id, prefs);
+  const updatePreferences = async (prefs: Partial<UserProfile>): Promise<{ success: boolean; error?: string }> => {
+    if (!user.isGuest && isSupabaseActive) {
+      const res = await authService.updateProfile(user.id, prefs);
+      if (!res.success) {
+        return res;
       }
-      return updated;
-    });
+    }
+
+    setUser(prev => ({
+      ...prev,
+      ...prefs,
+    }));
+    return { success: true };
   };
 
   const hasPermission = (featureId: string): boolean => {

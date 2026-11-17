@@ -321,9 +321,9 @@ export const authService = {
   /**
    * Update user profile in public.profiles table
    */
-  async updateProfile(userId: string, updates: Partial<UserProfile>): Promise<boolean> {
+  async updateProfile(userId: string, updates: Partial<UserProfile>): Promise<{ success: boolean; error?: string }> {
     const supabase = getSupabaseClient();
-    if (!supabase) return false;
+    if (!supabase) return { success: true };
 
     try {
       // Resolve active session token for authoritative audit
@@ -332,7 +332,7 @@ export const authService = {
 
       if (!token) {
         console.warn('[authService] Generic profile update failed: No active member session found.');
-        return false;
+        return { success: false, error: 'No active member session found. Please sign in again.' };
       }
 
       // Generic profile update path must never attempt to modify trusted verification fields.
@@ -354,15 +354,20 @@ export const authService = {
       });
 
       if (!res.ok) {
-        console.error(`[authService] Worker profile update audit failed (HTTP ${res.status}).`);
-        return false;
+        const errData = await res.json().catch(() => ({}));
+        const errMessage = errData.error || `Profile update failed (HTTP ${res.status}).`;
+        console.error(`[authService] Worker profile update audit failed:`, errMessage);
+        return { success: false, error: errMessage };
       }
 
       const data = await res.json().catch(() => ({}));
-      return data.success === true;
-    } catch (err) {
+      if (data.success === true) {
+        return { success: true };
+      }
+      return { success: false, error: data.error || 'Server did not confirm profile update.' };
+    } catch (err: any) {
       console.error('[authService] Unexpected error during profile update audit:', err);
-      return false;
+      return { success: false, error: err?.message || 'Network error during profile update.' };
     }
   },
 

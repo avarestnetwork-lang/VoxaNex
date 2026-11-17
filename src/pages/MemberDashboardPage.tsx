@@ -207,31 +207,61 @@ export const MemberDashboardPage: React.FC = () => {
     return true;
   };
 
-  const handleSaveIdentity = (e: React.FormEvent) => {
+  const [saving, setSaving] = useState(false);
+
+  const handleSaveIdentity = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateNickname(nicknameInput)) {
       return;
     }
 
-    setNickname(nicknameInput.trim());
-    updatePreferences({
+    setSaving(true);
+    setValidationError(null);
+    setSaveSuccess(false);
+
+    const nickRes = await setNickname(nicknameInput.trim());
+    if (!nickRes.success) {
+      setSaving(false);
+      setValidationError(nickRes.error || 'Failed to update nickname.');
+      return;
+    }
+
+    const prefRes = await updatePreferences({
       bio: bioInput.trim(),
       interests: selectedInterests,
     });
+
+    setSaving(false);
+
+    if (!prefRes.success) {
+      setValidationError(prefRes.error || 'Failed to update identity profile.');
+      return;
+    }
 
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
   };
 
-  const handleSavePrivacy = (e: React.FormEvent) => {
+  const handleSavePrivacy = async (e: React.FormEvent) => {
     e.preventDefault();
-    updatePreferences({
+    setSaving(true);
+    setValidationError(null);
+    setSaveSuccess(false);
+
+    const prefRes = await updatePreferences({
       onlineVisibility,
       allowDiscoverability,
       allowDirectMessages: dmPolicy,
       safeFilterEnabled: safeFilter,
       notificationSounds: sounds,
     });
+
+    setSaving(false);
+
+    if (!prefRes.success) {
+      setValidationError(prefRes.error || 'Failed to update privacy settings.');
+      return;
+    }
 
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
