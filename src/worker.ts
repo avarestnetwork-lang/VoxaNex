@@ -2,6 +2,7 @@ import { databaseService } from './services/databaseService';
 import { getSupabaseClientFromEnv } from './lib/supabaseClient';
 import { ROOMS_CONFIG } from './config/voxanexConfig';
 import bcrypt from 'bcryptjs';
+import { validateMediaBinary, validateMediaFileMetadata } from './lib/mediaValidation';
 
 /**
  * ChatLustora Cloudflare Workers Edge Entrypoint
@@ -866,6 +867,248 @@ export default {
         });
       } catch (err) {
         console.warn('Backend proxy unreachable, falling back to edge worker logic', err);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // R2 MEDIA UPLOAD, VALIDATION & SECURE RETRIEVAL ENDPOINTS (PHASE 1.1)
+    // -------------------------------------------------------------------------
+
+    // POST /api/media/upload/validate
+    if (url.pathname === '/api/media/upload/validate' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      try {
+        const body: any = await request.json().catch(() => ({}));
+        const { fileName, fileSize, mimeType } = body;
+        const meta = validateMediaFileMetadata({
+          fileName,
+          fileSize: Number(fileSize),
+          mimeType,
+          inferMimeFromExtIfEmpty: true,
+        });
+        return jsonResponse(meta, meta.valid ? 200 : 400);
+      } catch (err: any) {
+        return jsonResponse({ valid: false, error: 'Invalid validation request payload.' }, 400);
+      }
+    }
+
+    // POST /api/media/upload
+    if (url.pathname === '/api/media/upload' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      if (!env?.CHAT_MEDIA) {
+        return jsonResponse({
+          success: false,
+          error: 'R2 storage binding CHAT_MEDIA is not configured in Cloudflare Worker environment.',
+        }, 503);
+      }
+
+      try {
+        let fileBytes: Uint8Array | null = null;
+        let fileName = 'attachment.bin';
+        let fileSize = 0;
+        let mimeType = 'application/octet-stream';
+        let contextType = 'room';
+        let contextId = 'general';
+
+        const contentTypeHeader = request.headers.get('content-type') || '';
+        if (contentTypeHeader.includes('multipart/form-data')) {
+          const formData = await request.formData();
+          const fileField = formData.get('file');
+          if (fileField instanceof File) {
+            fileName = fileField.name;
+            fileSize = fileField.size;
+            mimeType = fileField.type || 'application/octet-stream';
+            const arrayBuf = await fileField.arrayBuffer();
+            fileBytes = new Uint8Array(arrayBuf);
+          }
+          contextType = (formData.get('contextType') as string) || 'room';
+          contextId = (formData.get('contextId') as string) || 'general';
+        } else {
+          const body: any = await request.json().catch(() => ({}));
+          fileName = body.fileName || 'attachment.bin';
+          mimeType = body.mimeType || 'application/octet-stream';
+          contextType = body.contextType || 'room';
+          contextId = body.contextId || 'general';
+          if (body.base64Data) {
+            const binStr = atob(body.base64Data);
+            fileBytes = new Uint8Array(binStr.length);
+            for (let i = 0; i < binStr.length; i++) {
+              fileBytes[i] = binStr.charCodeAt(i);
+            }
+            fileSize = fileBytes.byteLength;
+          }
+        }
+
+        if (!fileBytes || fileBytes.byteLength === 0) {
+          return jsonResponse({ success: false, error: 'No file data provided in upload request.' }, 400);
+        }
+
+        // Binary signature validation
+        const binValidation = validateMediaBinary({
+          fileName,
+          mimeType,
+          bytes: fileBytes,
+        });
+
+        if (!binValidation.valid || !binValidation.canonicalMime || !binValidation.extension || !binValidation.chatMediaType) {
+          return jsonResponse({ success: false, error: binValidation.error || 'Binary validation failed.' }, 400);
+        }
+
+        // Conversation authorization check if contextType is conversation
+        if (contextType === 'conversation') {
+          if (baseSupabaseUrl && supabaseServiceKey) {
+            const partsUrl = `${baseSupabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(contextId)}&select=user_id,guest_id`;
+            const partsRes = await fetch(partsUrl, {
+              headers: {
+                'apikey': supabaseServiceKey,
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+            });
+            if (partsRes.ok) {
+              const rows: any[] = await partsRes.json().catch(() => []);
+              const isParticipant = Array.isArray(rows) && rows.some(r => r.user_id === authResult.verifiedUserId || r.guest_id === authResult.verifiedUserId);
+              if (!isParticipant) {
+                return jsonResponse({ success: false, error: 'Unauthorized: Caller is not a participant in this conversation.' }, 403);
+              }
+            }
+          }
+        }
+
+        const uploadId = `med_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+        const categoryFolder = binValidation.category === 'image' ? 'images' : 'audio';
+        const objectKey = `media/${categoryFolder}/${uploadId}.${binValidation.extension}`;
+
+        const customMetadata = {
+          mediaId: uploadId,
+          contextType,
+          contextId,
+          ownerType: authResult.isGuestCaller ? 'guest' : 'member',
+          ownerId: authResult.verifiedUserId,
+          canonicalMime: binValidation.canonicalMime,
+          originalFileName: binValidation.sanitizedOriginalName || fileName,
+          fileSize: String(fileBytes.byteLength),
+          uploadedAt: new Date().toISOString(),
+          metadataVersion: '1.1',
+        };
+
+        await env.CHAT_MEDIA.put(objectKey, fileBytes, {
+          httpMetadata: {
+            contentType: binValidation.canonicalMime,
+          },
+          customMetadata,
+        });
+
+        const sanitizedUrl = `/api/media/${uploadId}`;
+        const mediaAsset = {
+          uploadId,
+          url: sanitizedUrl,
+          mediaType: binValidation.chatMediaType,
+          mimeType: binValidation.canonicalMime,
+          fileName: `${uploadId}.${binValidation.extension}`,
+          fileSize: fileBytes.byteLength,
+        };
+
+        return jsonResponse({
+          success: true,
+          media: mediaAsset,
+        }, 200);
+      } catch (err: any) {
+        console.error('[Worker] R2 Media Upload Error:', err);
+        return jsonResponse({ success: false, error: err?.message || 'Internal error uploading media to R2 storage.' }, 500);
+      }
+    }
+
+    // GET /api/media/:id
+    const mediaGetMatch = url.pathname.match(/^\/api\/media\/([a-zA-Z0-9._-]+)$/);
+    if (mediaGetMatch && request.method === 'GET') {
+      const mediaIdOrFileName = mediaGetMatch[1];
+      const cleanId = mediaIdOrFileName.split('.')[0];
+
+      if (!env?.CHAT_MEDIA) {
+        return jsonResponse({ success: false, error: 'R2 storage binding CHAT_MEDIA is not configured.' }, 503);
+      }
+
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      try {
+        const listed = await env.CHAT_MEDIA.list({ prefix: 'media/' });
+        let matchedObj: any = null;
+
+        for (const obj of listed.objects) {
+          if (obj.key.includes(cleanId)) {
+            matchedObj = await env.CHAT_MEDIA.get(obj.key);
+            break;
+          }
+        }
+
+        if (!matchedObj || !matchedObj.body) {
+          return jsonResponse({ success: false, error: 'Media object not found.' }, 404);
+        }
+
+        const meta = matchedObj.customMetadata || {};
+        const contextType = meta.contextType;
+        const contextId = meta.contextId;
+
+        if (contextType === 'conversation' && contextId) {
+          if (baseSupabaseUrl && supabaseServiceKey) {
+            const partsUrl = `${baseSupabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(contextId)}&select=user_id,guest_id`;
+            const partsRes = await fetch(partsUrl, {
+              headers: {
+                'apikey': supabaseServiceKey,
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+            });
+            if (partsRes.ok) {
+              const rows: any[] = await partsRes.json().catch(() => []);
+              const isParticipant = Array.isArray(rows) && rows.some(r => r.user_id === authResult.verifiedUserId || r.guest_id === authResult.verifiedUserId);
+              if (!isParticipant) {
+                return jsonResponse({ success: false, error: 'Forbidden: Unauthorized access to private conversation media.' }, 403);
+              }
+            }
+          }
+        }
+
+        const contentType = matchedObj.httpMetadata?.contentType || meta.canonicalMime || 'application/octet-stream';
+        const headers = new Headers(CORS_HEADERS);
+        headers.set('Content-Type', contentType);
+        headers.set('Cache-Control', 'public, max-age=86400');
+
+        return new Response(matchedObj.body, {
+          status: 200,
+          headers,
+        });
+      } catch (err: any) {
+        console.error('[Worker] R2 Media Retrieval Error:', err);
+        return jsonResponse({ success: false, error: 'Error retrieving media object.' }, 500);
       }
     }
 
