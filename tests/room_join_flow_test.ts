@@ -75,5 +75,5 @@ assert(
   'Application route renders the actual chat page for active sessions'
 );
 
-console.log(`\\nRoom Join Regression Results: ${assertions - failures}/${assertions} passed; ${failures} failed.`);
+console.log(`\nRoom Join Regression Results: ${assertions - failures}/${assertions} passed; ${failures} failed.`);
 if (failures > 0) process.exit(1);
