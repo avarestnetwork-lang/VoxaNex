@@ -618,6 +618,39 @@ async function runTests() {
         '8e. Worker rejects undeclared guest in 18+ room with HTTP 403 (client boolean never bypasses server)'
       );
 
+      storageMap.set('vx_guest_token', undeclaredToken);
+      const ageDeclarationRes = await guestSessionService.declareAge18();
+      const rotatedToken = ageDeclarationRes.session?.token || '';
+      const oldTokenValidation = await guestSessionService.validateSession(undeclaredToken);
+      const rotatedValidation = await guestSessionService.validateSession(rotatedToken);
+      assert(
+        ageDeclarationRes.success &&
+          Boolean(rotatedToken) &&
+          ageDeclarationRes.session?.id === undeclaredBody.session.id &&
+          ageDeclarationRes.session?.ageDeclarationAccepted === true,
+        '8f. Guest 18+ declaration rotates token without changing guest session identity'
+      );
+      assert(
+        oldTokenValidation.valid === false && rotatedValidation.valid === true,
+        '8g. Previous guest token is invalidated and the updated token is server-valid'
+      );
+      assert(
+        storageMap.get('vx_guest_token') === rotatedToken,
+        '8h. Rotated guest token replaces the browser-stored token'
+      );
+      const declaredAdultRes = await worker.fetch(
+        new Request('https://chatlustora.test/api/chat/rooms/sex/messages', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${rotatedToken}` },
+        }),
+        env,
+        {} as any
+      );
+      assert(
+        declaredAdultRes.status === 200,
+        '8i. Persisted guest declaration unlocks server-authorized 18+ room access'
+      );
+
       // Declared guest succeeds in both public (bangla) and adult (sex) room
       const okAdultRes = await worker.fetch(
         new Request('https://chatlustora.test/api/chat/rooms/sex/messages', {
