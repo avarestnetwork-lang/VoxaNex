@@ -89,6 +89,36 @@ export const guestSessionService = {
   },
 
   /**
+   * Persist an explicit 18+ declaration by rotating the current session token
+   * while preserving the existing guest session identity and expiry.
+   */
+  async declareAge18(): Promise<{ success: boolean; session?: ValidatedGuestSession; error?: string }> {
+    const token = localStorage.getItem(STORAGE_KEY);
+    if (!token) return { success: false, error: 'No active guest session is available.' };
+
+    try {
+      const response = await fetch('/api/guest/age-declaration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        session?: ValidatedGuestSession;
+        error?: string;
+      };
+      if (!response.ok || !data.success || !data.session?.token) {
+        return { success: false, error: data.error || `Age declaration update failed (HTTP ${response.status}).` };
+      }
+
+      localStorage.setItem(STORAGE_KEY, data.session.token);
+      return { success: true, session: data.session };
+    } catch {
+      return { success: false, error: 'Network error while saving your 18+ declaration.' };
+    }
+  },
+
+  /**
    * Revoke active guest session
    */
   async revokeSession(): Promise<{ success: boolean; error?: string }> {
