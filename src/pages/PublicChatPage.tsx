@@ -56,7 +56,7 @@ import {
 interface ExtendedChatMessage extends ChatMessage {
   status?: 'sending' | 'delivered' | 'failed';
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image';
+  mediaType?: 'gif' | 'image' | 'audio';
   linkPreview?: LinkPreviewData;
   errorReason?: string;
   clientNonce?: string;

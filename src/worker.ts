@@ -20,7 +20,7 @@ interface HubMessage {
   content: string;
   rawContent?: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image';
+  mediaType?: 'gif' | 'image' | 'audio';
   linkPreview?: {
     url: string;
     title?: string;

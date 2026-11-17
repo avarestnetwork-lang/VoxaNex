@@ -92,7 +92,7 @@ export interface ChatMessage {
   senderAvatar: string;
   content: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image';
+  mediaType?: 'gif' | 'image' | 'audio';
   linkPreview?: any;
   timestamp: string; // ISO 8601 string
   isSystem?: boolean;

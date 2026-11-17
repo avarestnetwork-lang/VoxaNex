@@ -10,6 +10,7 @@ import {
   isUserEligibleForAdultAreas,
   filterProhibitedContent,
 } from './communityAdminHub';
+import { isSafeMediaUrl, isValidChatMediaType } from '../lib/mediaValidation';
 
 const lookupAsync = promisify(dns.lookup);
 
@@ -24,7 +25,7 @@ export interface HubMessage {
   content: string;
   rawContent: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image';
+  mediaType?: 'gif' | 'image' | 'audio';
   linkPreview?: {
     url: string;
     title?: string;
@@ -250,16 +251,27 @@ export function postRoomMessage(params: {
   senderNickname: string;
   senderAvatar: string;
   senderType: 'registered' | 'guest';
-  rawContent: string;
+  rawContent?: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image';
+  mediaType?: 'gif' | 'image' | 'audio';
   linkPreview?: any;
   clientNonce?: string;
 }): { success: boolean; message?: HubMessage; error?: string } {
-  const { roomId, senderId, senderNickname, senderAvatar, senderType, rawContent } = params;
+  const { roomId, senderId, senderNickname, senderAvatar, senderType } = params;
+  const rawContent = typeof params.rawContent === 'string' ? params.rawContent : '';
+  const hasMedia = Boolean(params.mediaUrl && typeof params.mediaUrl === 'string' && params.mediaUrl.trim().length > 0);
 
-  if (!rawContent || rawContent.trim().length === 0) {
+  if (rawContent.trim().length === 0 && !hasMedia) {
     return { success: false, error: 'Message cannot be empty.' };
+  }
+
+  if (hasMedia) {
+    if (!isSafeMediaUrl(params.mediaUrl)) {
+      return { success: false, error: 'Invalid or unsafe media URL.' };
+    }
+    if (params.mediaType && !isValidChatMediaType(params.mediaType)) {
+      return { success: false, error: 'Invalid mediaType.' };
+    }
   }
 
   if (rawContent.length > 2000) {
@@ -286,9 +298,11 @@ export function postRoomMessage(params: {
   }
 
   // 3. Prohibited content filter
-  const filter = filterProhibitedContent(rawContent);
-  if (filter.flagged) {
-    return { success: false, error: filter.reason || 'Prohibited content detected.' };
+  if (rawContent.trim().length > 0) {
+    const filter = filterProhibitedContent(rawContent);
+    if (filter.flagged) {
+      return { success: false, error: filter.reason || 'Prohibited content detected.' };
+    }
   }
 
   if (!roomMessages.has(roomId)) {
@@ -304,7 +318,7 @@ export function postRoomMessage(params: {
   }
 
   // Rate limit
-  const rateCheck = checkRateLimitAndSpam(senderId, rawContent);
+  const rateCheck = checkRateLimitAndSpam(senderId, rawContent || params.mediaUrl || '');
   if (!rateCheck.allowed) {
     return { success: false, error: rateCheck.reason };
   }
@@ -506,13 +520,15 @@ export async function postConversationMessage(params: {
   senderId: string;
   senderNickname: string;
   senderAvatar: string;
-  rawContent: string;
+  rawContent?: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image';
+  mediaType?: 'gif' | 'image' | 'audio';
   linkPreview?: any;
   clientNonce?: string;
 }): Promise<{ success: boolean; message?: HubMessage; error?: string }> {
-  const { conversationId, senderId, senderNickname, senderAvatar, rawContent } = params;
+  const { conversationId, senderId, senderNickname, senderAvatar } = params;
+  const rawContent = typeof params.rawContent === 'string' ? params.rawContent : '';
+  const hasMedia = Boolean(params.mediaUrl && typeof params.mediaUrl === 'string' && params.mediaUrl.trim().length > 0);
 
   // Authorization check
   if (!(await isConversationMember(conversationId, senderId))) {
@@ -554,8 +570,17 @@ export async function postConversationMessage(params: {
     return { success: false, error: 'Unable to deliver message: Direct communication blocked between participants.' };
   }
 
-  if (!rawContent || rawContent.trim().length === 0) {
+  if (rawContent.trim().length === 0 && !hasMedia) {
     return { success: false, error: 'Message cannot be empty.' };
+  }
+
+  if (hasMedia) {
+    if (!isSafeMediaUrl(params.mediaUrl)) {
+      return { success: false, error: 'Invalid or unsafe media URL.' };
+    }
+    if (params.mediaType && !isValidChatMediaType(params.mediaType)) {
+      return { success: false, error: 'Invalid mediaType.' };
+    }
   }
 
   if (rawContent.length > 2000) {
@@ -563,13 +588,24 @@ export async function postConversationMessage(params: {
   }
 
   // Prohibited content filter
-  const filter = filterProhibitedContent(rawContent);
-  if (filter.flagged) {
-    return { success: false, error: filter.reason || 'Prohibited content detected.' };
+  if (rawContent.trim().length > 0) {
+    const filter = filterProhibitedContent(rawContent);
+    if (filter.flagged) {
+      return { success: false, error: filter.reason || 'Prohibited content detected.' };
+    }
+  }
+
+  // Deduplicate by clientNonce before rate limiting for retry resilience
+  if (params.clientNonce) {
+    const existingList = conversationMessages.get(conversationId);
+    const existingMsg = existingList?.find((m) => m.clientNonce === params.clientNonce);
+    if (existingMsg) {
+      return { success: true, message: existingMsg };
+    }
   }
 
   // Rate check
-  const rate = checkRateLimitAndSpam(senderId, rawContent);
+  const rate = checkRateLimitAndSpam(senderId, rawContent || params.mediaUrl || '');
   if (!rate.allowed) {
     return { success: false, error: rate.reason };
   }

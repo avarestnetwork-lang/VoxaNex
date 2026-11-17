@@ -1,4 +1,8 @@
 import crypto from 'crypto';
+import {
+  validateMediaFileMetadata,
+  ALLOWED_MEDIA_SPECS,
+} from '../lib/mediaValidation';
 
 export interface YouTubeValidationResult {
   valid: boolean;
@@ -33,24 +37,6 @@ export interface MediaRecord {
 
 // In-memory store for tracked media uploads
 const mediaStore = new Map<string, MediaRecord>();
-
-// Disallowed executable extensions
-const EXECUTABLE_EXTENSIONS = new Set([
-  'exe', 'bat', 'cmd', 'sh', 'bash', 'ps1', 'msi', 'jar', 'js', 'ts', 'jsx', 'tsx',
-  'html', 'htm', 'php', 'phtml', 'py', 'vbs', 'scr', 'com', 'svg', 'dll', 'bin',
-  'app', 'dmg', 'apk', 'iso', 'deb', 'rpm', 'elf', 'wsf', 'cpl',
-]);
-
-const ALLOWED_MIME_TYPES: Record<string, { maxSizeBytes: number; allowedExts: string[] }> = {
-  'image/jpeg': { maxSizeBytes: 5 * 1024 * 1024, allowedExts: ['jpg', 'jpeg'] },
-  'image/png': { maxSizeBytes: 5 * 1024 * 1024, allowedExts: ['png'] },
-  'image/webp': { maxSizeBytes: 5 * 1024 * 1024, allowedExts: ['webp'] },
-  'image/gif': { maxSizeBytes: 5 * 1024 * 1024, allowedExts: ['gif'] },
-  'audio/webm': { maxSizeBytes: 10 * 1024 * 1024, allowedExts: ['webm'] },
-  'audio/ogg': { maxSizeBytes: 10 * 1024 * 1024, allowedExts: ['ogg', 'oga'] },
-  'audio/mp3': { maxSizeBytes: 10 * 1024 * 1024, allowedExts: ['mp3'] },
-  'audio/wav': { maxSizeBytes: 10 * 1024 * 1024, allowedExts: ['wav'] },
-};
 
 /**
  * Validate supported YouTube URLs and produce safe privacy-enhanced embeds
@@ -155,72 +141,32 @@ export function validateMediaUpload(params: {
 }): MediaValidationResult {
   const { fileName, fileSize, mimeType, uploaderId } = params;
 
-  if (!fileName || typeof fileName !== 'string') {
-    return { valid: false, error: 'File name is required.' };
+  const meta = validateMediaFileMetadata({
+    fileName,
+    fileSize,
+    mimeType,
+    inferMimeFromExtIfEmpty: false,
+  });
+
+  if (!meta.valid || !meta.canonicalMime || !meta.extension) {
+    return { valid: false, error: meta.error || 'Invalid media upload.' };
   }
 
-  // Path traversal and forbidden pattern check
-  if (fileName.includes('..') || fileName.includes('/') || fileName.includes('\\')) {
-    return { valid: false, error: 'File name contains prohibited path traversal characters.' };
-  }
-
-  // Extract extension
-  const extMatch = fileName.toLowerCase().match(/\.([a-z0-9]+)$/);
-  const ext = extMatch ? extMatch[1] : '';
-
-  if (!ext) {
-    return { valid: false, error: 'File must have a valid extension.' };
-  }
-
-  // Prohibit executable files
-  if (EXECUTABLE_EXTENSIONS.has(ext)) {
-    return {
-      valid: false,
-      error: `Security violation: Executable and script file extensions (.${ext}) are strictly forbidden.`,
-    };
-  }
-
-  // Validate MIME type
-  const mimeConfig = ALLOWED_MIME_TYPES[mimeType.toLowerCase()];
-  if (!mimeConfig) {
-    return {
-      valid: false,
-      error: `Unsupported media format (${mimeType}). Allowed formats: JPG, PNG, WebP, GIF, WebM, OGG, MP3, WAV.`,
-    };
-  }
-
-  // Verify extension matches MIME type
-  if (!mimeConfig.allowedExts.includes(ext)) {
-    return {
-      valid: false,
-      error: `MIME type (${mimeType}) does not match file extension (.${ext}).`,
-    };
-  }
-
-  // Verify file size limit
-  if (fileSize <= 0) {
-    return { valid: false, error: 'File size must be greater than 0 bytes.' };
-  }
-
-  if (fileSize > mimeConfig.maxSizeBytes) {
-    const limitMb = mimeConfig.maxSizeBytes / (1024 * 1024);
-    return {
-      valid: false,
-      error: `File size exceeds maximum permitted limit of ${limitMb}MB.`,
-    };
-  }
+  const ext = meta.extension;
+  const canonicalMime = meta.canonicalMime;
+  const spec = ALLOWED_MEDIA_SPECS[canonicalMime];
 
   // Generate safe sanitized filename and ID
   const uploadId = `med_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
   const sanitizedFileName = `${uploadId}.${ext}`;
-  const sanitizedUrl = `/uploads/${sanitizedFileName}`;
+  const sanitizedUrl = `/api/media/${uploadId}`;
 
   const record: MediaRecord = {
     id: uploadId,
     uploaderId: uploaderId || 'anon',
     fileName: sanitizedFileName,
     fileSize,
-    mimeType,
+    mimeType: spec?.canonicalMime || canonicalMime,
     url: sanitizedUrl,
     isFlagged: false,
     createdAt: new Date().toISOString(),
@@ -234,7 +180,7 @@ export function validateMediaUpload(params: {
     sanitizedFileName,
     sanitizedUrl,
     fileSize,
-    mimeType,
+    mimeType: record.mimeType,
   };
 }
 

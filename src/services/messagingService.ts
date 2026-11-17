@@ -26,6 +26,17 @@ export interface GifItem {
   tags: string[];
 }
 
+import { ChatMediaType } from '../lib/mediaValidation';
+
+export interface UploadedMediaAsset {
+  uploadId: string;
+  url: string;
+  mediaType: ChatMediaType;
+  mimeType: string;
+  fileName: string;
+  fileSize: number;
+}
+
 export interface SendMessageOptions {
   senderId: string;
   senderNickname: string;
@@ -33,7 +44,7 @@ export interface SendMessageOptions {
   senderType: 'registered' | 'guest';
   content: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image';
+  mediaType?: ChatMediaType;
   linkPreview?: LinkPreviewData;
   clientNonce?: string;
 }
@@ -661,7 +672,7 @@ export const messagingService = {
       recipientId: string;
       content: string;
       mediaUrl?: string;
-      mediaType?: 'gif' | 'image';
+      mediaType?: ChatMediaType;
       linkPreview?: LinkPreviewData;
       clientNonce?: string;
       senderType?: 'registered' | 'guest';
@@ -1012,23 +1023,141 @@ export const messagingService = {
   // CONTENT & ABUSE UTILITIES
   // ---------------------------------------------------------------------------
 
-  async searchGifs(query = ''): Promise<GifItem[]> {
+  async uploadChatMedia(params: {
+    file: File;
+    contextType: 'room' | 'conversation';
+    contextId: string;
+    isGuest?: boolean;
+    userId?: string;
+    onProgress?: (percent: number) => void;
+    registerAbort?: (abortFn: () => void) => void;
+  }): Promise<{
+    success: boolean;
+    media?: UploadedMediaAsset;
+    error?: string;
+    aborted?: boolean;
+  }> {
     try {
-      const res = await fetch(`/api/gifs/search?q=${encodeURIComponent(query)}`);
+      const token = await getAuthToken({
+        isGuest: params.isGuest,
+        senderType: params.isGuest ? 'guest' : 'registered',
+        userId: params.userId,
+        allowPublicFallback: true,
+      });
+
+      if (!token) {
+        return {
+          success: false,
+          error: 'Authentication required before uploading media.',
+        };
+      }
+
+      const formData = new FormData();
+      formData.append('file', params.file, params.file.name);
+      formData.append('contextType', params.contextType);
+      formData.append('contextId', params.contextId);
+
+      return await new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        params.registerAbort?.(() => {
+          try {
+            xhr.abort();
+          } catch {
+            // ignore
+          }
+        });
+
+        xhr.open('POST', `${API_BASE}/api/media/upload`, true);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+        xhr.upload.onprogress = (evt) => {
+          if (evt.lengthComputable && evt.total > 0) {
+            const pct = Math.min(99, Math.max(1, Math.round((evt.loaded / evt.total) * 100)));
+            params.onProgress?.(pct);
+          }
+        };
+
+        xhr.onload = () => {
+          let payload: any = {};
+          try {
+            payload = JSON.parse(xhr.responseText || '{}');
+          } catch {
+            payload = {};
+          }
+
+          if (xhr.status >= 200 && xhr.status < 300 && payload.success && payload.media) {
+            params.onProgress?.(100);
+            resolve({
+              success: true,
+              media: payload.media as UploadedMediaAsset,
+            });
+          } else {
+            resolve({
+              success: false,
+              error: payload.error || `Upload failed (HTTP ${xhr.status}).`,
+            });
+          }
+        };
+
+        xhr.onerror = () => {
+          resolve({
+            success: false,
+            error: 'Network error while uploading attachment.',
+          });
+        };
+
+        xhr.onabort = () => {
+          resolve({
+            success: false,
+            aborted: true,
+            error: 'Upload cancelled.',
+          });
+        };
+
+        xhr.send(formData);
+      });
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Unable to upload media attachment.',
+      };
+    }
+  },
+
+  async searchGifs(query = ''): Promise<GifItem[]> {
+    const fallbackGifs: GifItem[] = [
+      { id: 'gif-1', title: 'Thumbs Up / Good Job', url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80', tags: ['thumbsup', 'nice', 'valo'] },
+      { id: 'gif-2', title: 'Celebrate / Party', url: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=400&q=80', tags: ['party', 'celebrate', 'anondo'] },
+      { id: 'gif-3', title: 'Wave / Hello Dhaka', url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80', tags: ['hello', 'hi', 'kmn acho'] },
+      { id: 'gif-4', title: 'Tea Cup / Cha Adda', url: 'https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=400&q=80', tags: ['tea', 'cha', 'adda'] },
+      { id: 'gif-5', title: 'Laughing / Haha', url: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?auto=format&fit=crop&w=400&q=80', tags: ['laugh', 'haha', 'lol'] },
+      { id: 'gif-6', title: 'Love & Heart', url: 'https://images.unsplash.com/photo-1518199266791-5375a83190b7?auto=format&fit=crop&w=400&q=80', tags: ['love', 'heart', 'valobashi'] },
+    ];
+    try {
+      const res = await fetch(`${API_BASE}/api/gifs/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) throw new Error('GIF fetch non-OK');
       const data = (await res.json()) as { gifs?: GifItem[] };
-      return data.gifs || [];
+      if (Array.isArray(data.gifs)) {
+        return data.gifs;
+      }
+      throw new Error('Malformed GIF response');
     } catch {
-      return [];
+      const q = query.trim().toLowerCase();
+      if (!q) return fallbackGifs;
+      return fallbackGifs.filter(
+        (g) => g.title.toLowerCase().includes(q) || g.tags.some((t) => t.includes(q))
+      );
     }
   },
 
   async fetchLinkPreview(url: string): Promise<LinkPreviewData | null> {
     try {
-      const res = await fetch('/api/link-preview', {
+      const res = await fetch(`${API_BASE}/api/link-preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
+      if (!res.ok) return null;
       const data = (await res.json()) as { preview?: LinkPreviewData | null };
       return data.preview || null;
     } catch {
@@ -1038,7 +1167,7 @@ export const messagingService = {
 
   async toggleBlock(blockerId: string, targetId: string, blocked: boolean): Promise<boolean> {
     try {
-      const res = await fetch('/api/moderation/block', {
+      const res = await fetch(`${API_BASE}/api/moderation/block`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ blockerId, targetId, blocked }),

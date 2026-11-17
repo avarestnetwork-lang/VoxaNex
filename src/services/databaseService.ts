@@ -131,9 +131,14 @@ export const databaseService = {
         senderId: m.sender_user_id || m.sender_guest_id || 'anonymous',
         senderNickname: m.sender_nickname,
         senderAvatar: m.sender_avatar,
-        content: m.content,
+        content: m.content || '',
+        mediaUrl: m.media_url || undefined,
+        mediaType: m.media_type || undefined,
+        linkPreview: m.link_preview || undefined,
+        clientNonce: m.client_nonce || undefined,
         timestamp: m.created_at,
         isSystem: m.is_system,
+        status: 'delivered' as const,
       }));
     } catch {
       return [];
@@ -172,7 +177,11 @@ export const databaseService = {
         senderId: m.sender_user_id || m.sender_guest_id || 'anonymous',
         senderNickname: m.sender_nickname,
         senderAvatar: m.sender_avatar,
-        content: m.content,
+        content: m.content || '',
+        mediaUrl: m.media_url || undefined,
+        mediaType: m.media_type || undefined,
+        linkPreview: m.link_preview || undefined,
+        clientNonce: m.client_nonce || undefined,
         timestamp: m.created_at,
         isDirect: true,
         status: 'delivered',
@@ -282,7 +291,7 @@ export const databaseService = {
     content: string;
     clientNonce?: string;
     mediaUrl?: string;
-    mediaType?: 'gif' | 'image';
+    mediaType?: 'gif' | 'image' | 'audio';
     linkPreview?: any;
   }, overrideClient?: any): Promise<{ success: boolean; inserted: boolean; message?: ChatMessage; error?: string }> {
     const supabase = overrideClient || getSupabaseClient();
@@ -358,7 +367,7 @@ export const databaseService = {
     senderAvatar: string;
     content: string;
     mediaUrl?: string;
-    mediaType?: 'gif' | 'image';
+    mediaType?: 'gif' | 'image' | 'audio';
     clientNonce?: string;
   }): Promise<ChatMessage | null> {
     const supabase = getSupabaseClient();
@@ -450,13 +459,17 @@ export const databaseService = {
             const row = payload?.new;
             if (row) {
               console.log(`[VX-RT] [${channelName}] Received INSERT:`, row.id);
-              const msg = {
+              const msg: ChatMessage = {
                 id: row.id,
                 roomId: row.room_id,
                 senderId: row.sender_user_id || row.sender_guest_id || 'usr',
                 senderNickname: row.sender_nickname,
                 senderAvatar: row.sender_avatar,
-                content: row.content,
+                content: row.content || '',
+                mediaUrl: row.media_url || undefined,
+                mediaType: row.media_type || undefined,
+                linkPreview: row.link_preview || undefined,
+                clientNonce: row.client_nonce || undefined,
                 timestamp: row.created_at,
                 status: 'delivered' as const,
               };
