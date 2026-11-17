@@ -28,7 +28,7 @@ import {
 export const RoomDirectoryPage: React.FC = () => {
   const { navigate } = useRouter();
   const { language, t } = useLanguage();
-  const { is18Verified, ageDeclarationAccepted, user } = useAuth();
+  const { hasActiveSession, is18Verified, ageDeclarationAccepted, user } = useAuth();
   const hasAgeAccess = Boolean(is18Verified || user?.is18Verified || ageDeclarationAccepted || user?.ageDeclarationAccepted);
 
   const [rooms, setRooms] = useState<Room[]>(ROOMS_CONFIG);
@@ -119,6 +119,11 @@ export const RoomDirectoryPage: React.FC = () => {
   }, [rooms, searchQuery, selectedCategory, selectedMode, selectedLanguage, selectedRegion, language]);
 
   const handleJoin = (room: Room) => {
+    if (hasActiveSession) {
+      navigate('/chat', { roomId: room.slug });
+      return;
+    }
+
     navigate('/user/guest-entry', { targetRoom: room.slug });
   };
 
