@@ -10,6 +10,7 @@ export type AppRoute =
   | '/user/guest-entry'
   | '/user/login'
   | '/user/dashboard'
+  | '/user/reset-password'
   | '/rooms'
   | '/chat'
   | '/messages'
@@ -100,6 +101,7 @@ function parsePath(pathname: string): { route: AppRoute; params: Record<string, 
     '/user/guest-entry',
     '/user/login',
     '/user/dashboard',
+    '/user/reset-password',
     '/rooms',
     '/chat',
     '/messages',

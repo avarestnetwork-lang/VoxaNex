@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { UserProfile, AppLanguage, UserGender } from '../types';
-import { authService } from '../services/authService';
+import { authService, inspectRecoveryUrl } from '../services/authService';
 import { guestSessionService } from '../services/guestSessionService';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabaseClient';
+
+export type PasswordRecoveryStatus = 'idle' | 'processing' | 'ready' | 'invalid' | 'completed';
 
 interface AuthContextType {
   user: UserProfile;
@@ -23,6 +25,9 @@ interface AuthContextType {
     gender?: string
   ) => Promise<{ success: boolean; error?: string; requiresEmailConfirmation?: boolean; message?: string }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
+  passwordRecoveryStatus: PasswordRecoveryStatus;
+  passwordRecoveryError: string | null;
+  completePasswordReset: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
   deleteAccount: () => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<{ success: boolean; error?: string }>;
   updatePreferences: (prefs: Partial<UserProfile>) => Promise<{ success: boolean; error?: string }>;
@@ -71,6 +76,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return Boolean(guestSessionService.getStoredToken() || localStorage.getItem('voxanex_user_profile'));
   });
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [passwordRecoveryStatus, setPasswordRecoveryStatus] = useState<PasswordRecoveryStatus>('idle');
+  const [passwordRecoveryError, setPasswordRecoveryError] = useState<string | null>(null);
 
   const [user, setUser] = useState<UserProfile>(() => {
     try {
@@ -87,96 +94,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isSupabaseActive = isSupabaseConfigured();
   const restoreSeqRef = useRef<number>(0);
+  const isRecoveryModeRef = useRef<boolean>(false);
 
-  // Restore authenticated session on initial mount with strict race-condition guards
+  // Restore authenticated session & inspect recovery callback on initial mount
   useEffect(() => {
     let isMounted = true;
     const currentSeq = ++restoreSeqRef.current;
+
+    // Synchronously inspect the URL BEFORE getSupabaseClient() initializes GoTrueClient
+    // so we preserve original callback params (code / hash / token_hash / error) before detectSessionInUrl clears them.
+    const initialHref = typeof window !== 'undefined' ? window.location.href : '';
+    const initialPathname = typeof window !== 'undefined' ? window.location.pathname.replace(/\/+$/, '') || '/' : '/';
+    const initialUrlInspection = inspectRecoveryUrl(initialHref);
+    const isResetRoute = initialPathname === '/user/reset-password';
+    const isRecoveryFlow =
+      isResetRoute || (initialUrlInspection.hasCallbackParams && initialUrlInspection.hasRecoveryType);
+
+    isRecoveryModeRef.current = isRecoveryFlow;
+
+    let recoveryEventFired = false;
 
     // Bounded bootstrap timeout guard to prevent infinite loading screen on network stalls
     const initTimeout = setTimeout(() => {
       if (isMounted) {
         setIsLoading(false);
+        if (isRecoveryFlow) {
+          setPasswordRecoveryStatus((prev) => (prev === 'idle' || prev === 'processing' ? 'invalid' : prev));
+          setPasswordRecoveryError((prev) =>
+            prev || 'Password reset link verification timed out. Please request a new reset link.'
+          );
+        }
       }
     }, 6000);
 
-    async function restore() {
-      try {
-        // 1. First attempt member session restoration if Supabase is configured
-        if (isSupabaseActive) {
-          const restoredProfile = await authService.restoreSession();
-          if (!isMounted || restoreSeqRef.current !== currentSeq) return;
-
-          if (restoredProfile) {
-            setUser(restoredProfile);
-            setHasActiveSession(true);
-            setIsLoading(false);
-            return;
-          }
-        }
-
-        // 2. If no member session, inspect stored guest token
-        const token = guestSessionService.getStoredToken();
-        if (token) {
-          const check = await guestSessionService.validateSession(token);
-          if (!isMounted || restoreSeqRef.current !== currentSeq) return;
-
-          if (check.valid && check.session) {
-            setUser(prev => ({
-              ...prev,
-              id: check.session?.id || prev.id,
-              nickname: check.session?.nickname || prev.nickname,
-              avatar: check.session?.avatar || prev.avatar,
-              isGuest: true,
-              is18Verified: Boolean(check.session?.is18Verified),
-              ageDeclarationAccepted: Boolean(check.session?.ageDeclarationAccepted),
-              gender: check.session?.gender as UserGender,
-            }));
-            setHasActiveSession(true);
-            setIsLoading(false);
-            return;
-          } else if (check.valid === false) {
-            // Only clear guest token if explicitly invalid
-            setHasActiveSession(false);
-            setUser(createDefaultVisitorProfile());
-            try {
-              localStorage.removeItem('voxanex_user_profile');
-            } catch {
-              // ignore
-            }
-            setIsLoading(false);
-            return;
-          }
-        }
-
-        // 3. Neither member nor guest session present
-        if (!isMounted || restoreSeqRef.current !== currentSeq) return;
-        setHasActiveSession(false);
-        setUser(prev => ({
-          ...prev,
-          ageDeclarationAccepted: prev.isGuest ? false : prev.ageDeclarationAccepted,
-        }));
-      } catch (err) {
-        console.warn('[AuthContext] Session restoration error:', err);
-        if (isMounted && restoreSeqRef.current === currentSeq) {
-          setHasActiveSession(false);
-        }
-      } finally {
-        if (isMounted && restoreSeqRef.current === currentSeq) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    restore();
-
-    // Supabase auth state change listener to sync member state without affecting guest sessions
-    const supabase = getSupabaseClient();
+    // Instantiate Supabase client & register listener immediately to catch PASSWORD_RECOVERY from _initialize()
+    const supabase = isSupabaseActive ? getSupabaseClient() : null;
     let authListenerSub: { unsubscribe: () => void } | null = null;
 
     if (supabase && isSupabaseActive) {
       const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!isMounted) return;
+
+        if (event === 'PASSWORD_RECOVERY') {
+          recoveryEventFired = true;
+          isRecoveryModeRef.current = true;
+          setPasswordRecoveryStatus((prev) => (prev === 'completed' ? prev : 'ready'));
+          setPasswordRecoveryError(null);
+          setIsLoading(false);
+          return;
+        }
 
         // CRITICAL FIX: Do NOT bump restoreSeqRef or invalidate in-flight restore() for INITIAL_SESSION or unhandled events
         if (event === 'INITIAL_SESSION') {
@@ -184,6 +150,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (event === 'SIGNED_IN' && session?.user) {
+          const currentPath =
+            typeof window !== 'undefined' ? window.location.pathname.replace(/\/+$/, '') || '/' : '/';
+          // Never treat a recovery callback session as a standard member login
+          if (isRecoveryModeRef.current || currentPath === '/user/reset-password') {
+            return;
+          }
+
           const eventSeq = ++restoreSeqRef.current;
           const profile = await authService.getProfile(session.user.id, session.user);
           if (!isMounted || restoreSeqRef.current !== eventSeq) return;
@@ -195,7 +168,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else if (event === 'SIGNED_OUT') {
           const eventSeq = ++restoreSeqRef.current;
           // Strictly clear only registered member sessions to preserve independent guest access
-          setUser(curr => {
+          setUser((curr) => {
             if (!curr.isGuest) {
               setHasActiveSession(false);
               try {
@@ -214,6 +187,114 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       authListenerSub = data?.subscription || null;
     }
+
+    async function restoreGuestSessionIfPresent(): Promise<boolean> {
+      const token = guestSessionService.getStoredToken();
+      if (!token) return false;
+
+      const check = await guestSessionService.validateSession(token);
+      if (!isMounted || restoreSeqRef.current !== currentSeq) return true;
+
+      if (check.valid && check.session) {
+        setUser((prev) => ({
+          ...prev,
+          id: check.session?.id || prev.id,
+          nickname: check.session?.nickname || prev.nickname,
+          avatar: check.session?.avatar || prev.avatar,
+          isGuest: true,
+          is18Verified: Boolean(check.session?.is18Verified),
+          ageDeclarationAccepted: Boolean(check.session?.ageDeclarationAccepted),
+          gender: check.session?.gender as UserGender,
+        }));
+        setHasActiveSession(true);
+        return true;
+      } else if (check.valid === false) {
+        setHasActiveSession(false);
+        setUser(createDefaultVisitorProfile());
+        try {
+          localStorage.removeItem('voxanex_user_profile');
+        } catch {
+          // ignore
+        }
+        return true;
+      }
+
+      return false;
+    }
+
+    async function restore() {
+      try {
+        if (isRecoveryFlow) {
+          setPasswordRecoveryStatus('processing');
+          setPasswordRecoveryError(null);
+
+          const recoveryRes = await authService.processRecoveryCallback(
+            initialUrlInspection,
+            () => recoveryEventFired
+          );
+          if (!isMounted || restoreSeqRef.current !== currentSeq) return;
+
+          if (recoveryRes.success || recoveryEventFired) {
+            setPasswordRecoveryStatus('ready');
+            setPasswordRecoveryError(null);
+          } else {
+            setPasswordRecoveryStatus('invalid');
+            setPasswordRecoveryError(
+              recoveryRes.error || 'This password reset link is invalid or has expired. Please request a new reset link.'
+            );
+          }
+
+          // Preserve independent guest session state if one exists without converting recovery into member login
+          const handledGuest = await restoreGuestSessionIfPresent();
+          if (!handledGuest && isMounted && restoreSeqRef.current === currentSeq) {
+            setHasActiveSession(false);
+          }
+          return;
+        }
+
+        // 1. Standard mount: attempt member session restoration if Supabase is configured
+        if (isSupabaseActive) {
+          const restoredProfile = await authService.restoreSession();
+          if (!isMounted || restoreSeqRef.current !== currentSeq) return;
+
+          if (restoredProfile) {
+            setUser(restoredProfile);
+            setHasActiveSession(true);
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // 2. If no member session, inspect stored guest token
+        const handledGuest = await restoreGuestSessionIfPresent();
+        if (handledGuest || !isMounted || restoreSeqRef.current !== currentSeq) {
+          return;
+        }
+
+        // 3. Neither member nor guest session present
+        setHasActiveSession(false);
+        setUser((prev) => ({
+          ...prev,
+          ageDeclarationAccepted: prev.isGuest ? false : prev.ageDeclarationAccepted,
+        }));
+      } catch (err) {
+        console.warn('[AuthContext] Session restoration error:', err);
+        if (isMounted && restoreSeqRef.current === currentSeq) {
+          if (isRecoveryFlow) {
+            setPasswordRecoveryStatus('invalid');
+            setPasswordRecoveryError('Unable to verify password reset link. Please request a new reset link.');
+          } else {
+            setHasActiveSession(false);
+          }
+        }
+      } finally {
+        if (isMounted && restoreSeqRef.current === currentSeq) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    restore();
 
     return () => {
       isMounted = false;
@@ -235,7 +316,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user, hasActiveSession]);
 
   const verify18 = () => {
-    setUser(prev => ({
+    setUser((prev) => ({
       ...prev,
       ageDeclarationAccepted: true,
       is18Verified: prev.isGuest ? false : prev.is18Verified,
@@ -245,7 +326,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const revoke18 = () => {
-    setUser(prev => ({
+    setUser((prev) => ({
       ...prev,
       ageDeclarationAccepted: false,
       is18Verified: false,
@@ -266,7 +347,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    setUser(prev => ({ ...prev, nickname: clean }));
+    setUser((prev) => ({ ...prev, nickname: clean }));
     return { success: true };
   };
 
@@ -279,14 +360,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    setUser(prev => ({ ...prev, avatar }));
+    setUser((prev) => ({ ...prev, avatar }));
     return { success: true };
   };
 
   const loginGuest = async (
-    nickname?: string, 
-    lang: AppLanguage = 'en', 
-    gender?: string, 
+    nickname?: string,
+    lang: AppLanguage = 'en',
+    gender?: string,
     ageDeclarationAccepted?: boolean
   ): Promise<{ success: boolean; error?: string }> => {
     const chosenNick = nickname?.trim() || getRandomGuestNickname();
@@ -300,7 +381,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       is18Verified: false,
       ageDeclarationAccepted: Boolean(ageDeclarationAccepted),
     });
-    
+
     if (res.success && res.session) {
       ++restoreSeqRef.current;
       setUser({
@@ -342,6 +423,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithAccount = async (email: string, password: string) => {
+    isRecoveryModeRef.current = false;
     const res = await authService.login(email, password);
     if (res.success && res.user) {
       ++restoreSeqRef.current;
@@ -353,6 +435,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const registerWithAccount = async (email: string, password: string, nickname: string, gender?: string) => {
+    isRecoveryModeRef.current = false;
     const res = await authService.register(email, password, nickname, gender, user.languagePreference);
     if (res.success) {
       if (res.user) {
@@ -371,6 +454,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const requestPasswordReset = async (email: string) => {
     return authService.requestPasswordReset(email);
+  };
+
+  const completePasswordReset = async (newPassword: string): Promise<{ success: boolean; error?: string }> => {
+    const res = await authService.updatePassword(newPassword);
+    if (!res.success) {
+      return res;
+    }
+
+    isRecoveryModeRef.current = false;
+    await authService.clearRecoverySession();
+    try {
+      localStorage.removeItem('voxanex_user_profile');
+    } catch {
+      // ignore
+    }
+
+    setUser((curr) => {
+      if (!curr.isGuest) {
+        setHasActiveSession(false);
+        return createDefaultVisitorProfile();
+      }
+      return curr;
+    });
+
+    setPasswordRecoveryStatus('completed');
+    setPasswordRecoveryError(null);
+    return { success: true };
   };
 
   const deleteAccount = async (): Promise<{ success: boolean; message: string }> => {
@@ -397,18 +507,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setHasActiveSession(false);
-    setUser({
-      id: '',
-      nickname: 'Visitor',
-      isGuest: true,
-      is18Verified: false,
-      ageDeclarationAccepted: false,
-      avatar: '',
-      languagePreference: 'en',
-      safeFilterEnabled: true,
-      notificationSounds: true,
-      createdAt: new Date().toISOString(),
-    });
+    setUser(createDefaultVisitorProfile());
 
     return res;
   };
@@ -438,18 +537,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setHasActiveSession(false);
-    setUser({
-      id: '',
-      nickname: 'Visitor',
-      isGuest: true,
-      is18Verified: false,
-      ageDeclarationAccepted: false,
-      avatar: '',
-      languagePreference: 'en',
-      safeFilterEnabled: true,
-      notificationSounds: true,
-      createdAt: new Date().toISOString(),
-    });
+    setUser(createDefaultVisitorProfile());
 
     return { success: true };
   };
@@ -472,7 +560,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    setUser(prev => ({
+    setUser((prev) => ({
       ...prev,
       ...normalizedPrefs,
     }));
@@ -510,6 +598,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithAccount,
         registerWithAccount,
         requestPasswordReset,
+        passwordRecoveryStatus,
+        passwordRecoveryError,
+        completePasswordReset,
         deleteAccount,
         logout,
         updatePreferences,

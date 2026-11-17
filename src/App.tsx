@@ -24,6 +24,7 @@ import { RandomMatchingPage } from './pages/RandomMatchingPage';
 import { VoiceWebcamPage } from './pages/VoiceWebcamPage';
 import { MemberDashboardPage } from './pages/MemberDashboardPage';
 import { ProfileSettingsPage } from './pages/ProfileSettingsPage';
+import { PasswordResetPage } from './pages/PasswordResetPage';
 import { SafetyCenterPage } from './pages/SafetyCenterPage';
 import { ForumPage } from './pages/ForumPage';
 import { BlogPage } from './pages/BlogPage';
@@ -70,6 +71,8 @@ const AppRoutes: React.FC = () => {
       case '/user/register':
       case '/user/login':
         return <GuestEntryPage />;
+      case '/user/reset-password':
+        return <PasswordResetPage />;
       case '/dashboard':
       case '/user/dashboard':
       case '/profile':

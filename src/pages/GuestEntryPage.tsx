@@ -66,6 +66,17 @@ export const GuestEntryPage: React.FC = () => {
   const [resetEmail, setResetEmail] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
+  const resetInFlightRef = React.useRef(false);
+  const resetCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (resetCloseTimerRef.current) {
+        clearTimeout(resetCloseTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleRandomize = () => {
     setNicknameState(getRandomGuestNickname());
@@ -235,21 +246,52 @@ export const GuestEntryPage: React.FC = () => {
     }
   };
 
+  const closeResetModal = () => {
+    if (resetLoading) return;
+    if (resetCloseTimerRef.current) {
+      clearTimeout(resetCloseTimerRef.current);
+      resetCloseTimerRef.current = null;
+    }
+    setResetModalOpen(false);
+    setResetSuccess(false);
+    setResetError(null);
+  };
+
   const handlePasswordResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!resetEmail.trim()) return;
+    if (resetInFlightRef.current || resetLoading) return;
 
+    const trimmedEmail = resetEmail.trim();
+    if (!trimmedEmail) {
+      setResetError('Please enter your registered email address.');
+      return;
+    }
+
+    resetInFlightRef.current = true;
+    setResetLoading(true);
     setResetError(null);
-    const res = await requestPasswordReset(resetEmail.trim());
-    if (res.success) {
-      setResetSuccess(true);
-      setTimeout(() => {
-        setResetSuccess(false);
-        setResetModalOpen(false);
-        setResetEmail('');
-      }, 2500);
-    } else {
-      setResetError(res.error || 'Failed to send recovery email');
+
+    try {
+      const res = await requestPasswordReset(trimmedEmail);
+      if (res.success) {
+        setResetSuccess(true);
+        if (resetCloseTimerRef.current) {
+          clearTimeout(resetCloseTimerRef.current);
+        }
+        resetCloseTimerRef.current = setTimeout(() => {
+          setResetSuccess(false);
+          setResetModalOpen(false);
+          setResetEmail('');
+          resetCloseTimerRef.current = null;
+        }, 2500);
+      } else {
+        setResetError(res.error || 'Failed to send recovery email. Please try again.');
+      }
+    } catch {
+      setResetError('Unable to send recovery email right now. Please try again.');
+    } finally {
+      resetInFlightRef.current = false;
+      setResetLoading(false);
     }
   };
 
@@ -567,7 +609,11 @@ export const GuestEntryPage: React.FC = () => {
                 {activeTab === 'login' && (
                   <button
                     type="button"
-                    onClick={() => setResetModalOpen(true)}
+                    onClick={() => {
+                      setResetError(null);
+                      setResetSuccess(false);
+                      setResetModalOpen(true);
+                    }}
                     className="text-[11px] text-cyan-400 hover:underline cursor-pointer"
                   >
                     Forgot password?
@@ -704,7 +750,7 @@ export const GuestEntryPage: React.FC = () => {
       {resetModalOpen && (
         <Modal
           isOpen={resetModalOpen}
-          onClose={() => setResetModalOpen(false)}
+          onClose={closeResetModal}
           title="Password Recovery"
           subtitle="Send password reset link via Supabase Auth"
         >
@@ -713,7 +759,7 @@ export const GuestEntryPage: React.FC = () => {
               <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
               <h3 className="font-bold text-white text-sm">Recovery Link Dispatched</h3>
               <p className="text-xs text-slate-400">
-                If an account exists for {resetEmail}, instructions have been sent.
+                If an account exists for {resetEmail.trim()}, a password reset link has been sent to your inbox.
               </p>
             </div>
           ) : (
@@ -726,21 +772,25 @@ export const GuestEntryPage: React.FC = () => {
                 <input
                   type="email"
                   required
+                  disabled={resetLoading}
                   value={resetEmail}
-                  onChange={(e) => setResetEmail(e.target.value)}
+                  onChange={(e) => {
+                    setResetEmail(e.target.value);
+                    setResetError(null);
+                  }}
                   placeholder="name@example.com"
-                  className="w-full bg-[#101728] border border-slate-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  className="w-full bg-[#101728] border border-slate-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-cyan-500 disabled:opacity-60"
                 />
               </div>
 
               {resetError && <div className="text-xs text-rose-400">{resetError}</div>}
 
               <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="secondary" size="sm" onClick={() => setResetModalOpen(false)}>
+                <Button type="button" variant="secondary" size="sm" onClick={closeResetModal} disabled={resetLoading}>
                   Cancel
                 </Button>
-                <Button type="submit" variant="primary" size="sm">
-                  Send Recovery Link
+                <Button type="submit" variant="primary" size="sm" disabled={resetLoading}>
+                  {resetLoading ? 'Sending...' : 'Send Recovery Link'}
                 </Button>
               </div>
             </form>
