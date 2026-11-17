@@ -2885,6 +2885,84 @@ async function authorizeConversationAccess(
       }
     }
 
+    if (url.pathname === '/api/guest/age-declaration' && request.method === 'POST') {
+      try {
+        const body: any = await request.json().catch(() => ({}));
+        const token = body?.token;
+        if (typeof token !== 'string' || !token.startsWith('vx_gst_')) {
+          return jsonResponse({ success: false, error: 'A valid guest session token is required.' }, 400);
+        }
+        if (!guestSecretInfo.secret || !baseSupabaseUrl || !supabaseServiceKey) {
+          return jsonResponse({ success: false, error: 'Guest session service is not configured.' }, 503);
+        }
+
+        const authCheck = await verifyGuestToken(token, guestSecretInfo, {
+          supabaseUrl: baseSupabaseUrl,
+          supabaseServiceKey,
+        });
+        if (!authCheck.valid || !authCheck.session) {
+          return jsonResponse({ success: false, error: 'Guest session is invalid or expired.' }, 401);
+        }
+
+        const current = authCheck.session;
+        if (current.ageDeclarationAccepted) {
+          return jsonResponse({ success: true, session: current });
+        }
+
+        // Rotate only the credential for this same guest session identity.
+        // The old token is invalidated by atomically replacing its stored hash.
+        const oldHash = await computeTokenHash(token);
+        const issuedAt = current.createdAt;
+        const payload = {
+          sid: current.id,
+          nick: current.nickname,
+          av: current.avatar,
+          gen: current.gender || 'prefer_not_to_say',
+          lng: current.languagePref || 'en',
+          v18: false,
+          dec18: true,
+          iat: issuedAt,
+          exp: current.expiresAt,
+        };
+        const updatedToken = await signGuestToken(payload, guestSecretInfo.secret);
+        const updatedHash = await computeTokenHash(updatedToken);
+        const updateUrl = `${baseSupabaseUrl}/rest/v1/guest_sessions?id=eq.${encodeURIComponent(current.id)}&session_token_hash=eq.${encodeURIComponent(oldHash)}&is_revoked=eq.false`;
+        const updateRes = await fetch(updateUrl, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': supabaseServiceKey,
+            'Authorization': `Bearer ${supabaseServiceKey}`,
+            'Prefer': 'return=representation',
+          },
+          body: JSON.stringify({ session_token_hash: updatedHash }),
+        });
+        if (!updateRes.ok) {
+          console.error(`[Worker] Guest age declaration persistence failed HTTP ${updateRes.status}`);
+          return jsonResponse({ success: false, error: 'Unable to persist age declaration for this guest session.' }, 500);
+        }
+
+        const rows: any = await updateRes.json().catch(() => []);
+        if (!Array.isArray(rows) || rows.length !== 1 || rows[0]?.id !== current.id ||
+            rows[0]?.session_token_hash !== updatedHash || rows[0]?.is_revoked !== false) {
+          return jsonResponse({ success: false, error: 'Guest session update was not confirmed.' }, 409);
+        }
+
+        guestSessions.delete(token);
+        const updatedSession: GuestSession = {
+          ...current,
+          token: updatedToken,
+          is18Verified: false,
+          ageDeclarationAccepted: true,
+        };
+        guestSessions.set(updatedToken, updatedSession);
+        return jsonResponse({ success: true, session: updatedSession });
+      } catch (err: any) {
+        console.error('[Worker] Guest age declaration update failed:', err);
+        return jsonResponse({ success: false, error: 'Guest age declaration could not be saved.' }, 500);
+      }
+    }
+
     if (url.pathname === '/api/guest/validate') {
       const token = url.searchParams.get('token') || (request.method === 'POST' ? ((await request.json().catch(() => ({}))) as any)?.token : null);
       if (token) {
