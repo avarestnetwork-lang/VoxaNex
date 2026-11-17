@@ -847,31 +847,8 @@ export default {
       return jsonResponse({ success: true }, 200, { 'Set-Cookie': cookie });
     }
 
-    // Optional proxy to external backend if configured
-    if (env?.BACKEND_URL && url.pathname.startsWith('/api/')) {
-      try {
-        const targetUrl = new URL(url.pathname + url.search, env.BACKEND_URL);
-        const proxyReq = new Request(targetUrl.toString(), {
-          method: request.method,
-          headers: request.headers,
-          body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
-          redirect: 'follow',
-        });
-        const proxyRes = await fetch(proxyReq);
-        const headers = new Headers(proxyRes.headers);
-        Object.entries(CORS_HEADERS).forEach(([k, v]) => headers.set(k, v));
-        return new Response(proxyRes.body, {
-          status: proxyRes.status,
-          statusText: proxyRes.statusText,
-          headers,
-        });
-      } catch (err) {
-        console.warn('Backend proxy unreachable, falling back to edge worker logic', err);
-      }
-    }
-
     // -------------------------------------------------------------------------
-    // R2 MEDIA UPLOAD, VALIDATION & SECURE RETRIEVAL ENDPOINTS (PHASE 1.1)
+    // R2 MEDIA UPLOAD, VALIDATION & SECURE RETRIEVAL ENDPOINTS (PHASE 1.1 REMEDIATION)
     // -------------------------------------------------------------------------
 
     // POST /api/media/upload/validate
@@ -889,7 +866,12 @@ export default {
 
       try {
         const body: any = await request.json().catch(() => ({}));
-        const { fileName, fileSize, mimeType } = body;
+        const { fileName, fileSize, mimeType, contextType } = body;
+        
+        if (contextType && contextType !== 'room' && contextType !== 'conversation') {
+          return jsonResponse({ valid: false, error: 'Invalid contextType. Must be room or conversation.' }, 400);
+        }
+
         const meta = validateMediaFileMetadata({
           fileName,
           fileSize: Number(fileSize),
@@ -904,6 +886,14 @@ export default {
 
     // POST /api/media/upload
     if (url.pathname === '/api/media/upload' && request.method === 'POST') {
+      const contentLengthHeader = request.headers.get('content-length');
+      if (contentLengthHeader) {
+        const len = parseInt(contentLengthHeader, 10);
+        if (Number.isFinite(len) && len > 15 * 1024 * 1024) {
+          return jsonResponse({ success: false, error: 'Payload Too Large: Request body exceeds 15 MB limit.' }, 413);
+        }
+      }
+
       const authResult = await authenticateRequest(
         request,
         url,
@@ -959,11 +949,22 @@ export default {
           }
         }
 
+        if (contextType !== 'room' && contextType !== 'conversation') {
+          return jsonResponse({ success: false, error: 'Invalid contextType. Must be room or conversation.' }, 400);
+        }
+
+        if (!contextId || typeof contextId !== 'string' || contextId.trim().length === 0) {
+          return jsonResponse({ success: false, error: 'Invalid or missing contextId.' }, 400);
+        }
+
         if (!fileBytes || fileBytes.byteLength === 0) {
           return jsonResponse({ success: false, error: 'No file data provided in upload request.' }, 400);
         }
 
-        // Binary signature validation
+        if (fileBytes.byteLength > 15 * 1024 * 1024) {
+          return jsonResponse({ success: false, error: 'Payload Too Large: File exceeds 15 MB limit.' }, 413);
+        }
+
         const binValidation = validateMediaBinary({
           fileName,
           mimeType,
@@ -974,9 +975,16 @@ export default {
           return jsonResponse({ success: false, error: binValidation.error || 'Binary validation failed.' }, 400);
         }
 
-        // Conversation authorization check if contextType is conversation
+        // Fail-closed conversation authorization check
         if (contextType === 'conversation') {
-          if (baseSupabaseUrl && supabaseServiceKey) {
+          if (!baseSupabaseUrl || !supabaseServiceKey) {
+            return jsonResponse({
+              success: false,
+              error: 'Service Unavailable: Supabase configuration required for conversation authorization.',
+            }, 503);
+          }
+
+          try {
             const partsUrl = `${baseSupabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(contextId)}&select=user_id,guest_id`;
             const partsRes = await fetch(partsUrl, {
               headers: {
@@ -984,19 +992,31 @@ export default {
                 'Authorization': `Bearer ${supabaseServiceKey}`,
               },
             });
-            if (partsRes.ok) {
-              const rows: any[] = await partsRes.json().catch(() => []);
-              const isParticipant = Array.isArray(rows) && rows.some(r => r.user_id === authResult.verifiedUserId || r.guest_id === authResult.verifiedUserId);
-              if (!isParticipant) {
-                return jsonResponse({ success: false, error: 'Unauthorized: Caller is not a participant in this conversation.' }, 403);
-              }
+
+            if (!partsRes.ok) {
+              return jsonResponse({
+                success: false,
+                error: `Database error verifying conversation membership (HTTP ${partsRes.status}).`,
+              }, 502);
             }
+
+            const rows: any[] = await partsRes.json().catch(() => []);
+            if (!Array.isArray(rows)) {
+              return jsonResponse({ success: false, error: 'Invalid participant data format.' }, 502);
+            }
+
+            const verifiedId = authResult.verifiedUserId;
+            const isParticipant = rows.some(r => r.user_id === verifiedId || r.guest_id === verifiedId);
+            if (!isParticipant) {
+              return jsonResponse({ success: false, error: 'Forbidden: Caller is not a participant in this conversation.' }, 403);
+            }
+          } catch (dbErr: any) {
+            return jsonResponse({ success: false, error: 'Database error verifying conversation membership.' }, 503);
           }
         }
 
         const uploadId = `med_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-        const categoryFolder = binValidation.category === 'image' ? 'images' : 'audio';
-        const objectKey = `media/${categoryFolder}/${uploadId}.${binValidation.extension}`;
+        const objectKey = `media/objects/${uploadId}`;
 
         const customMetadata = {
           mediaId: uploadId,
@@ -1005,10 +1025,11 @@ export default {
           ownerType: authResult.isGuestCaller ? 'guest' : 'member',
           ownerId: authResult.verifiedUserId,
           canonicalMime: binValidation.canonicalMime,
+          extension: binValidation.extension,
           originalFileName: binValidation.sanitizedOriginalName || fileName,
           fileSize: String(fileBytes.byteLength),
           uploadedAt: new Date().toISOString(),
-          metadataVersion: '1.1',
+          metadataVersion: '1.2',
         };
 
         await env.CHAT_MEDIA.put(objectKey, fileBytes, {
@@ -1060,15 +1081,8 @@ export default {
       }
 
       try {
-        const listed = await env.CHAT_MEDIA.list({ prefix: 'media/' });
-        let matchedObj: any = null;
-
-        for (const obj of listed.objects) {
-          if (obj.key.includes(cleanId)) {
-            matchedObj = await env.CHAT_MEDIA.get(obj.key);
-            break;
-          }
-        }
+        const objectKey = `media/objects/${cleanId}`;
+        const matchedObj = await env.CHAT_MEDIA.get(objectKey);
 
         if (!matchedObj || !matchedObj.body) {
           return jsonResponse({ success: false, error: 'Media object not found.' }, 404);
@@ -1078,8 +1092,16 @@ export default {
         const contextType = meta.contextType;
         const contextId = meta.contextId;
 
-        if (contextType === 'conversation' && contextId) {
-          if (baseSupabaseUrl && supabaseServiceKey) {
+        // Fail-closed conversation authorization check for private media
+        if (contextType === 'conversation') {
+          if (!baseSupabaseUrl || !supabaseServiceKey) {
+            return jsonResponse({
+              success: false,
+              error: 'Service Unavailable: Supabase configuration required for conversation authorization.',
+            }, 503);
+          }
+
+          try {
             const partsUrl = `${baseSupabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(contextId)}&select=user_id,guest_id`;
             const partsRes = await fetch(partsUrl, {
               headers: {
@@ -1087,20 +1109,36 @@ export default {
                 'Authorization': `Bearer ${supabaseServiceKey}`,
               },
             });
-            if (partsRes.ok) {
-              const rows: any[] = await partsRes.json().catch(() => []);
-              const isParticipant = Array.isArray(rows) && rows.some(r => r.user_id === authResult.verifiedUserId || r.guest_id === authResult.verifiedUserId);
-              if (!isParticipant) {
-                return jsonResponse({ success: false, error: 'Forbidden: Unauthorized access to private conversation media.' }, 403);
-              }
+
+            if (!partsRes.ok) {
+              return jsonResponse({ success: false, error: 'Database error verifying conversation membership.' }, 502);
             }
+
+            const rows: any[] = await partsRes.json().catch(() => []);
+            if (!Array.isArray(rows)) {
+              return jsonResponse({ success: false, error: 'Invalid participant data format.' }, 502);
+            }
+
+            const verifiedId = authResult.verifiedUserId;
+            const isParticipant = rows.some(r => r.user_id === verifiedId || r.guest_id === verifiedId);
+            if (!isParticipant) {
+              return jsonResponse({ success: false, error: 'Forbidden: Unauthorized access to private conversation media.' }, 403);
+            }
+          } catch (dbErr: any) {
+            return jsonResponse({ success: false, error: 'Database error verifying conversation membership.' }, 503);
           }
         }
 
         const contentType = matchedObj.httpMetadata?.contentType || meta.canonicalMime || 'application/octet-stream';
         const headers = new Headers(CORS_HEADERS);
         headers.set('Content-Type', contentType);
-        headers.set('Cache-Control', 'public, max-age=86400');
+        headers.set('X-Content-Type-Options', 'nosniff');
+
+        if (contextType === 'conversation') {
+          headers.set('Cache-Control', 'private, no-store');
+        } else {
+          headers.set('Cache-Control', 'public, max-age=86400');
+        }
 
         return new Response(matchedObj.body, {
           status: 200,
@@ -1109,6 +1147,29 @@ export default {
       } catch (err: any) {
         console.error('[Worker] R2 Media Retrieval Error:', err);
         return jsonResponse({ success: false, error: 'Error retrieving media object.' }, 500);
+      }
+    }
+
+    // Optional proxy to external backend if configured
+    if (env?.BACKEND_URL && url.pathname.startsWith('/api/')) {
+      try {
+        const targetUrl = new URL(url.pathname + url.search, env.BACKEND_URL);
+        const proxyReq = new Request(targetUrl.toString(), {
+          method: request.method,
+          headers: request.headers,
+          body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
+          redirect: 'follow',
+        });
+        const proxyRes = await fetch(proxyReq);
+        const headers = new Headers(proxyRes.headers);
+        Object.entries(CORS_HEADERS).forEach(([k, v]) => headers.set(k, v));
+        return new Response(proxyRes.body, {
+          status: proxyRes.status,
+          statusText: proxyRes.statusText,
+          headers,
+        });
+      } catch (err) {
+        console.warn('Backend proxy unreachable, falling back to edge worker logic', err);
       }
     }
 
