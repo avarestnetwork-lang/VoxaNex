@@ -509,6 +509,27 @@ async function runTests() {
       const guestEntrySrc = readSource('src/pages/GuestEntryPage.tsx');
       const publicChatSrc = readSource('src/pages/PublicChatPage.tsx');
       const routerSrc = readSource('src/context/RouterContext.tsx');
+      const authServiceSrc = readSource('src/services/authService.ts');
+      const authContextSrc = readSource('src/context/AuthContext.tsx');
+
+      // Member registration stores the self-declaration in Auth metadata without changing profiles schema.
+      assert(
+        authServiceSrc.includes('age_declaration_accepted: Boolean(ageDeclarationAccepted)') &&
+          authServiceSrc.includes('ageDeclarationAccepted: Boolean(metadata.age_declaration_accepted)'),
+        'Member 18+ declaration is stored at signup and restored from Auth metadata'
+      );
+      assert(
+        authContextSrc.includes('authService.declareAge18()') &&
+          authContextSrc.includes('guestSessionService.declareAge18()') &&
+          authContextSrc.includes('declareAge18: (isGuestSession?: boolean)'),
+        'Age declaration persistence selects the correct guest or member session service'
+      );
+      assert(
+        guestEntrySrc.includes('registerWithAccount(email, password, accountNickname.trim(), gender, adultConfirmed)') &&
+          guestEntrySrc.includes('declareAge18(false)') &&
+          guestEntrySrc.includes('declareAge18(user.isGuest)'),
+        'Registration and age-gate flows persist the declaration before continuing'
+      );
 
       // RoomDirectory & RoomLanding reuse resolveRoomJoinNavigation
       assert(roomDirSrc.includes('resolveRoomJoinNavigation('), 'RoomDirectoryPage delegates join to resolveRoomJoinNavigation');
