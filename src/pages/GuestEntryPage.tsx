@@ -268,7 +268,7 @@ export const GuestEntryPage: React.FC = () => {
       }
 
       if (adultConfirmed) {
-        const ageResult = await declareAge18();
+        const ageResult = await declareAge18(false);
         if (!ageResult.success) {
           setAccountError(ageResult.error || 'Unable to save your 18+ declaration. Please try again.');
           setLoading(false);
@@ -362,7 +362,7 @@ export const GuestEntryPage: React.FC = () => {
 
     setGuestError(null);
     setLoading(true);
-    const ageResult = await declareAge18();
+    const ageResult = await declareAge18(user.isGuest);
     setLoading(false);
     if (!ageResult.success) {
       setGuestError(ageResult.error || (language === 'bn'
