@@ -771,6 +771,122 @@ async function runSuite() {
       assert(rawStored?.customMetadata?.metadataVersion === '1.2', 'E5.2: Metadata version 1.2 persisted');
     }
 
+    // E6: Object with missing contextType metadata rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_missing_context_type';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_missing_context_type',
+          contextId: 'general',
+          metadataVersion: '1.2',
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_missing_context_type', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E6: Missing contextType metadata returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E6.1: Missing contextType never receives public cache headers');
+      const data: any = await res.json();
+      assert(data.success === false, 'E6.2: Missing contextType returns error response');
+    }
+
+    // E7: Object with unsupported contextType metadata rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_unsupported_context_type';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_unsupported_context_type',
+          contextType: 'broadcast_channel',
+          contextId: 'chan_123',
+          metadataVersion: '1.2',
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_unsupported_context_type', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E7: Unsupported contextType returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E7.1: Unsupported contextType never receives public cache headers');
+    }
+
+    // E8: Object with missing or empty contextId metadata rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_empty_context_id';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_empty_context_id',
+          contextType: 'room',
+          contextId: '   ',
+          metadataVersion: '1.2',
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_empty_context_id', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E8: Empty contextId metadata returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E8.1: Empty contextId never receives public cache headers');
+    }
+
+    // E9: Object with conversation contextType but invalid UUID rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_invalid_conv_uuid';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_invalid_conv_uuid',
+          contextType: 'conversation',
+          contextId: 'not-a-valid-uuid-12345',
+          metadataVersion: '1.2',
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_invalid_conv_uuid', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E9: Conversation media with non-UUID contextId returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E9.1: Malformed conversation media never receives public cache headers');
+    }
+
+    // E10: Object with malformed/unsupported metadataVersion rejected (400, no public cache)
+    {
+      const testKey = 'media/objects/med_bad_meta_version';
+      await mockR2.put(testKey, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: 'med_bad_meta_version',
+          contextType: 'room',
+          contextId: 'general',
+          metadataVersion: '99.0_incompatible',
+        },
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/med_bad_meta_version', {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'E10: Incompatible metadataVersion returns HTTP 400');
+      const cacheControl = res.headers.get('Cache-Control') || '';
+      assert(!cacheControl.includes('public'), 'E10.1: Incompatible metadataVersion never receives public cache headers');
+    }
+
     // -------------------------------------------------------------------------
     // CATEGORY F: Routing Priority & Proxy Bypass
     // -------------------------------------------------------------------------

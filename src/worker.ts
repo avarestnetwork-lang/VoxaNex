@@ -1271,11 +1271,47 @@ export default {
         }
 
         const meta = matchedObj.customMetadata || {};
-        const contextType = meta.contextType;
-        const contextId = meta.contextId;
 
-        // Fail-closed authorization checks
+        // 1. Strict metadata validation: accept only exact context types
+        const rawContextType = typeof meta.contextType === 'string' ? meta.contextType.trim() : '';
+        if (rawContextType !== 'room' && rawContextType !== 'conversation') {
+          return jsonResponse({
+            success: false,
+            error: 'Malformed or unsupported media context type.',
+          }, 400);
+        }
+        const contextType = rawContextType as 'room' | 'conversation';
+
+        // 2. Reject missing, empty, or malformed contextId
+        const contextId = typeof meta.contextId === 'string' ? meta.contextId.trim() : '';
+        if (!contextId) {
+          return jsonResponse({
+            success: false,
+            error: 'Missing or empty media context identifier.',
+          }, 400);
+        }
+
+        // 3. Validate metadataVersion if present or required by storage contract
+        if (typeof meta.metadataVersion !== 'undefined') {
+          const metaVer = typeof meta.metadataVersion === 'string' ? meta.metadataVersion.trim() : '';
+          if (!metaVer || metaVer !== '1.2') {
+            return jsonResponse({
+              success: false,
+              error: 'Malformed or unsupported media metadata version.',
+            }, 400);
+          }
+        }
+
+        // 4. Context-specific fail-closed authorization checks
         if (contextType === 'conversation') {
+          // Require valid conversation UUID
+          if (!UUID_REGEX.test(contextId)) {
+            return jsonResponse({
+              success: false,
+              error: 'Invalid conversation identifier format.',
+            }, 400);
+          }
+
           const participantCheck = await verifyConversationParticipant(
             contextId,
             authResult,
@@ -1285,11 +1321,16 @@ export default {
             return participantCheck.errorResponse!;
           }
         } else if (contextType === 'room') {
+          // Require non-empty room identifier and enforce adult room gate
           if (isAdultRoom(contextId) && !isAuthorizedForAdultRoom(authResult)) {
-            return jsonResponse({ success: false, error: 'Age verification required to view media from adult rooms.' }, 403);
+            return jsonResponse({
+              success: false,
+              error: 'Age verification required to view media from adult rooms.',
+            }, 403);
           }
         }
 
+        // 5. Safe response construction (executed ONLY after all metadata and authorization checks pass)
         const contentType = matchedObj.httpMetadata?.contentType || meta.canonicalMime || 'application/octet-stream';
         const headers = new Headers(CORS_HEADERS);
         headers.set('Content-Type', contentType);
@@ -1297,7 +1338,7 @@ export default {
 
         if (contextType === 'conversation') {
           headers.set('Cache-Control', 'private, no-store');
-        } else {
+        } else if (contextType === 'room') {
           headers.set('Cache-Control', 'public, max-age=86400');
         }
 
