@@ -22,6 +22,7 @@ export const GuestEntryPage: React.FC = () => {
     setAvatar,
     loginWithAccount,
     registerWithAccount,
+    declareAge18,
     requestPasswordReset,
     verify18,
     revoke18,
@@ -238,7 +239,7 @@ export const GuestEntryPage: React.FC = () => {
     setAccountNotice(null);
     try {
       if (activeTab === 'register') {
-        const res = await registerWithAccount(email, password, accountNickname.trim(), gender);
+        const res = await registerWithAccount(email, password, accountNickname.trim(), gender, adultConfirmed);
         if (!res.success) {
           setAccountError(res.error || 'Registration failed');
           setLoading(false);
@@ -267,7 +268,12 @@ export const GuestEntryPage: React.FC = () => {
       }
 
       if (adultConfirmed) {
-        verify18();
+        const ageResult = await declareAge18();
+        if (!ageResult.success) {
+          setAccountError(ageResult.error || 'Unable to save your 18+ declaration. Please try again.');
+          setLoading(false);
+          return;
+        }
       }
 
       setLoading(false);
@@ -331,7 +337,7 @@ export const GuestEntryPage: React.FC = () => {
     }
   };
 
-  const handleAuthenticatedAgeSubmit = (e: React.FormEvent) => {
+  const handleAuthenticatedAgeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const isNumericAge = /^\d+$/.test(age);
     const parsedAge = isNumericAge ? parseInt(age, 10) : NaN;
@@ -355,7 +361,15 @@ export const GuestEntryPage: React.FC = () => {
     }
 
     setGuestError(null);
-    verify18();
+    setLoading(true);
+    const ageResult = await declareAge18();
+    setLoading(false);
+    if (!ageResult.success) {
+      setGuestError(ageResult.error || (language === 'bn'
+        ? 'আপনার ১৮+ ঘোষণা সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।'
+        : 'Your 18+ declaration could not be saved. Please try again.'));
+      return;
+    }
     if (targetRoomSlug) {
       navigate('/chat', { roomId: targetRoom?.slug || targetRoomSlug });
     } else {
