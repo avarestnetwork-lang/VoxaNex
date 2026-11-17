@@ -13,7 +13,7 @@ interface AuthContextType {
   is18Verified: boolean;
   ageDeclarationAccepted: boolean;
   verify18: () => void;
-  declareAge18: () => Promise<{ success: boolean; error?: string }>;
+  declareAge18: (isGuestSession?: boolean) => Promise<{ success: boolean; error?: string }>;
   revoke18: () => void;
   setNickname: (nickname: string) => Promise<{ success: boolean; error?: string }>;
   setAvatar: (avatar: string) => Promise<{ success: boolean; error?: string }>;
@@ -23,7 +23,8 @@ interface AuthContextType {
     email: string,
     password: string,
     nickname: string,
-    gender?: string
+    gender?: string,
+    ageDeclarationAccepted?: boolean
   ) => Promise<{ success: boolean; error?: string; requiresEmailConfirmation?: boolean; message?: string }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
   passwordRecoveryStatus: PasswordRecoveryStatus;
@@ -326,8 +327,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
   };
 
-  const declareAge18 = async (): Promise<{ success: boolean; error?: string }> => {
-    const result = user.isGuest
+  const declareAge18 = async (isGuestSession: boolean = user.isGuest): Promise<{ success: boolean; error?: string }> => {
+    const result = isGuestSession
       ? await guestSessionService.declareAge18()
       : await authService.declareAge18();
 
