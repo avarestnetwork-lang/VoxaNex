@@ -52,6 +52,19 @@ const processAdsterraQueue = async () => {
   isAdsterraProcessing = false;
 };
 
+const hasValidCreative = (el: HTMLElement | null): boolean => {
+  if (!el) return false;
+  const hasIframe = Boolean(el.querySelector('iframe'));
+  const children = Array.from(el.children).filter(c => c.tagName !== 'SCRIPT');
+  if (children.length === 0) return false;
+  
+  return children.some(c => {
+    const isTagValid = c.tagName === 'IFRAME' || c.tagName === 'INS' || c.tagName === 'OBJECT' || c.tagName === 'EMBED' || c.tagName === 'IMG';
+    const hasDimensions = c.clientHeight > 0 || c.clientWidth > 0 || (c.children && c.children.length > 0) || (c.innerHTML && c.innerHTML.trim().length > 10);
+    return isTagValid && hasDimensions;
+  });
+};
+
 export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   slotId,
   provider: explicitProvider,
@@ -127,7 +140,25 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
     // Provider Specific Unit Resolution
     if (p === 'adsterra') {
-      if (position === 'top' || position === 'bottom' || position === 'footer' || position === 'content-gap') {
+      const posStr = String(position || '');
+      const isHorizontalBanner = 
+        posStr === 'top' || 
+        posStr === 'bottom' || 
+        posStr === 'footer' || 
+        posStr === 'content-gap' || 
+        posStr === 'status-inline' || 
+        posStr === 'message-inline' ||
+        slotId.includes('status-inline') ||
+        slotId.includes('message-inline') ||
+        slotId.includes('top') ||
+        slotId.includes('bottom');
+
+      if (isHorizontalBanner) {
+        const w = containerWidth !== null ? containerWidth : (typeof window !== 'undefined' ? window.innerWidth : 1024);
+        if (w < 320) return null;
+        if (w < 728) {
+          return ADSTERRA_CONFIG.banner320x50;
+        }
         return ADSTERRA_CONFIG.banner728x90;
       }
       if (position === 'sidebar-horizontal') {
@@ -455,9 +486,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         const checkTimer = setInterval(() => {
           if (!isMountedRef.current) { clearInterval(checkTimer); return; }
           const el = document.getElementById(domId);
-          // Strict creative verification: require iframe or non-script child element
-          const hasCreative = el && (Boolean(el.querySelector('iframe')) || (el.children.length > 0 && Array.from(el.children).some(child => child.tagName !== 'SCRIPT')));
-          if (hasCreative) {
+          if (hasValidCreative(el)) {
             clearInterval(checkTimer);
             updateStatus('filled');
           } else if (attempts >= 10) {
@@ -493,9 +522,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             return;
           }
           const wrapEl = document.getElementById(domId);
-          // Strict creative verification: require iframe or non-script child element distinct from empty wrapper
-          const hasCreative = wrapEl && (Boolean(wrapEl.querySelector('iframe')) || (wrapEl.children.length > 0 && Array.from(wrapEl.children).some(child => child.tagName !== 'SCRIPT')));
-          if (hasCreative) {
+          if (hasValidCreative(wrapEl)) {
             clearInterval(monetagTimer);
             updateStatus('filled');
           } else if (attempts >= 10) {

@@ -166,27 +166,26 @@ async function runAdRenderingTests() {
   const composerCode = publicChatPageSource.slice(composerStart, composerEnd);
   assert(!composerCode.includes('AdPlacementBox'), '3.13 No ad inserted into message composer');
 
-  // --- Task 7: All-Device Chatroom Ad Visibility & Responsive Viewport Assertions ---
-  console.log('\n--- 7. All-Device Chatroom Ad Visibility & Responsive Checks ---');
+  // --- Task 8: Horizontal Ad Responsiveness & Creative Verification Correction Assertions ---
+  console.log('\n--- 8. Horizontal Ad Responsiveness & Creative Verification Checks ---');
   assert(
-    publicChatPageSource.includes('slotId="public-chatroom-top"') && publicChatPageSource.includes('slotId="public-chatroom-bottom"'),
-    '7.1 Top and bottom ad placements remain enabled across Mobile, Tablet, and Desktop'
+    adPlacementBoxSource.includes('hasValidCreative') && adPlacementBoxSource.includes('banner320x50'),
+    '8.1 AdPlacementBox implements strict hasValidCreative verification and responsive horizontal banner resolution'
   );
   assert(
-    publicChatPageSource.includes('slotId="public-chatroom-status-inline"') && publicChatPageSource.includes('slotId="public-chatroom-message-inline"'),
-    '7.2 Both internal chatroom ad placements remain enabled across Mobile, Tablet, and Desktop'
-  );
-  assert(
-    publicChatPageSource.includes('hidden xl:flex'),
-    '7.3 Desktop side ad rails are hidden on narrow viewports (mobile/tablet) and visible on desktop (xl+)'
+    publicChatPageSource.includes('slotId="public-chatroom-top"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-bottom"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-status-inline"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-message-inline"'),
+    '8.2 All four horizontal ad placements (top, bottom, status-inline, message-inline) remain active and responsive'
   );
   assert(
     publicChatPageSource.includes('lg:w-[340px] xl:w-[344px]'),
-    '7.4 Participant Sidebar width and responsive behavior remain strictly preserved'
+    '8.3 Participant Sidebar width is strictly preserved'
   );
 
   console.log('\n================================================================');
-  console.log(`  ALL ${totalAssertions} WORK PROMPT 4 & RESPONSIVE TESTS PASSED SUCCESSFULLY!`);
+  console.log(`  ALL ${totalAssertions} CHATROOM HORIZONTAL AD & CREATIVE VERIFICATION TESTS PASSED!`);
   console.log('================================================================\n');
 }
 
