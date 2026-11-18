@@ -52,18 +52,206 @@ const processAdsterraQueue = async () => {
   isAdsterraProcessing = false;
 };
 
-const hasValidCreative = (el: HTMLElement | null): boolean => {
+export const hasValidCreative = (el: HTMLElement | null): boolean => {
   if (!el) return false;
-  const hasIframe = Boolean(el.querySelector('iframe'));
-  const children = Array.from(el.children).filter(c => c.tagName !== 'SCRIPT');
-  if (children.length === 0) return false;
-  
-  return children.some(c => {
-    const isTagValid = c.tagName === 'IFRAME' || c.tagName === 'INS' || c.tagName === 'OBJECT' || c.tagName === 'EMBED' || c.tagName === 'IMG';
-    const hasDimensions = c.clientHeight > 0 || c.clientWidth > 0 || (c.children && c.children.length > 0) || (c.innerHTML && c.innerHTML.trim().length > 10);
-    return isTagValid && hasDimensions;
-  });
+
+  // 1. Check for iframe creative
+  const iframe = el.querySelector('iframe');
+  if (iframe) {
+    const style = iframe.style;
+    const isHidden =
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      iframe.getAttribute('aria-hidden') === 'true';
+
+    if (!isHidden) {
+      const hasDimensions =
+        (iframe.offsetWidth > 0 && iframe.offsetHeight > 0) ||
+        (iframe.clientWidth > 0 && iframe.clientHeight > 0);
+      const hasSrc = Boolean(iframe.src && iframe.src !== 'about:blank' && iframe.src !== '');
+      const hasAttrs =
+        Boolean(iframe.getAttribute('width') && iframe.getAttribute('width') !== '0') &&
+        Boolean(iframe.getAttribute('height') && iframe.getAttribute('height') !== '0');
+
+      if (hasDimensions || hasSrc || hasAttrs) {
+        return true;
+      }
+    }
+  }
+
+  // 2. Check for image creative (e.g., native / image banner inside an anchor)
+  const img = el.querySelector('img');
+  if (img) {
+    const style = img.style;
+    const isHidden =
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      img.getAttribute('aria-hidden') === 'true';
+
+    if (!isHidden) {
+      const hasSrc = Boolean(img.src && img.src !== 'about:blank' && !img.src.endsWith('/'));
+      const hasDimensions =
+        img.naturalWidth > 0 ||
+        img.offsetWidth > 0 ||
+        img.clientWidth > 0 ||
+        (Boolean(img.getAttribute('width')) && img.getAttribute('width') !== '0');
+
+      if (hasSrc && hasDimensions) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Check for object / embed / video creative
+  const media = el.querySelector('object, embed, video') as HTMLElement | null;
+  if (media) {
+    if (media.offsetWidth > 0 || media.offsetHeight > 0 || media.clientWidth > 0) {
+      return true;
+    }
+  }
+
+  // Arbitrary wrapper elements, script tags, loading indicators, or empty containers are strictly rejected
+  return false;
 };
+
+export interface UnitResolutionParams {
+  provider: AdProvider;
+  position?: AdSlotPosition;
+  slotId: string;
+  isVertical?: boolean;
+  containerWidth: number | null;
+  primaryAdUnitId?: string;
+  isLiveChatScreen: boolean;
+}
+
+export function resolveEffectiveUnitId({
+  provider,
+  position,
+  slotId,
+  isVertical = false,
+  containerWidth,
+  primaryAdUnitId,
+  isLiveChatScreen,
+}: UnitResolutionParams): string | null {
+  // 1. Google AdSense is STRICTLY & NON-OVERRIDABLY EXCLUDED from chat/private screens
+  if (provider === 'adsense' && isLiveChatScreen) {
+    return null;
+  }
+
+  // 2. Check if provider is enabled in system configuration
+  if (provider === 'exoclick' && !EXOCLICK_CONFIG.enabled) return null;
+  if (provider === 'monetag' && !MONETAG_CONFIG.enabled) return null;
+  if (provider === 'juicyads' && !JUICYADS_CONFIG.enabled) return null;
+  if (provider === 'adsterra' && !ADSTERRA_CONFIG.enabled) return null;
+  if (provider === 'adsense' && !ADSENSE_CONFIG.enabled) return null;
+
+  // 3. Reject Publisher ID if accidentally passed as a unit ID
+  const sanitizedPrimaryUnit =
+    primaryAdUnitId && primaryAdUnitId !== ADSTERRA_CONFIG.publisherId
+      ? primaryAdUnitId
+      : undefined;
+
+  const posStr = String(position || '');
+  const isHorizontalBanner =
+    !isVertical &&
+    posStr !== 'left' &&
+    posStr !== 'right' &&
+    (posStr === 'top' ||
+      posStr === 'bottom' ||
+      posStr === 'footer' ||
+      posStr === 'content-gap' ||
+      posStr === 'sidebar-horizontal' ||
+      posStr === 'status-inline' ||
+      posStr === 'message-inline' ||
+      slotId.includes('status-inline') ||
+      slotId.includes('message-inline') ||
+      slotId.includes('top') ||
+      slotId.includes('bottom'));
+
+  // 4. Provider-Specific Unit Resolution
+  if (provider === 'adsterra') {
+    if (isHorizontalBanner) {
+      if (containerWidth !== null) {
+        if (containerWidth < 320) {
+          // Cannot safely accommodate a 320x50 banner without clipping or overflow
+          return null;
+        }
+        if (containerWidth < 728) {
+          // Narrow viewport (mobile or tablet): always select 320x50
+          // Must NEVER select 728x90 here even if primaryAdUnitId was passed
+          return ADSTERRA_CONFIG.banner320x50;
+        }
+        // containerWidth >= 728:
+        // Inline / participant placements should remain compact (320x50) to avoid excessive vertical space
+        if (
+          posStr === 'sidebar-horizontal' ||
+          slotId.includes('inline') ||
+          slotId.includes('participant')
+        ) {
+          return ADSTERRA_CONFIG.banner320x50;
+        }
+        return ADSTERRA_CONFIG.banner728x90;
+      }
+      // If containerWidth is null (pre-measurement / SSR), fall back to primaryAdUnitId or sensible default
+      if (
+        posStr === 'sidebar-horizontal' ||
+        slotId.includes('inline') ||
+        slotId.includes('participant')
+      ) {
+        return ADSTERRA_CONFIG.banner320x50;
+      }
+      return sanitizedPrimaryUnit || ADSTERRA_CONFIG.banner728x90;
+    }
+
+    if (isVertical || posStr === 'left' || posStr === 'right') {
+      return sanitizedPrimaryUnit || ADSTERRA_CONFIG.nativeUnitId;
+    }
+
+    if (posStr === 'sidebar-horizontal') {
+      if (containerWidth !== null && containerWidth < 320) return null;
+      return ADSTERRA_CONFIG.banner320x50;
+    }
+
+    return sanitizedPrimaryUnit || null;
+  }
+
+  if (provider === 'juicyads') {
+    if (isVertical || posStr === 'left' || posStr === 'right') {
+      if (containerWidth !== null && containerWidth < 300) {
+        return null;
+      }
+      return JUICYADS_CONFIG.zones.banner300x262; // 1131765
+    }
+
+    // Horizontal JuicyAds
+    if (containerWidth !== null && containerWidth < 300) {
+      return null;
+    }
+
+    if (posStr === 'top' || posStr === 'bottom') {
+      if (containerWidth !== null && containerWidth >= 728) {
+        return JUICYADS_CONFIG.zones.banner728x102; // 1131766
+      }
+      return JUICYADS_CONFIG.zones.banner300x62; // 1131763
+    }
+
+    return JUICYADS_CONFIG.zones.banner300x62; // 1131763
+  }
+
+  if (provider === 'exoclick') {
+    return EXOCLICK_CONFIG.zoneId; // 6087300
+  }
+
+  if (provider === 'monetag') {
+    return MONETAG_CONFIG.zoneId; // 12241585
+  }
+
+  if (provider === 'adsense') {
+    return ADSENSE_CONFIG.adSlot; // 1929701241
+  }
+
+  return sanitizedPrimaryUnit || null;
+}
 
 export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   slotId,
@@ -118,82 +306,20 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const currentProvider = explicitProvider || rotation[providerIndex];
 
   // Resolve Unit ID Atomically based on current provider
-  const getEffectiveUnitId = useCallback((p: AdProvider): string | null => {
-    // TASK 2: Google AdSense is STRICTLY & NON-OVERRIDABLY EXCLUDED from chat/private screens
-    if (p === 'adsense' && effectiveIsLiveChatScreen) {
-      return null;
-    }
-
-    // Check if provider is enabled in system configuration
-    if (p === 'exoclick' && !EXOCLICK_CONFIG.enabled) return null;
-    if (p === 'monetag' && !MONETAG_CONFIG.enabled) return null;
-    if (p === 'juicyads' && !JUICYADS_CONFIG.enabled) return null;
-    if (p === 'adsterra' && !ADSTERRA_CONFIG.enabled) return null;
-    if (p === 'adsense' && !ADSENSE_CONFIG.enabled) return null;
-
-    // Reject Publisher ID if accidentally passed as a unit ID
-    if (primaryAdUnitId && primaryAdUnitId === ADSTERRA_CONFIG.publisherId) {
-      // Invalid unit ID
-    } else if (primaryAdUnitId && p === rotation[0]) {
-      return primaryAdUnitId;
-    }
-
-    // Provider Specific Unit Resolution
-    if (p === 'adsterra') {
-      const posStr = String(position || '');
-      const isHorizontalBanner = 
-        posStr === 'top' || 
-        posStr === 'bottom' || 
-        posStr === 'footer' || 
-        posStr === 'content-gap' || 
-        posStr === 'status-inline' || 
-        posStr === 'message-inline' ||
-        slotId.includes('status-inline') ||
-        slotId.includes('message-inline') ||
-        slotId.includes('top') ||
-        slotId.includes('bottom');
-
-      if (isHorizontalBanner) {
-        const w = containerWidth !== null ? containerWidth : (typeof window !== 'undefined' ? window.innerWidth : 1024);
-        if (w < 320) return null;
-        if (w < 728) {
-          return ADSTERRA_CONFIG.banner320x50;
-        }
-        return ADSTERRA_CONFIG.banner728x90;
-      }
-      if (position === 'sidebar-horizontal') {
-        return ADSTERRA_CONFIG.banner320x50;
-      }
-      if (isVertical || position === 'left' || position === 'right') {
-        return ADSTERRA_CONFIG.nativeUnitId;
-      }
-    }
-
-    if (p === 'exoclick') return EXOCLICK_CONFIG.zoneId;
-    if (p === 'monetag') return MONETAG_CONFIG.zoneId;
-
-    if (p === 'juicyads') {
-      if (isVertical || position === 'left' || position === 'right') {
-        if (containerWidth !== null && containerWidth < 300) {
-          return null;
-        }
-        return JUICYADS_CONFIG.zones.banner300x262; // 1131765
-      }
-      if (containerWidth && containerWidth >= 728) {
-        return JUICYADS_CONFIG.zones.banner728x102; // 1131766
-      }
-      if (containerWidth && containerWidth >= 300) {
-        return JUICYADS_CONFIG.zones.banner300x62; // 1131763
-      }
-      return null;
-    }
-
-    if (p === 'adsense') {
-      return ADSENSE_CONFIG.adSlot; // 1929701241
-    }
-
-    return null;
-  }, [primaryAdUnitId, rotation, position, isVertical, effectiveIsLiveChatScreen, containerWidth]);
+  const getEffectiveUnitId = useCallback(
+    (p: AdProvider): string | null => {
+      return resolveEffectiveUnitId({
+        provider: p,
+        position,
+        slotId,
+        isVertical,
+        containerWidth,
+        primaryAdUnitId,
+        isLiveChatScreen: effectiveIsLiveChatScreen,
+      });
+    },
+    [position, slotId, isVertical, containerWidth, primaryAdUnitId, effectiveIsLiveChatScreen]
+  );
 
   const effectiveUnitId = getEffectiveUnitId(currentProvider);
 
@@ -222,7 +348,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     
     const updateWidth = () => {
       if (adRef.current) {
-        setContainerWidth(adRef.current.offsetWidth);
+        const w = adRef.current.offsetWidth;
+        setContainerWidth(prev => (prev === w ? prev : w));
       }
     };
     
@@ -315,10 +442,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             return;
           }
           const insEl = document.getElementById(domId);
-          const hasChildren = insEl && insEl.children.length > 0;
-          const hasIframe = insEl && Boolean(insEl.querySelector('iframe'));
-
-          if (hasChildren || hasIframe) {
+          if (hasValidCreative(insEl)) {
             clearInterval(checkFillTimer);
             updateStatus('filled');
           } else if (attempts >= 8) {
@@ -405,7 +529,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             const checkNativeFill = setInterval(() => {
               if (!isMountedRef.current) { clearInterval(checkNativeFill); resolve(); return; }
               const el = document.getElementById(containerId);
-              if (el && el.children.length > 0) {
+              if (hasValidCreative(el)) {
                 clearInterval(checkNativeFill);
                 updateStatus('filled');
                 resolve();
@@ -442,8 +566,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           script.onload = () => {
             const bannerTimer = setTimeout(() => {
               if (!isMountedRef.current) { resolve(); return; }
-              const hasIframe = adRef.current?.querySelector('iframe');
-              if (hasIframe && hasIframe.offsetHeight > 0) {
+              if (hasValidCreative(adRef.current)) {
                 updateStatus('filled');
               } else {
                 updateStatus('unfilled');
