@@ -9,7 +9,6 @@ import { formatDhakaTime } from '../utils/date';
 import { databaseService, isCanonicalRoomId } from '../services/databaseService';
 import { guestSessionService } from '../services/guestSessionService';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabaseClient';
-import { BanglishHelperBar } from '../components/layout/BanglishHelperBar';
 import { EmojiPicker } from '../components/chat/EmojiPicker';
 import { GifPicker } from '../components/chat/GifPicker';
 import { LinkPreviewCard } from '../components/chat/LinkPreviewCard';
@@ -1440,6 +1439,16 @@ export const PublicChatPage: React.FC = () => {
               <span className="text-slate-500 hidden md:inline shrink-0">Asia/Dhaka</span>
             </div>
 
+            {/* Placement A — Status-strip advertisement */}
+            <div className="px-3 py-1 bg-[#0a0f1d] border-b border-slate-800/80 shrink-0 flex justify-center">
+              <AdPlacementBox
+                slotId="public-chatroom-status-inline"
+                adUnitId={ADSTERRA_CONFIG.banner320x50}
+                position="sidebar-horizontal"
+                className="px-0 shrink-0"
+              />
+            </div>
+
             {/* Load Older Messages Banner */}
             {hasMoreHistory && (
               <div className="p-2 text-center border-b border-slate-800/50 bg-[#090e1a]/90 shrink-0">
@@ -1460,147 +1469,166 @@ export const PublicChatPage: React.FC = () => {
               onScroll={handleScrollMessages}
               className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-1.5"
             >
-              {messages.map((msg, idx) => {
-                const isMe = msg.senderId === user.id;
-                const isMentioned =
-                  user.nickname &&
-                  msg.content?.toLowerCase().includes(`@${user.nickname.toLowerCase()}`);
+              {(() => {
+                const totalChatMsgs = messages.filter((m) => !m.isSystem).length;
+                let chatMsgCount = 0;
 
-                // System message notice
-                if (msg.isSystem) {
-                  return (
-                    <div
-                      key={`${msg.id}-${idx}`}
-                      className="p-3 my-2 rounded-xl bg-[#111728]/90 border border-slate-800 text-xs text-slate-300 flex items-start gap-2.5 max-w-xl mx-auto shadow-sm"
-                    >
-                      <span className="text-lg select-none shrink-0">{msg.senderAvatar}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-cyan-300 text-[11px] mb-0.5">
-                          {msg.senderNickname}
-                        </div>
-                        <p className="leading-relaxed break-words">{msg.content}</p>
-                      </div>
-                      <span className="text-[10px] text-slate-500 font-mono shrink-0">
-                        {formatDhakaTime(msg.timestamp, language)}
-                      </span>
-                    </div>
-                  );
-                }
+                return messages.map((msg, idx) => {
+                  const isMe = msg.senderId === user.id;
+                  const isMentioned =
+                    user.nickname &&
+                    msg.content?.toLowerCase().includes(`@${user.nickname.toLowerCase()}`);
 
-                // Normal message row with alternating subtle background
-                return (
-                  <div
-                    key={`${msg.id}-${idx}`}
-                    className={`group flex items-start gap-2.5 p-2 sm:px-3 sm:py-2.5 rounded-xl transition-colors ${
-                      idx % 2 === 0 ? 'bg-[#0d1424]/40' : 'bg-transparent'
-                    } hover:bg-slate-800/30 ${
-                      isMentioned ? 'bg-amber-950/25 border border-amber-800/40 shadow-sm' : ''
-                    }`}
-                  >
-                    {/* Clickable Participant Avatar */}
-                    <button
-                      type="button"
-                      onClick={(e) =>
-                        handleUserClick(e, {
-                          id: msg.senderId,
-                          nickname: msg.senderNickname,
-                          avatar: msg.senderAvatar,
-                        })
-                      }
-                      className="w-8 h-8 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-sm shrink-0 select-none hover:scale-105 hover:border-cyan-500 transition-all cursor-pointer shadow-sm"
-                      title="Click user options"
-                    >
-                      {msg.senderAvatar}
-                    </button>
-
-                    {/* Message Details */}
-                    <div className="flex-1 min-w-0">
-                      {/* Name, Gender, Timestamp Bar */}
-                      <div className="flex items-center justify-between gap-2 mb-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                          {/* Clickable Nickname */}
-                          <button
-                            type="button"
-                            onClick={(e) =>
-                              handleUserClick(e, {
-                                id: msg.senderId,
-                                nickname: msg.senderNickname,
-                                avatar: msg.senderAvatar,
-                              })
-                            }
-                            className={`font-bold text-xs truncate hover:underline cursor-pointer text-left ${getGenderColor(
-                              onlineMembers.find((m) => m.id === msg.senderId)?.gender
-                            )}`}
-                          >
+                  // System message notice
+                  if (msg.isSystem) {
+                    return (
+                      <div
+                        key={`${msg.id}-${idx}`}
+                        className="p-3 my-2 rounded-xl bg-[#111728]/90 border border-slate-800 text-xs text-slate-300 flex items-start gap-2.5 max-w-xl mx-auto shadow-sm"
+                      >
+                        <span className="text-lg select-none shrink-0">{msg.senderAvatar}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-cyan-300 text-[11px] mb-0.5">
                             {msg.senderNickname}
-                          </button>
-
-                          {/* Gender sign */}
-                          <GenderBadge
-                            gender={onlineMembers.find((m) => m.id === msg.senderId)?.gender}
-                          />
-
-                          {isMe && (
-                            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-violet-950 text-violet-300 border border-violet-800">
-                              You
-                            </span>
-                          )}
+                          </div>
+                          <p className="leading-relaxed break-words">{msg.content}</p>
                         </div>
-
-                        {/* Light gray formatted timestamp */}
-                        <span className="text-[10px] text-slate-500 font-mono shrink-0 select-none">
-                          [{formatDhakaTime(msg.timestamp, language)}]
+                        <span className="text-[10px] text-slate-500 font-mono shrink-0">
+                          {formatDhakaTime(msg.timestamp, language)}
                         </span>
                       </div>
+                    );
+                  }
 
-                      {/* Content with mention parsing */}
-                      {msg.content && (
-                        <div className="text-xs text-slate-200 leading-relaxed break-words whitespace-pre-wrap">
-                          {renderMessageContent(msg.content)}
-                        </div>
-                      )}
+                  chatMsgCount++;
+                  const showMessageInlineAd = chatMsgCount === 5 && totalChatMsgs >= 6;
 
-                      {/* Attached Media (GIF / Image / Audio) */}
-                      {msg.mediaUrl && (
-                        <div className="mt-2 rounded-xl overflow-hidden border border-slate-700/60 max-w-xs shadow-md">
-                          <SecureMediaRenderer
-                            mediaUrl={msg.mediaUrl}
-                            mediaType={msg.mediaType}
-                            alt="Shared media"
-                            className="w-full max-h-48 object-cover"
-                            isGuest={user.isGuest}
-                            userId={user.id}
-                          />
-                        </div>
-                      )}
+                  // Normal message row with alternating subtle background
+                  return (
+                    <React.Fragment key={`${msg.id}-${idx}`}>
+                      <div
+                        className={`group flex items-start gap-2.5 p-2 sm:px-3 sm:py-2.5 rounded-xl transition-colors ${
+                          idx % 2 === 0 ? 'bg-[#0d1424]/40' : 'bg-transparent'
+                        } hover:bg-slate-800/30 ${
+                          isMentioned ? 'bg-amber-950/25 border border-amber-800/40 shadow-sm' : ''
+                        }`}
+                      >
+                        {/* Clickable Participant Avatar */}
+                        <button
+                          type="button"
+                          onClick={(e) =>
+                            handleUserClick(e, {
+                              id: msg.senderId,
+                              nickname: msg.senderNickname,
+                              avatar: msg.senderAvatar,
+                            })
+                          }
+                          className="w-8 h-8 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-sm shrink-0 select-none hover:scale-105 hover:border-cyan-500 transition-all cursor-pointer shadow-sm"
+                          title="Click user options"
+                        >
+                          {msg.senderAvatar}
+                        </button>
 
-                      {/* Safe link preview card */}
-                      {msg.linkPreview && <LinkPreviewCard preview={msg.linkPreview} />}
-
-                      {/* Delivery status or failure retry */}
-                      {isMe && (
-                        <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px]">
-                          {msg.status === 'sending' && (
-                            <span className="text-violet-300 font-mono">Sending...</span>
-                          )}
-                          {msg.status === 'failed' && (
-                            <div className="flex items-center gap-1 text-rose-300">
-                              <span>{msg.errorReason || 'Failed'}</span>
+                        {/* Message Details */}
+                        <div className="flex-1 min-w-0">
+                          {/* Name, Gender, Timestamp Bar */}
+                          <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                              {/* Clickable Nickname */}
                               <button
-                                onClick={() => handleRetry(msg)}
-                                className="underline hover:text-white flex items-center gap-0.5 ml-1 cursor-pointer"
+                                type="button"
+                                onClick={(e) =>
+                                  handleUserClick(e, {
+                                    id: msg.senderId,
+                                    nickname: msg.senderNickname,
+                                    avatar: msg.senderAvatar,
+                                  })
+                                }
+                                className={`font-bold text-xs truncate hover:underline cursor-pointer text-left ${getGenderColor(
+                                  onlineMembers.find((m) => m.id === msg.senderId)?.gender
+                                )}`}
                               >
-                                <RotateCcw className="w-2.5 h-2.5" />
-                                <span>Retry</span>
+                                {msg.senderNickname}
                               </button>
+
+                              {/* Gender sign */}
+                              <GenderBadge
+                                gender={onlineMembers.find((m) => m.id === msg.senderId)?.gender}
+                              />
+
+                              {isMe && (
+                                <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-violet-950 text-violet-300 border border-violet-800">
+                                  You
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Light gray formatted timestamp */}
+                            <span className="text-[10px] text-slate-500 font-mono shrink-0 select-none">
+                              [{formatDhakaTime(msg.timestamp, language)}]
+                            </span>
+                          </div>
+
+                          {/* Content with mention parsing */}
+                          {msg.content && (
+                            <div className="text-xs text-slate-200 leading-relaxed break-words whitespace-pre-wrap">
+                              {renderMessageContent(msg.content)}
+                            </div>
+                          )}
+
+                          {/* Attached Media (GIF / Image / Audio) */}
+                          {msg.mediaUrl && (
+                            <div className="mt-2 rounded-xl overflow-hidden border border-slate-700/60 max-w-xs shadow-md">
+                              <SecureMediaRenderer
+                                mediaUrl={msg.mediaUrl}
+                                mediaType={msg.mediaType}
+                                alt="Shared media"
+                                className="w-full max-h-48 object-cover"
+                                isGuest={user.isGuest}
+                                userId={user.id}
+                              />
+                            </div>
+                          )}
+
+                          {/* Safe link preview card */}
+                          {msg.linkPreview && <LinkPreviewCard preview={msg.linkPreview} />}
+
+                          {/* Delivery status or failure retry */}
+                          {isMe && (
+                            <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px]">
+                              {msg.status === 'sending' && (
+                                <span className="text-violet-300 font-mono">Sending...</span>
+                              )}
+                              {msg.status === 'failed' && (
+                                <div className="flex items-center gap-1 text-rose-300">
+                                  <span>{msg.errorReason || 'Failed'}</span>
+                                  <button
+                                    onClick={() => handleRetry(msg)}
+                                    className="underline hover:text-white flex items-center gap-0.5 ml-1 cursor-pointer"
+                                  >
+                                    <RotateCcw className="w-2.5 h-2.5" />
+                                    <span>Retry</span>
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
+                      </div>
+                      {showMessageInlineAd && (
+                        <div key={`${msg.id}-inline-ad`} className="my-2 px-1">
+                          <AdPlacementBox
+                            slotId="public-chatroom-message-inline"
+                            adUnitId={ADSTERRA_CONFIG.banner320x50}
+                            position="sidebar-horizontal"
+                            className="px-0 shrink-0"
+                          />
+                        </div>
                       )}
-                    </div>
-                  </div>
-                );
-              })}
+                    </React.Fragment>
+                  );
+                });
+              })()}
               <div ref={messagesEndRef} />
             </div>
 
@@ -1617,7 +1645,6 @@ export const PublicChatPage: React.FC = () => {
 
             {/* Composer Dock */}
             <div className="p-3 border-t border-slate-800 bg-[#0c1222] space-y-2 shrink-0 relative">
-              <BanglishHelperBar onInsertText={(phrase) => setInputText((prev) => (prev ? `${prev} ${phrase}` : phrase))} />
 
               <input
                 ref={imageInputRef}

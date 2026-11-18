@@ -82,20 +82,12 @@ export const isAdSenseExcludedRoute = (currentRoute: string): boolean => {
  */
 export const getProviderRotation = (position: string, isLiveChatScreen: boolean = true): AdProvider[] => {
   if (isLiveChatScreen) {
-    if (position === 'sidebar-horizontal') {
-      return ['adsterra', 'juicyads'];
-    }
-    if (position === 'top' || position === 'bottom') {
-      return ['adsterra', 'juicyads'];
-    }
-    if (position === 'left' || position === 'right') {
-      return ['adsterra'];
-    }
-    return ['adsterra', 'juicyads'];
+    // Chatroom routes: exactly 4 eligible networks (adsterra, juicyads, exoclick, monetag)
+    return ['adsterra', 'juicyads', 'exoclick', 'monetag'];
   }
 
-  // Non-chat pages (e.g. static landing pages, blog, about, contact)
-  return ['adsense', 'adsterra', 'juicyads'];
+  // Non-chat pages: all 5 networks (adsense, adsterra, juicyads, exoclick, monetag)
+  return ['adsense', 'adsterra', 'juicyads', 'exoclick', 'monetag'];
 };
 
 export const FOOTER_EXCLUDED_ROUTES = [

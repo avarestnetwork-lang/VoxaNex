@@ -115,32 +115,53 @@ async function runAdRenderingTests() {
   assert(MONETAG_CONFIG.enabled === false, '3.6 Monetag remains disabled');
   assert(EXOCLICK_CONFIG.enabled === false, '3.7 ExoClick remains disabled');
 
+  const chatroomRotation = getProviderRotation('top', true);
+  assert(
+    chatroomRotation.length === 4 &&
+      chatroomRotation.includes('adsterra') &&
+      chatroomRotation.includes('juicyads') &&
+      chatroomRotation.includes('exoclick') &&
+      chatroomRotation.includes('monetag') &&
+      !chatroomRotation.includes('adsense'),
+    '3.8 Chatroom rotation strictly enforces exactly 4 networks without AdSense'
+  );
+
+  const nonChatroomRotation = getProviderRotation('top', false);
+  assert(
+    nonChatroomRotation.length === 5 &&
+      nonChatroomRotation.includes('adsense') &&
+      nonChatroomRotation.includes('adsterra') &&
+      nonChatroomRotation.includes('juicyads') &&
+      nonChatroomRotation.includes('exoclick') &&
+      nonChatroomRotation.includes('monetag'),
+    '3.9 Non-chatroom rotation includes all 5 networks including AdSense'
+  );
+
   const publicChatPageSource = fs.readFileSync(
     path.resolve('src/pages/PublicChatPage.tsx'),
     'utf-8'
   );
   assert(
     publicChatPageSource.includes('slotId="public-chatroom-top"') &&
-      publicChatPageSource.includes('slotId="public-chatroom-bottom"'),
-    '3.8 Public chat page ad placement structure remains intact'
+      publicChatPageSource.includes('slotId="public-chatroom-left"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-right"') &&
+      publicChatPageSource.includes('slotId="participant-box-horizontal"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-bottom"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-status-inline"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-message-inline"'),
+    '3.10 All 7 chatroom ad placement IDs (original 5 plus status-inline and message-inline) are present'
   );
   assert(
     publicChatPageSource.includes('h-[calc(100vh-5.5rem)] min-h-[580px]'),
-    '3.9 Central chatroom container dimensions are strictly preserved'
+    '3.11 Central chatroom container dimensions are strictly preserved'
   );
 
-  const messageStreamStart = publicChatPageSource.indexOf('messages.map(');
-  const messageStreamEnd = publicChatPageSource.indexOf('handleScrollMessages');
-  const messageStreamCode = publicChatPageSource.slice(
-    messageStreamStart,
-    messageStreamEnd > messageStreamStart ? messageStreamEnd : messageStreamStart + 5000
-  );
-  assert(!messageStreamCode.includes('AdPlacementBox'), '3.10 No ad inserted into message stream');
+  assert(!publicChatPageSource.includes('BanglishHelperBar'), '3.12 BanglishHelperBar is successfully removed');
 
   const composerStart = publicChatPageSource.indexOf('<form onSubmit={handleSendMessage}');
   const composerEnd = publicChatPageSource.indexOf('</form>', composerStart) + 7;
   const composerCode = publicChatPageSource.slice(composerStart, composerEnd);
-  assert(!composerCode.includes('AdPlacementBox'), '3.11 No ad inserted into message composer');
+  assert(!composerCode.includes('AdPlacementBox'), '3.13 No ad inserted into message composer');
 
   console.log('\n================================================================');
   console.log(`  ALL ${totalAssertions} WORK PROMPT 6 TESTS PASSED SUCCESSFULLY!`);
