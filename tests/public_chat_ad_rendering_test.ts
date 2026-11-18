@@ -112,8 +112,11 @@ async function runAdRenderingTests() {
   assert(JUICYADS_CONFIG.zones.banner300x62 === '1131763', '3.3 JuicyAds 300x62 Zone ID is 1131763');
   assert(JUICYADS_CONFIG.zones.banner728x102 === '1131766', '3.4 JuicyAds 728x102 Zone ID is 1131766');
   assert(MONETAG_CONFIG.scriptUrl === 'https://nap5k.com/tag.min.js', '3.5 Monetag script URL is correct');
-  assert(MONETAG_CONFIG.enabled === false, '3.6 Monetag remains disabled');
-  assert(EXOCLICK_CONFIG.enabled === false, '3.7 ExoClick remains disabled');
+  assert(MONETAG_CONFIG.enabled === true, '3.6 Monetag is enabled');
+  assert(EXOCLICK_CONFIG.enabled === true, '3.7 ExoClick is enabled');
+  assert(EXOCLICK_CONFIG.zoneId === '6087300', '3.7a ExoClick zone ID is 6087300');
+  assert(EXOCLICK_CONFIG.elementClass === 'eas6a97888e2', '3.7b ExoClick element class is eas6a97888e2');
+  assert(MONETAG_CONFIG.zoneId === '12241585', '3.7c Monetag zone ID is 12241585');
 
   const chatroomRotation = getProviderRotation('top', true);
   assert(

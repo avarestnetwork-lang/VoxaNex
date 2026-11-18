@@ -138,16 +138,17 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       }
     }
 
+    if (p === 'exoclick') return EXOCLICK_CONFIG.zoneId;
+    if (p === 'monetag') return MONETAG_CONFIG.zoneId;
+
     if (p === 'juicyads') {
-      if (position === 'top' || position === 'bottom' || position === 'footer' || position === 'content-gap') {
+      if (containerWidth && containerWidth >= 728) {
         return JUICYADS_CONFIG.zones.banner728x102; // 1131766
-      }
-      if (position === 'sidebar-horizontal') {
-        return JUICYADS_CONFIG.zones.banner300x62; // 1131763
       }
       if (isVertical || position === 'left' || position === 'right') {
         return JUICYADS_CONFIG.zones.banner300x262; // 1131765
       }
+      return JUICYADS_CONFIG.zones.banner300x62; // 1131763
     }
 
     if (p === 'adsense') {
@@ -155,7 +156,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     }
 
     return null;
-  }, [primaryAdUnitId, rotation, position, isVertical, effectiveIsLiveChatScreen]);
+  }, [primaryAdUnitId, rotation, position, isVertical, effectiveIsLiveChatScreen, containerWidth]);
 
   const effectiveUnitId = getEffectiveUnitId(currentProvider);
 
@@ -406,6 +407,66 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
       adsterraLoadQueue.push({ id: slotId, load: loadTask });
       processAdsterraQueue();
+    } else if (currentProvider === 'exoclick') {
+      try {
+        if (!adRef.current) { updateStatus('error'); return; }
+        const domId = `exoclick-ins-${EXOCLICK_CONFIG.zoneId}-${slotId}`;
+        adRef.current.innerHTML = `<ins id="${domId}" class="${EXOCLICK_CONFIG.elementClass}" data-zoneid="${EXOCLICK_CONFIG.zoneId}" data-keywords="chat,bangla,desi,dating,social,friendship,community,online,international,south-asia,bangladesh,india,usa,united-states,uk,united-kingdom,canada,australia,new-zealand,ireland,germany,france,netherlands,sweden,norway,denmark,switzerland"></ins>`;
+
+        let script = document.querySelector(`script[src="${EXOCLICK_CONFIG.scriptUrl}"]`) as HTMLScriptElement;
+        if (!script) {
+          script = document.createElement('script');
+          script.async = true;
+          script.src = EXOCLICK_CONFIG.scriptUrl;
+          script.onerror = () => { if (isMountedRef.current) updateStatus('error'); };
+          document.head.appendChild(script);
+        }
+
+        const win = window as any;
+        win.AdProvider = win.AdProvider || [];
+        win.AdProvider.push({ zone: Number(EXOCLICK_CONFIG.zoneId), el: domId });
+
+        let attempts = 0;
+        const checkTimer = setInterval(() => {
+          if (!isMountedRef.current) { clearInterval(checkTimer); return; }
+          const el = document.getElementById(domId);
+          if (el && (el.children.length > 0 || el.querySelector('iframe'))) {
+            clearInterval(checkTimer);
+            updateStatus('filled');
+          } else if (attempts >= 6) {
+            clearInterval(checkTimer);
+            updateStatus('unfilled');
+          }
+          attempts++;
+        }, 300);
+        activeTimersRef.current.push(checkTimer);
+      } catch {
+        updateStatus('error');
+      }
+    } else if (currentProvider === 'monetag') {
+      try {
+        if (!adRef.current) { updateStatus('error'); return; }
+        const domId = `monetag-wrap-${MONETAG_CONFIG.zoneId}-${slotId}`;
+        adRef.current.innerHTML = `<div id="${domId}"></div>`;
+
+        let script = document.querySelector(`script[src="${MONETAG_CONFIG.scriptUrl}"]`) as HTMLScriptElement;
+        if (!script) {
+          script = document.createElement('script');
+          script.async = true;
+          script.src = MONETAG_CONFIG.scriptUrl;
+          script.setAttribute('data-zone', MONETAG_CONFIG.zoneId);
+          script.onerror = () => { if (isMountedRef.current) updateStatus('error'); };
+          document.head.appendChild(script);
+        }
+
+        const tagTimer = setTimeout(() => {
+          if (!isMountedRef.current) return;
+          updateStatus('filled');
+        }, 500);
+        activeTimersRef.current.push(tagTimer);
+      } catch {
+        updateStatus('error');
+      }
     } else {
       updateStatus('unfilled');
     }
@@ -434,7 +495,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   };
 
   if (renderAd) return <div {...containerProps}>{renderAd()}</div>;
-  if (currentProvider === 'adsterra' || currentProvider === 'juicyads') return <div {...containerProps} />;
+  if (currentProvider === 'adsterra' || currentProvider === 'juicyads' || currentProvider === 'exoclick' || currentProvider === 'monetag') {
+    return <div {...containerProps} />;
+  }
 
   return (
     <div {...containerProps}>

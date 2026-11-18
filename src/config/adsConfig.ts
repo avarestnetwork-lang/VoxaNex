@@ -16,7 +16,7 @@ export const EXOCLICK_CONFIG = {
   scriptUrl: 'https://a.magsrv.com/ad-provider.js',
   elementClass: 'eas6a97888e2',
   verificationFile: '28befc4532cb8837aa59edffca607a5a.html',
-  enabled: false, // Inactive in visual chat slots until zone format & dimensions are confirmed from publisher dashboard
+  enabled: true,
 };
 
 export const JUICYADS_CONFIG = {
@@ -28,14 +28,14 @@ export const JUICYADS_CONFIG = {
     banner728x102: '1131766',
     banner300x112: '1131767',
   },
-  enabled: true, // Active for verified compatible placements
+  enabled: true,
 };
 
 export const MONETAG_CONFIG = {
   verificationTag: '416e702dd7d166aafe13107553d43a38',
   zoneId: '12241585',
   scriptUrl: 'https://nap5k.com/tag.min.js',
-  enabled: false, // Inactive in visual chat slots until zone format is confirmed from publisher dashboard
+  enabled: true,
 };
 
 export const ADSENSE_CONFIG = {
