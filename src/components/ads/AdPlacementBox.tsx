@@ -150,9 +150,52 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
     }
   }
 
-  // 2B. Media Creatives (object, embed, video)
-  const mediaList = Array.from(el.querySelectorAll?.('object, embed, video') || []) as HTMLElement[];
-  for (const media of mediaList) {
+  // 2B. Video Creatives (<video>)
+  const videos = Array.from(el.querySelectorAll?.('video') || []) as HTMLVideoElement[];
+  for (const video of videos) {
+    const style = video.style || {};
+    const isHidden =
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      style.opacity === '0' ||
+      video.getAttribute('aria-hidden') === 'true' ||
+      video.hidden === true;
+
+    if (isHidden) continue;
+
+    const hasRenderedDimensions =
+      ((video.offsetWidth || 0) > 0 && (video.offsetHeight || 0) > 0) ||
+      ((video.clientWidth || 0) > 0 && (video.clientHeight || 0) > 0);
+
+    if (!hasRenderedDimensions) continue;
+
+    const src = video.getAttribute('src') || video.src || '';
+    const hasSourceTag = Boolean(video.querySelector?.('source[src]'));
+    const hasValidSrc = Boolean((src && src !== 'about:blank') || hasSourceTag);
+    if (!hasValidSrc) continue;
+
+    // Defensible check: Video must have actual media data (positive videoWidth/videoHeight and readyState >= 2)
+    // An empty video element with only CSS or HTML dimensions must not qualify as confirmed filled.
+    const hasMediaDimensions = (video.videoWidth || 0) > 0 && (video.videoHeight || 0) > 0;
+    const isReady = typeof video.readyState === 'number' ? video.readyState >= 2 : hasMediaDimensions;
+
+    if (hasMediaDimensions && isReady) {
+      return {
+        status: 'confirmed_filled',
+        isConfirmedFilled: true,
+        isUnverifiable: false,
+        creativeDetected: true,
+        reason: 'Video creative verified with active media data (positive videoWidth and readyState)',
+      };
+    }
+
+    // Video has rendered dimensions and src, but media data is not yet loaded/confirmed.
+    // Do NOT falsely confirm as filled.
+  }
+
+  // 2C. Embedded Media (<object>, <embed>)
+  const embeddedMedia = Array.from(el.querySelectorAll?.('object, embed') || []) as HTMLElement[];
+  for (const media of embeddedMedia) {
     const style = media.style || {};
     const isHidden =
       style.display === 'none' ||
@@ -165,18 +208,26 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
       ((media.offsetWidth || 0) > 0 && (media.offsetHeight || 0) > 0) ||
       ((media.clientWidth || 0) > 0 && (media.clientHeight || 0) > 0);
 
-    if (hasRenderedDimensions) {
-      return {
-        status: 'confirmed_filled',
-        isConfirmedFilled: true,
-        isUnverifiable: false,
-        creativeDetected: true,
-        reason: 'Media creative rendered with positive dimensions',
-      };
-    }
+    if (!hasRenderedDimensions) continue;
+
+    const data = media.getAttribute('data') || (media as any).data || '';
+    const src = media.getAttribute('src') || (media as any).src || '';
+    const hasValidSource = Boolean((data && data !== 'about:blank') || (src && src !== 'about:blank'));
+    if (!hasValidSource) continue;
+
+    // Defensible check: Object and embed elements must NOT be classified as confirmed filled
+    // from dimensions alone. Classify conservatively as 'unverifiable' (creative detected with source and dimensions).
+    return {
+      status: 'unverifiable',
+      isConfirmedFilled: false,
+      isUnverifiable: true,
+      creativeDetected: true,
+      reason: 'Embedded object/embed media detected with dimensions, classified conservatively as unverifiable without native load proof',
+    };
   }
 
-  // 2C. Iframe Creatives (cross-origin and same-origin)
+  // 2D. Iframe Creatives (cross-origin and same-origin)
+  let hasPendingLoadingIframe = false;
   const iframes = Array.from(el.querySelectorAll?.('iframe') || []) as HTMLIFrameElement[];
   for (const iframe of iframes) {
     const style = iframe.style || {};
@@ -188,6 +239,11 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
       iframe.hidden === true;
 
     if (isHidden) continue;
+
+    // If the iframe fired an error event, skip candidate
+    if (iframe.getAttribute('data-ad-error') === 'true' || (iframe as any)._adError === true) {
+      continue;
+    }
 
     // Rule: An iframe merely having a non-empty src or width/height attributes
     // without actual rendered dimensions must NOT qualify!
@@ -206,46 +262,96 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
 
     if (!hasValidSrc) continue;
 
-    // Strongest available evidence verification:
+    // Attach lifecycle listeners if not already present
+    if (!iframe.getAttribute('data-ad-loaded') && !iframe.getAttribute('data-ad-error')) {
+      try {
+        iframe.addEventListener?.('load', () => {
+          iframe.setAttribute('data-ad-loaded', 'true');
+        }, { once: true });
+        iframe.addEventListener?.('error', () => {
+          iframe.setAttribute('data-ad-error', 'true');
+        }, { once: true });
+      } catch {
+        // safe fallback
+      }
+    }
+
     // Attempt same-origin check without violating cross-origin browser security restrictions
     let isSameOrigin = false;
-    let sameOriginFilled = false;
+    let sameOriginDoc: Document | null = null;
 
     try {
       const doc = iframe.contentDocument || iframe.contentWindow?.document;
       if (doc) {
         isSameOrigin = true;
-        const body = doc.body;
-        if (body) {
-          const hasChildren = body.children && body.children.length > 0;
-          const hasText = (body.innerText || body.textContent || '').trim().length > 0;
-          const hasDims = (body.offsetWidth || 0) > 0 && (body.offsetHeight || 0) > 0;
-          if ((hasChildren || hasText) && (hasDims || body.scrollHeight > 0)) {
-            sameOriginFilled = true;
-          }
-        }
+        sameOriginDoc = doc;
       }
     } catch {
       // Cross-origin iframe: expected and handled safely
       isSameOrigin = false;
     }
 
-    if (isSameOrigin) {
-      if (sameOriginFilled) {
-        return {
-          status: 'confirmed_filled',
-          isConfirmedFilled: true,
-          isUnverifiable: false,
-          creativeDetected: true,
-          reason: 'Same-origin iframe creative verified with rendered document content',
-        };
+    // Check observable load lifecycle
+    const isLoaded =
+      iframe.getAttribute('data-ad-loaded') === 'true' ||
+      (iframe as any)._adLoaded === true ||
+      (iframe as any).complete === true ||
+      Boolean(isSameOrigin && sameOriginDoc?.readyState === 'complete');
+
+    if (!isLoaded) {
+      // Iframe has appeared in DOM with URL and dimensions, but is still loading.
+      // Do NOT classify as 'unverifiable' or 'unfilled' prematurely.
+      hasPendingLoadingIframe = true;
+      continue;
+    }
+
+    if (isSameOrigin && sameOriginDoc) {
+      const body = sameOriginDoc.body;
+      if (body) {
+        // Task 3: Defensible creative-specific signal inside same-origin iframe
+        // Arbitrary text, loading placeholders, and empty wrappers must NOT automatically qualify as confirmed filled!
+        const innerImg = body.querySelector?.('img') as HTMLImageElement | null;
+        const innerVideo = body.querySelector?.('video') as HTMLVideoElement | null;
+        const innerAdCreative = body.querySelector?.('[data-ad-status="filled"], [data-ad-creative="true"]');
+        const innerLink = body.querySelector?.('a[href]') as HTMLAnchorElement | null;
+
+        const hasValidInnerImg = Boolean(
+          innerImg &&
+          (innerImg.naturalWidth || 0) > 0 &&
+          (innerImg.naturalHeight || 0) > 0 &&
+          (innerImg.offsetWidth || 0) > 0 &&
+          (innerImg.offsetHeight || 0) > 0 &&
+          innerImg.src && innerImg.src !== 'about:blank'
+        );
+
+        const hasValidInnerVideo = Boolean(
+          innerVideo &&
+          (innerVideo.videoWidth || 0) > 0 &&
+          (typeof innerVideo.readyState === 'number' ? innerVideo.readyState >= 2 : true)
+        );
+
+        const hasClickableBanner = Boolean(
+          innerLink &&
+          ((innerLink.offsetWidth || 0) > 0 && (innerLink.offsetHeight || 0) > 0) &&
+          (hasValidInnerImg || innerLink.querySelector?.('img, video, canvas'))
+        );
+
+        if (hasValidInnerImg || hasValidInnerVideo || innerAdCreative || hasClickableBanner) {
+          return {
+            status: 'confirmed_filled',
+            isConfirmedFilled: true,
+            isUnverifiable: false,
+            creativeDetected: true,
+            reason: 'Same-origin iframe creative verified with defensible creative asset (loaded image, media, or ad creative signal)',
+          };
+        }
       }
-      // Blank same-origin iframe: skip to evaluate next candidate
+      // Blank or arbitrary placeholder same-origin iframe: skip to evaluate next candidate
       continue;
     }
 
     // Cross-origin iframe:
-    // Visible, valid external URL, positive rendered dimensions.
+    // Completed observable load lifecycle, visible, valid external URL, positive rendered dimensions.
     // Document contents cannot be inspected under cross-origin security restrictions.
     // Must NOT be falsely reported as 'confirmed_filled'; explicitly returned as 'unverifiable'.
     return {
@@ -253,7 +359,17 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
       isConfirmedFilled: false,
       isUnverifiable: true,
       creativeDetected: true,
-      reason: 'Cross-origin iframe detected with valid URL and rendered dimensions; internal content unverifiable under browser security restrictions',
+      reason: 'Cross-origin iframe completed load with valid URL and rendered dimensions; internal content unverifiable under browser security restrictions',
+    };
+  }
+
+  if (hasPendingLoadingIframe) {
+    return {
+      status: 'request_attempted',
+      isConfirmedFilled: false,
+      isUnverifiable: false,
+      creativeDetected: true,
+      reason: 'Iframe creative detected in DOM but observable load lifecycle is still pending',
     };
   }
 
@@ -438,6 +554,46 @@ export function resolveEffectiveUnitId({
   return sanitizedPrimaryUnit || null;
 }
 
+export interface ProviderTransitionDecision {
+  shouldRotate: boolean;
+  nextIndex: number;
+  nextStatus: AdSlotStatus;
+  isTerminal: boolean;
+  action: 'rotate' | 'settle';
+}
+
+/**
+ * Computes deterministic provider rotation transition.
+ * Encapsulates the production transition logic used by AdPlacementBox and unit tests.
+ */
+export function computeProviderTransition(
+  status: 'filled' | 'unfilled' | 'error' | 'unverifiable',
+  currentIndex: number,
+  rotation: readonly AdProvider[],
+  explicitProvider?: AdProvider
+): ProviderTransitionDecision {
+  const isFailure = status === 'unfilled' || status === 'error';
+  const hasNext = !explicitProvider && currentIndex < rotation.length - 1;
+
+  if (isFailure && hasNext) {
+    return {
+      shouldRotate: true,
+      nextIndex: currentIndex + 1,
+      nextStatus: 'idle',
+      isTerminal: false,
+      action: 'rotate',
+    };
+  }
+
+  return {
+    shouldRotate: false,
+    nextIndex: currentIndex,
+    nextStatus: status,
+    isTerminal: true,
+    action: 'settle',
+  };
+}
+
 export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   slotId,
   provider: explicitProvider,
@@ -511,28 +667,47 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const updateStatus = useCallback((status: 'filled' | 'unfilled' | 'error' | 'unverifiable') => {
     if (!isMountedRef.current) return;
 
-    // Clear timers and observer upon reaching a conclusive/terminal status
+    // Clear timers and observer upon reaching a conclusive/terminal status or transition
     clearAllActiveTimers();
     disconnectObserver();
 
-    // Confirmed no-fill or provider error triggers rotation to next eligible provider.
-    // 'unverifiable' status (e.g. cross-origin iframe with rendered dimensions) maintains the ad
-    // in the layout to preserve monetization and avoid duplicate reloads, without falsely claiming confirmed filled.
-    if ((status === 'unfilled' || status === 'error') && !explicitProvider && providerIndex < rotation.length - 1) {
-      setProviderIndex(prev => prev + 1);
-      setAdStatus('idle');
+    const decision = computeProviderTransition(status, providerIndex, rotation, explicitProvider);
+
+    if (decision.shouldRotate) {
+      setProviderIndex(decision.nextIndex);
+      setAdStatus(decision.nextStatus);
     } else {
-      setAdStatus(status);
+      setAdStatus(decision.nextStatus);
       if (lastReportedStatusRef.current !== status) {
         lastReportedStatusRef.current = status;
         onStatusChange?.(status);
       }
     }
-  }, [onStatusChange, explicitProvider, providerIndex, rotation.length, clearAllActiveTimers, disconnectObserver]);
+  }, [onStatusChange, explicitProvider, providerIndex, rotation, clearAllActiveTimers, disconnectObserver]);
 
-  // 2. Lifecycle & Measurement
+  // 2. Lifecycle & Measurement (with capture-phase iframe load & error tracking)
   useEffect(() => {
     isMountedRef.current = true;
+    const container = adRef.current;
+
+    const handleCaptureLoad = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.tagName === 'IFRAME') {
+        target.setAttribute('data-ad-loaded', 'true');
+      }
+    };
+
+    const handleCaptureError = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.tagName === 'IFRAME') {
+        target.setAttribute('data-ad-error', 'true');
+      }
+    };
+
+    if (container) {
+      container.addEventListener('load', handleCaptureLoad, true);
+      container.addEventListener('error', handleCaptureError, true);
+    }
     
     const updateWidth = () => {
       if (adRef.current) {
@@ -547,6 +722,10 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     
     return () => {
       isMountedRef.current = false;
+      if (container) {
+        container.removeEventListener('load', handleCaptureLoad, true);
+        container.removeEventListener('error', handleCaptureError, true);
+      }
       clearAllActiveTimers();
       disconnectObserver();
       resizeObserver.disconnect();
@@ -637,6 +816,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           } else if (val.isUnverifiable) {
             clearInterval(checkFillTimer);
             updateStatus('unverifiable');
+          } else if (val.status === 'request_attempted') {
+            // Still in pre-load lifecycle phase: wait for load event or timeout
           } else if (attempts >= 8) {
             clearInterval(checkFillTimer);
             updateStatus('unfilled');
@@ -730,6 +911,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
                 clearInterval(checkNativeFill);
                 updateStatus('unverifiable');
                 resolve();
+              } else if (val.status === 'request_attempted') {
+                // Pre-load phase
               } else if (attempts >= 5) {
                 clearInterval(checkNativeFill);
                 updateStatus('unfilled');
@@ -816,6 +999,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           } else if (val.isUnverifiable) {
             clearInterval(checkTimer);
             updateStatus('unverifiable');
+          } else if (val.status === 'request_attempted') {
+            // Pre-load phase
           } else if (attempts >= 10) {
             clearInterval(checkTimer);
             updateStatus('unfilled');
@@ -856,6 +1041,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           } else if (val.isUnverifiable) {
             clearInterval(monetagTimer);
             updateStatus('unverifiable');
+          } else if (val.status === 'request_attempted') {
+            // Pre-load phase
           } else if (attempts >= 10) {
             clearInterval(monetagTimer);
             updateStatus('unfilled');
