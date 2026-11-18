@@ -13,6 +13,26 @@ import {
 
 export type AdSlotPosition = 'top' | 'bottom' | 'left' | 'right' | 'footer' | 'sidebar-horizontal' | 'content-gap';
 
+export type CreativeValidationStatus =
+  | 'empty'
+  | 'script_only'
+  | 'invalid'
+  | 'unfilled'
+  | 'request_attempted'
+  | 'creative_detected'
+  | 'confirmed_filled'
+  | 'unverifiable';
+
+export interface CreativeValidationResult {
+  status: CreativeValidationStatus;
+  isConfirmedFilled: boolean;
+  isUnverifiable: boolean;
+  creativeDetected: boolean;
+  reason: string;
+}
+
+export type AdSlotStatus = 'idle' | 'loading' | 'filled' | 'unfilled' | 'error' | 'unverifiable';
+
 export interface AdPlacementBoxProps {
   slotId: string;
   provider?: AdProvider;
@@ -21,7 +41,7 @@ export interface AdPlacementBoxProps {
   isVertical?: boolean;
   position?: AdSlotPosition;
   adUnitId?: string;
-  onStatusChange?: (status: 'filled' | 'unfilled' | 'error') => void;
+  onStatusChange?: (status: 'filled' | 'unfilled' | 'error' | 'unverifiable') => void;
   renderAd?: () => React.ReactNode;
   isLiveChatScreen?: boolean;
 }
@@ -52,66 +72,231 @@ const processAdsterraQueue = async () => {
   isAdsterraProcessing = false;
 };
 
+/**
+ * Inspects a candidate container DOM element and performs strict, defensible creative validation.
+ * Distinguishes confirmed filled, unverifiable, unfilled, empty, and script-only states.
+ */
+export const validateCreative = (el: HTMLElement | null): CreativeValidationResult => {
+  if (!el) {
+    return {
+      status: 'empty',
+      isConfirmedFilled: false,
+      isUnverifiable: false,
+      creativeDetected: false,
+      reason: 'Container element is null or undefined',
+    };
+  }
+
+  // 1. Provider-Documented Signals (e.g. Google AdSense data-ad-status attribute on ins)
+  const insAdSense = el.matches?.('ins[data-ad-status]')
+    ? el
+    : el.querySelector?.('ins[data-ad-status]');
+  if (insAdSense) {
+    const statusAttr = insAdSense.getAttribute('data-ad-status');
+    if (statusAttr === 'filled') {
+      return {
+        status: 'confirmed_filled',
+        isConfirmedFilled: true,
+        isUnverifiable: false,
+        creativeDetected: true,
+        reason: 'Provider documented signal: data-ad-status is filled',
+      };
+    }
+    if (statusAttr === 'unfilled') {
+      return {
+        status: 'unfilled',
+        isConfirmedFilled: false,
+        isUnverifiable: false,
+        creativeDetected: false,
+        reason: 'Provider documented signal: data-ad-status is unfilled',
+      };
+    }
+  }
+
+  // 2. Scan ALL candidate elements in the container (supports multiple creatives where earlier candidate is tracking/pixel)
+
+  // 2A. Image Creatives (e.g., Native banner image inside anchor or direct img)
+  const images = Array.from(el.querySelectorAll?.('img') || []) as HTMLImageElement[];
+  for (const img of images) {
+    const style = img.style || {};
+    const isHidden =
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      style.opacity === '0' ||
+      img.getAttribute('aria-hidden') === 'true' ||
+      img.hidden === true;
+
+    if (isHidden) continue;
+
+    const src = img.getAttribute('src') || img.src || '';
+    const hasValidSrc = Boolean(src && src !== 'about:blank' && !src.endsWith('/'));
+    if (!hasValidSrc) continue;
+
+    // Rule: offsetWidth / clientWidth alone does NOT qualify without successful image loading!
+    // Positive naturalWidth and naturalHeight verify actual image decoding and loading.
+    const isLoaded = (img.naturalWidth || 0) > 0 && (img.naturalHeight || 0) > 0;
+    const hasRenderedDimensions =
+      ((img.offsetWidth || 0) > 0 && (img.offsetHeight || 0) > 0) ||
+      ((img.clientWidth || 0) > 0 && (img.clientHeight || 0) > 0);
+
+    if (isLoaded && hasRenderedDimensions) {
+      return {
+        status: 'confirmed_filled',
+        isConfirmedFilled: true,
+        isUnverifiable: false,
+        creativeDetected: true,
+        reason: 'Image creative loaded successfully with positive natural and rendered dimensions',
+      };
+    }
+  }
+
+  // 2B. Media Creatives (object, embed, video)
+  const mediaList = Array.from(el.querySelectorAll?.('object, embed, video') || []) as HTMLElement[];
+  for (const media of mediaList) {
+    const style = media.style || {};
+    const isHidden =
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      media.getAttribute('aria-hidden') === 'true';
+
+    if (isHidden) continue;
+
+    const hasRenderedDimensions =
+      ((media.offsetWidth || 0) > 0 && (media.offsetHeight || 0) > 0) ||
+      ((media.clientWidth || 0) > 0 && (media.clientHeight || 0) > 0);
+
+    if (hasRenderedDimensions) {
+      return {
+        status: 'confirmed_filled',
+        isConfirmedFilled: true,
+        isUnverifiable: false,
+        creativeDetected: true,
+        reason: 'Media creative rendered with positive dimensions',
+      };
+    }
+  }
+
+  // 2C. Iframe Creatives (cross-origin and same-origin)
+  const iframes = Array.from(el.querySelectorAll?.('iframe') || []) as HTMLIFrameElement[];
+  for (const iframe of iframes) {
+    const style = iframe.style || {};
+    const isHidden =
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      style.opacity === '0' ||
+      iframe.getAttribute('aria-hidden') === 'true' ||
+      iframe.hidden === true;
+
+    if (isHidden) continue;
+
+    // Rule: An iframe merely having a non-empty src or width/height attributes
+    // without actual rendered dimensions must NOT qualify!
+    const hasRenderedDimensions =
+      ((iframe.offsetWidth || 0) > 0 && (iframe.offsetHeight || 0) > 0) ||
+      ((iframe.clientWidth || 0) > 0 && (iframe.clientHeight || 0) > 0);
+
+    if (!hasRenderedDimensions) continue;
+
+    const src = iframe.getAttribute('src') || iframe.src || '';
+    const srcdoc = iframe.getAttribute('srcdoc') || (iframe as any).srcdoc || '';
+    const hasValidSrc = Boolean(
+      (src && src !== 'about:blank' && src.trim() !== '') ||
+      (srcdoc && srcdoc.trim() !== '')
+    );
+
+    if (!hasValidSrc) continue;
+
+    // Strongest available evidence verification:
+    // Attempt same-origin check without violating cross-origin browser security restrictions
+    let isSameOrigin = false;
+    let sameOriginFilled = false;
+
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (doc) {
+        isSameOrigin = true;
+        const body = doc.body;
+        if (body) {
+          const hasChildren = body.children && body.children.length > 0;
+          const hasText = (body.innerText || body.textContent || '').trim().length > 0;
+          const hasDims = (body.offsetWidth || 0) > 0 && (body.offsetHeight || 0) > 0;
+          if ((hasChildren || hasText) && (hasDims || body.scrollHeight > 0)) {
+            sameOriginFilled = true;
+          }
+        }
+      }
+    } catch {
+      // Cross-origin iframe: expected and handled safely
+      isSameOrigin = false;
+    }
+
+    if (isSameOrigin) {
+      if (sameOriginFilled) {
+        return {
+          status: 'confirmed_filled',
+          isConfirmedFilled: true,
+          isUnverifiable: false,
+          creativeDetected: true,
+          reason: 'Same-origin iframe creative verified with rendered document content',
+        };
+      }
+      // Blank same-origin iframe: skip to evaluate next candidate
+      continue;
+    }
+
+    // Cross-origin iframe:
+    // Visible, valid external URL, positive rendered dimensions.
+    // Document contents cannot be inspected under cross-origin security restrictions.
+    // Must NOT be falsely reported as 'confirmed_filled'; explicitly returned as 'unverifiable'.
+    return {
+      status: 'unverifiable',
+      isConfirmedFilled: false,
+      isUnverifiable: true,
+      creativeDetected: true,
+      reason: 'Cross-origin iframe detected with valid URL and rendered dimensions; internal content unverifiable under browser security restrictions',
+    };
+  }
+
+  // 3. Fallback Classification for Non-Creative Containers
+  const allChildren = Array.from(el.querySelectorAll?.('*') || []);
+  const nonScriptChildren = allChildren.filter(c => c.tagName !== 'SCRIPT');
+
+  if (allChildren.length > 0 && nonScriptChildren.length === 0) {
+    return {
+      status: 'script_only',
+      isConfirmedFilled: false,
+      isUnverifiable: false,
+      creativeDetected: false,
+      reason: 'Container contains only script elements',
+    };
+  }
+
+  const textContent = el.textContent?.trim() || '';
+  if (allChildren.length === 0 && !textContent) {
+    return {
+      status: 'empty',
+      isConfirmedFilled: false,
+      isUnverifiable: false,
+      creativeDetected: false,
+      reason: 'Container is completely empty',
+    };
+  }
+
+  return {
+    status: 'unfilled',
+    isConfirmedFilled: false,
+    isUnverifiable: false,
+    creativeDetected: false,
+    reason: 'Container contains no qualifying creative (broken images, zero-dimension frames, or arbitrary non-creative DOM)',
+  };
+};
+
+/**
+ * Backward-compatible helper. Returns true ONLY for confirmed filled creatives.
+ * Unverifiable cross-origin iframes, broken images, and empty wrappers evaluate to false.
+ */
 export const hasValidCreative = (el: HTMLElement | null): boolean => {
-  if (!el) return false;
-
-  // 1. Check for iframe creative
-  const iframe = el.querySelector('iframe');
-  if (iframe) {
-    const style = iframe.style;
-    const isHidden =
-      style.display === 'none' ||
-      style.visibility === 'hidden' ||
-      iframe.getAttribute('aria-hidden') === 'true';
-
-    if (!isHidden) {
-      const hasDimensions =
-        (iframe.offsetWidth > 0 && iframe.offsetHeight > 0) ||
-        (iframe.clientWidth > 0 && iframe.clientHeight > 0);
-      const hasSrc = Boolean(iframe.src && iframe.src !== 'about:blank' && iframe.src !== '');
-      const hasAttrs =
-        Boolean(iframe.getAttribute('width') && iframe.getAttribute('width') !== '0') &&
-        Boolean(iframe.getAttribute('height') && iframe.getAttribute('height') !== '0');
-
-      if (hasDimensions || hasSrc || hasAttrs) {
-        return true;
-      }
-    }
-  }
-
-  // 2. Check for image creative (e.g., native / image banner inside an anchor)
-  const img = el.querySelector('img');
-  if (img) {
-    const style = img.style;
-    const isHidden =
-      style.display === 'none' ||
-      style.visibility === 'hidden' ||
-      img.getAttribute('aria-hidden') === 'true';
-
-    if (!isHidden) {
-      const hasSrc = Boolean(img.src && img.src !== 'about:blank' && !img.src.endsWith('/'));
-      const hasDimensions =
-        img.naturalWidth > 0 ||
-        img.offsetWidth > 0 ||
-        img.clientWidth > 0 ||
-        (Boolean(img.getAttribute('width')) && img.getAttribute('width') !== '0');
-
-      if (hasSrc && hasDimensions) {
-        return true;
-      }
-    }
-  }
-
-  // 3. Check for object / embed / video creative
-  const media = el.querySelector('object, embed, video') as HTMLElement | null;
-  if (media) {
-    if (media.offsetWidth > 0 || media.offsetHeight > 0 || media.clientWidth > 0) {
-      return true;
-    }
-  }
-
-  // Arbitrary wrapper elements, script tags, loading indicators, or empty containers are strictly rejected
-  return false;
+  return validateCreative(el).isConfirmedFilled;
 };
 
 export interface UnitResolutionParams {
@@ -271,14 +456,14 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const effectiveIsLiveChatScreen = isExcludedByRoute || Boolean(isLiveChatScreenProp);
 
   // 1. Mandatory Stable Hook Declarations
-  const [adStatus, setAdStatus] = useState<'idle' | 'loading' | 'filled' | 'unfilled' | 'error'>('idle');
+  const [adStatus, setAdStatus] = useState<AdSlotStatus>('idle');
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
   const [providerIndex, setProviderIndex] = useState(0);
 
   const adRef = useRef<HTMLDivElement | null>(null);
   const isMountedRef = useRef(true);
   const observerRef = useRef<MutationObserver | null>(null);
-  const lastReportedStatusRef = useRef<'filled' | 'unfilled' | 'error' | null>(null);
+  const lastReportedStatusRef = useRef<'filled' | 'unfilled' | 'error' | 'unverifiable' | null>(null);
   const activeTimersRef = useRef<Array<number | NodeJS.Timeout>>([]);
 
   const clearAllActiveTimers = useCallback(() => {
@@ -323,14 +508,17 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
   const effectiveUnitId = getEffectiveUnitId(currentProvider);
 
-  const updateStatus = useCallback((status: 'filled' | 'unfilled' | 'error') => {
+  const updateStatus = useCallback((status: 'filled' | 'unfilled' | 'error' | 'unverifiable') => {
     if (!isMountedRef.current) return;
 
-    // TASK 1: Clear timers when reaching terminal status
+    // Clear timers and observer upon reaching a conclusive/terminal status
     clearAllActiveTimers();
     disconnectObserver();
 
-    if (status !== 'filled' && !explicitProvider && providerIndex < rotation.length - 1) {
+    // Confirmed no-fill or provider error triggers rotation to next eligible provider.
+    // 'unverifiable' status (e.g. cross-origin iframe with rendered dimensions) maintains the ad
+    // in the layout to preserve monetization and avoid duplicate reloads, without falsely claiming confirmed filled.
+    if ((status === 'unfilled' || status === 'error') && !explicitProvider && providerIndex < rotation.length - 1) {
       setProviderIndex(prev => prev + 1);
       setAdStatus('idle');
     } else {
@@ -442,9 +630,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             return;
           }
           const insEl = document.getElementById(domId);
-          if (hasValidCreative(insEl)) {
+          const val = validateCreative(insEl);
+          if (val.isConfirmedFilled) {
             clearInterval(checkFillTimer);
             updateStatus('filled');
+          } else if (val.isUnverifiable) {
+            clearInterval(checkFillTimer);
+            updateStatus('unverifiable');
           } else if (attempts >= 8) {
             clearInterval(checkFillTimer);
             updateStatus('unfilled');
@@ -470,9 +662,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           if (adRef.current) {
             const obs = new MutationObserver(() => {
               const ins = adRef.current?.querySelector('ins');
-              const status = ins?.getAttribute('data-ad-status');
-              if (status === 'filled') updateStatus('filled');
-              else if (status === 'unfilled') updateStatus('unfilled');
+              const val = validateCreative(ins as HTMLElement);
+              if (val.isConfirmedFilled) updateStatus('filled');
+              else if (val.status === 'unfilled') updateStatus('unfilled');
             });
             obs.observe(adRef.current, { attributes: true, subtree: true });
             observerRef.current = obs;
@@ -481,8 +673,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           const adsenseTimeout = setTimeout(() => {
             if (!isMountedRef.current) return;
             const ins = adRef.current?.querySelector('ins');
-            const status = ins?.getAttribute('data-ad-status');
-            if (status !== 'filled') {
+            const val = validateCreative(ins as HTMLElement);
+            if (!val.isConfirmedFilled) {
               updateStatus('unfilled');
             }
           }, 3000);
@@ -529,9 +721,14 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             const checkNativeFill = setInterval(() => {
               if (!isMountedRef.current) { clearInterval(checkNativeFill); resolve(); return; }
               const el = document.getElementById(containerId);
-              if (hasValidCreative(el)) {
+              const val = validateCreative(el);
+              if (val.isConfirmedFilled) {
                 clearInterval(checkNativeFill);
                 updateStatus('filled');
+                resolve();
+              } else if (val.isUnverifiable) {
+                clearInterval(checkNativeFill);
+                updateStatus('unverifiable');
                 resolve();
               } else if (attempts >= 5) {
                 clearInterval(checkNativeFill);
@@ -566,8 +763,11 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           script.onload = () => {
             const bannerTimer = setTimeout(() => {
               if (!isMountedRef.current) { resolve(); return; }
-              if (hasValidCreative(adRef.current)) {
+              const val = validateCreative(adRef.current);
+              if (val.isConfirmedFilled) {
                 updateStatus('filled');
+              } else if (val.isUnverifiable) {
+                updateStatus('unverifiable');
               } else {
                 updateStatus('unfilled');
               }
@@ -609,9 +809,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         const checkTimer = setInterval(() => {
           if (!isMountedRef.current) { clearInterval(checkTimer); return; }
           const el = document.getElementById(domId);
-          if (hasValidCreative(el)) {
+          const val = validateCreative(el);
+          if (val.isConfirmedFilled) {
             clearInterval(checkTimer);
             updateStatus('filled');
+          } else if (val.isUnverifiable) {
+            clearInterval(checkTimer);
+            updateStatus('unverifiable');
           } else if (attempts >= 10) {
             clearInterval(checkTimer);
             updateStatus('unfilled');
@@ -645,9 +849,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             return;
           }
           const wrapEl = document.getElementById(domId);
-          if (hasValidCreative(wrapEl)) {
+          const val = validateCreative(wrapEl);
+          if (val.isConfirmedFilled) {
             clearInterval(monetagTimer);
             updateStatus('filled');
+          } else if (val.isUnverifiable) {
+            clearInterval(monetagTimer);
+            updateStatus('unverifiable');
           } else if (attempts >= 10) {
             clearInterval(monetagTimer);
             updateStatus('unfilled');

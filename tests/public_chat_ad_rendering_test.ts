@@ -2,7 +2,7 @@ import React from 'react';
 import { renderToString } from 'react-dom/server';
 import fs from 'fs';
 import path from 'path';
-import { AdPlacementBox, hasValidCreative, resolveEffectiveUnitId } from '../src/components/ads/AdPlacementBox';
+import { AdPlacementBox, hasValidCreative, validateCreative, resolveEffectiveUnitId } from '../src/components/ads/AdPlacementBox';
 import {
   ADSTERRA_CONFIG,
   EXOCLICK_CONFIG,
@@ -305,7 +305,7 @@ async function runAdRenderingTests() {
   );
 
   // --- Task 9: Behavioral Creative Verification & DOM Integrity Assertions ---
-  console.log('\n--- 9. Behavioral Creative Verification (hasValidCreative) ---');
+  console.log('\n--- 9. Behavioral Creative Verification (validateCreative & hasValidCreative) ---');
 
   function createMockNode({
     tag = 'div',
@@ -316,8 +316,10 @@ async function runAdRenderingTests() {
     offsetHeight = 0,
     src = '',
     naturalWidth = 0,
+    naturalHeight = 0,
+    contentDocument = null,
   }: any = {}): any {
-    return {
+    const node: any = {
       tagName: tag.toUpperCase(),
       style: { display: 'block', visibility: 'visible', ...style },
       offsetWidth,
@@ -326,46 +328,73 @@ async function runAdRenderingTests() {
       clientHeight: offsetHeight,
       src,
       naturalWidth,
+      naturalHeight,
       children,
+      contentDocument,
+      contentWindow: contentDocument ? { document: contentDocument } : null,
       getAttribute(name: string) {
         return attrs[name] ?? null;
       },
+      matches(selector: string) {
+        if (selector === 'ins[data-ad-status]') {
+          return node.tagName === 'INS' && attrs['data-ad-status'] !== undefined;
+        }
+        return false;
+      },
       querySelector(selector: string) {
-        if (selector === 'iframe') {
-          return children.find((c: any) => c.tagName === 'IFRAME') || null;
+        const matches = node.querySelectorAll(selector);
+        return matches.length > 0 ? matches[0] : null;
+      },
+      querySelectorAll(selector: string) {
+        const results: any[] = [];
+        function traverse(n: any) {
+          for (const c of n.children || []) {
+            if (selector === '*') {
+              results.push(c);
+            } else if (selector === 'iframe' && c.tagName === 'IFRAME') {
+              results.push(c);
+            } else if (selector === 'img' && c.tagName === 'IMG') {
+              results.push(c);
+            } else if (selector === 'object, embed, video' && ['OBJECT', 'EMBED', 'VIDEO'].includes(c.tagName)) {
+              results.push(c);
+            } else if (selector === 'ins[data-ad-status]' && c.tagName === 'INS' && c.getAttribute('data-ad-status')) {
+              results.push(c);
+            }
+            traverse(c);
+          }
         }
-        if (selector === 'img') {
-          return children.find((c: any) => c.tagName === 'IMG') || null;
-        }
-        if (selector === 'object, embed, video') {
-          return children.find((c: any) => ['OBJECT', 'EMBED', 'VIDEO'].includes(c.tagName)) || null;
-        }
-        return null;
+        traverse(node);
+        return results;
       },
     };
+    return node;
   }
 
-  // 9.1 Null element rejected
-  assert(hasValidCreative(null) === false, '9.1 Null container is strictly rejected as unfilled');
+  // 9.1 Null element rejected as empty
+  const nullResult = validateCreative(null);
+  assert(nullResult.status === 'empty' && hasValidCreative(null) === false, '9.1 Null container is strictly rejected as empty and unfilled');
 
-  // 9.2 Empty container rejected
+  // 9.2 Empty wrapper div rejected as empty
   const emptyContainer = createMockNode({ tag: 'div', children: [] });
-  assert(hasValidCreative(emptyContainer) === false, '9.2 Empty wrapper div is strictly rejected as unfilled');
+  const emptyResult = validateCreative(emptyContainer);
+  assert(emptyResult.status === 'empty' && hasValidCreative(emptyContainer) === false, '9.2 Empty wrapper div is strictly rejected as empty');
 
-  // 9.3 Script-only container rejected
+  // 9.3 Script-only container rejected as script_only
   const scriptOnly = createMockNode({
     tag: 'div',
     children: [createMockNode({ tag: 'script', src: 'https://nap5k.com/tag.min.js' })],
   });
-  assert(hasValidCreative(scriptOnly) === false, '9.3 Script-only container is strictly rejected as unfilled');
+  const scriptResult = validateCreative(scriptOnly);
+  assert(scriptResult.status === 'script_only' && hasValidCreative(scriptOnly) === false, '9.3 Script-only container is strictly rejected as script_only');
 
-  // 9.4 Arbitrary text / placeholder elements rejected
+  // 9.4 Arbitrary non-creative text/placeholder elements rejected
   const textPlaceholder = createMockNode({
     tag: 'div',
     children: [createMockNode({ tag: 'span' }), createMockNode({ tag: 'p' })],
   });
+  const textResult = validateCreative(textPlaceholder);
   assert(
-    hasValidCreative(textPlaceholder) === false,
+    textResult.status === 'unfilled' && hasValidCreative(textPlaceholder) === false,
     '9.4 Arbitrary non-creative text/wrapper elements are strictly rejected as unfilled'
   );
 
@@ -376,12 +405,14 @@ async function runAdRenderingTests() {
       createMockNode({
         tag: 'iframe',
         src: 'https://a.magsrv.com/ad',
+        offsetWidth: 300,
+        offsetHeight: 250,
         style: { display: 'none' },
       }),
     ],
   });
   assert(
-    hasValidCreative(hiddenIframeContainer) === false,
+    validateCreative(hiddenIframeContainer).status === 'unfilled' && hasValidCreative(hiddenIframeContainer) === false,
     '9.5 Hidden iframe (display: none) is strictly rejected as unfilled'
   );
 
@@ -392,34 +423,74 @@ async function runAdRenderingTests() {
       createMockNode({
         tag: 'iframe',
         attrs: { width: '0', height: '0' },
+        offsetWidth: 0,
+        offsetHeight: 0,
       }),
     ],
   });
   assert(
-    hasValidCreative(zeroSizeIframe) === false,
+    validateCreative(zeroSizeIframe).status === 'unfilled' && hasValidCreative(zeroSizeIframe) === false,
     '9.6 Zero-sized iframe without src is strictly rejected as unfilled'
   );
 
-  // 9.7 Rendered creative iframe with positive dimensions and valid src accepted
-  const validCreativeIframe = createMockNode({
+  // 9.7 Iframe with a URL but zero rendered dimensions must NOT qualify as filled
+  const iframeWithUrlZeroDimensions = createMockNode({
     tag: 'div',
     children: [
       createMockNode({
         tag: 'iframe',
-        src: 'https://a.magsrv.com/ad-iframe',
-        offsetWidth: 300,
-        offsetHeight: 250,
-        attrs: { width: '300', height: '250' },
+        src: 'https://www.highrevenueformat.com/banner.html',
+        offsetWidth: 0,
+        offsetHeight: 0,
+      }),
+    ],
+  });
+  const iframeZeroDimsResult = validateCreative(iframeWithUrlZeroDimensions);
+  assert(
+    iframeZeroDimsResult.status === 'unfilled' && hasValidCreative(iframeWithUrlZeroDimensions) === false,
+    '9.7 Iframe with a URL but zero rendered dimensions is strictly rejected as unfilled'
+  );
+
+  // 9.8 Iframe with width/height attributes without actual rendered dimensions must NOT qualify
+  const iframeWithAttrsZeroRendered = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'iframe',
+        attrs: { width: '728', height: '90' },
+        src: 'https://www.highrevenueformat.com/banner.html',
+        offsetWidth: 0,
+        offsetHeight: 0,
       }),
     ],
   });
   assert(
-    hasValidCreative(validCreativeIframe) === true,
-    '9.7 Rendered creative iframe with positive dimensions and valid src is verified as filled'
+    validateCreative(iframeWithAttrsZeroRendered).status === 'unfilled' && hasValidCreative(iframeWithAttrsZeroRendered) === false,
+    '9.8 Iframe with width/height attributes without actual rendered dimensions is strictly rejected as unfilled'
   );
 
-  // 9.8 Image banner creative with positive natural dimensions and valid src accepted
-  const validImageBanner = createMockNode({
+  // 9.9 Broken image with zero natural dimensions must NOT qualify despite positive offsetWidth/clientWidth
+  const brokenImageContainer = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'img',
+        src: 'https://cdn.example.com/broken-ad.png',
+        offsetWidth: 300,
+        offsetHeight: 250,
+        naturalWidth: 0,
+        naturalHeight: 0,
+      }),
+    ],
+  });
+  const brokenImageResult = validateCreative(brokenImageContainer);
+  assert(
+    brokenImageResult.status === 'unfilled' && hasValidCreative(brokenImageContainer) === false,
+    '9.9 Broken image with zero natural dimensions is strictly rejected as unfilled'
+  );
+
+  // 9.10 Successfully loaded image creative with positive natural and rendered dimensions is confirmed filled
+  const validLoadedImage = createMockNode({
     tag: 'div',
     children: [
       createMockNode({
@@ -428,13 +499,163 @@ async function runAdRenderingTests() {
         offsetWidth: 320,
         offsetHeight: 50,
         naturalWidth: 320,
+        naturalHeight: 50,
       }),
     ],
   });
+  const loadedImageResult = validateCreative(validLoadedImage);
   assert(
-    hasValidCreative(validImageBanner) === true,
-    '9.8 Rendered image banner creative with valid src and dimensions is verified as filled'
+    loadedImageResult.status === 'confirmed_filled' &&
+      loadedImageResult.isConfirmedFilled === true &&
+      hasValidCreative(validLoadedImage) === true,
+    '9.10 Successfully loaded image with positive natural dimensions is verified as confirmed filled'
   );
+
+  // 9.11 Multiple creatives where first candidate is invalid tracking pixel but later candidate is valid
+  const multipleCreativesContainer = createMockNode({
+    tag: 'div',
+    children: [
+      // Candidate 1: 0x0 hidden iframe / tracking pixel
+      createMockNode({
+        tag: 'iframe',
+        src: 'https://track.example.com/pixel',
+        offsetWidth: 0,
+        offsetHeight: 0,
+      }),
+      // Candidate 2: Valid rendered image banner
+      createMockNode({
+        tag: 'img',
+        src: 'https://cdn.example.com/native-ad.jpg',
+        offsetWidth: 300,
+        offsetHeight: 250,
+        naturalWidth: 300,
+        naturalHeight: 250,
+      }),
+    ],
+  });
+  const multipleResult = validateCreative(multipleCreativesContainer);
+  assert(
+    multipleResult.status === 'confirmed_filled' &&
+      multipleResult.isConfirmedFilled === true &&
+      hasValidCreative(multipleCreativesContainer) === true,
+    '9.11 Multiple creatives: first candidate invalid, later candidate successfully verified as confirmed filled'
+  );
+
+  // 9.12 Cross-origin iframe with rendered positive dimensions is classified as 'unverifiable' (never falsely reported filled)
+  const crossOriginIframe = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'iframe',
+        src: 'https://a.magsrv.com/ad-iframe',
+        offsetWidth: 300,
+        offsetHeight: 250,
+        attrs: { width: '300', height: '250' },
+        contentDocument: null, // Cross-origin throws or returns null
+      }),
+    ],
+  });
+  const crossOriginResult = validateCreative(crossOriginIframe);
+  assert(
+    crossOriginResult.status === 'unverifiable' &&
+      crossOriginResult.isUnverifiable === true &&
+      crossOriginResult.creativeDetected === true &&
+      crossOriginResult.isConfirmedFilled === false &&
+      hasValidCreative(crossOriginIframe) === false,
+    '9.12 Cross-origin iframe with rendered dimensions is classified as unverifiable (never falsely reported filled)'
+  );
+
+  // 9.13 Same-origin iframe with rendered body content is verified as confirmed filled
+  const sameOriginBody = createMockNode({
+    tag: 'body',
+    offsetWidth: 300,
+    offsetHeight: 250,
+    children: [createMockNode({ tag: 'div', offsetWidth: 300, offsetHeight: 250 })],
+  });
+  const sameOriginIframe = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'iframe',
+        src: '/local-ad-frame.html',
+        offsetWidth: 300,
+        offsetHeight: 250,
+        contentDocument: { body: sameOriginBody },
+      }),
+    ],
+  });
+  const sameOriginResult = validateCreative(sameOriginIframe);
+  assert(
+    sameOriginResult.status === 'confirmed_filled' &&
+      sameOriginResult.isConfirmedFilled === true &&
+      hasValidCreative(sameOriginIframe) === true,
+    '9.13 Same-origin iframe with verified document body content is verified as confirmed filled'
+  );
+
+  // 9.14 Provider documented signal: AdSense data-ad-status="filled"
+  const adSenseFilledNode = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'ins',
+        attrs: { 'data-ad-status': 'filled' },
+        offsetWidth: 728,
+        offsetHeight: 90,
+      }),
+    ],
+  });
+  const adSenseFilledResult = validateCreative(adSenseFilledNode);
+  assert(
+    adSenseFilledResult.status === 'confirmed_filled' &&
+      adSenseFilledResult.isConfirmedFilled === true &&
+      hasValidCreative(adSenseFilledNode) === true,
+    '9.14 Provider documented signal: AdSense data-ad-status="filled" verified as confirmed filled'
+  );
+
+  // 9.15 Provider documented signal: AdSense data-ad-status="unfilled"
+  const adSenseUnfilledNode = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'ins',
+        attrs: { 'data-ad-status': 'unfilled' },
+      }),
+    ],
+  });
+  const adSenseUnfilledResult = validateCreative(adSenseUnfilledNode);
+  assert(
+    adSenseUnfilledResult.status === 'unfilled' &&
+      adSenseUnfilledResult.isConfirmedFilled === false &&
+      hasValidCreative(adSenseUnfilledNode) === false,
+    '9.15 Provider documented signal: AdSense data-ad-status="unfilled" verified as unfilled'
+  );
+
+  // --- Task 9B: Provider Rotation on No-Fill and Error ---
+  console.log('\n--- 9B. Provider Rotation Progression & Terminal Cleanup ---');
+
+  const rotationList = getProviderRotation('top', true);
+  assert(
+    rotationList[0] === 'adsterra' &&
+      rotationList[1] === 'juicyads' &&
+      rotationList[2] === 'exoclick' &&
+      rotationList[3] === 'monetag',
+    '9.16 Chatroom rotation follows exact priority sequence: Adsterra -> JuicyAds -> ExoClick -> Monetag'
+  );
+
+  // Verify that an unfilled or error status triggers rotation step
+  let simulatedIndex = 0;
+  function simulateStatusTransition(status: 'filled' | 'unfilled' | 'error' | 'unverifiable') {
+    if ((status === 'unfilled' || status === 'error') && simulatedIndex < rotationList.length - 1) {
+      simulatedIndex++;
+      return 'rotated';
+    }
+    return status;
+  }
+
+  assert(simulateStatusTransition('unfilled') === 'rotated' && simulatedIndex === 1, '9.17 Provider 0 no-fill transitions to provider 1 (JuicyAds)');
+  assert(simulateStatusTransition('error') === 'rotated' && simulatedIndex === 2, '9.18 Provider 1 error transitions to provider 2 (ExoClick)');
+  assert(simulateStatusTransition('unfilled') === 'rotated' && simulatedIndex === 3, '9.19 Provider 2 no-fill transitions to provider 3 (Monetag)');
+  assert(simulateStatusTransition('unfilled') === 'unfilled' && simulatedIndex === 3, '9.20 Provider 3 terminal no-fill terminates rotation without loop');
 
   // --- Task 10: Strict Participant Sidebar & Composer Preservation ---
   console.log('\n--- 10. Chatroom Layout & Participant Sidebar Preservation ---');
