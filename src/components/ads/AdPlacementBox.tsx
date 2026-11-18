@@ -142,11 +142,11 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     if (p === 'monetag') return MONETAG_CONFIG.zoneId;
 
     if (p === 'juicyads') {
-      if (containerWidth && containerWidth >= 728) {
-        return JUICYADS_CONFIG.zones.banner728x102; // 1131766
-      }
       if (isVertical || position === 'left' || position === 'right') {
         return JUICYADS_CONFIG.zones.banner300x262; // 1131765
+      }
+      if (containerWidth && containerWidth >= 728) {
+        return JUICYADS_CONFIG.zones.banner728x102; // 1131766
       }
       return JUICYADS_CONFIG.zones.banner300x62; // 1131763
     }
@@ -284,7 +284,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           if (hasChildren || hasIframe) {
             clearInterval(checkFillTimer);
             updateStatus('filled');
-          } else if (attempts >= 5) {
+          } else if (attempts >= 8) {
             clearInterval(checkFillTimer);
             updateStatus('unfilled');
           }
@@ -316,6 +316,23 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             obs.observe(adRef.current, { attributes: true, subtree: true });
             observerRef.current = obs;
           }
+
+          const adsenseTimeout = setTimeout(() => {
+            if (!isMountedRef.current) return;
+            const ins = adRef.current?.querySelector('ins');
+            const status = ins?.getAttribute('data-ad-status');
+            if (status !== 'filled') {
+              updateStatus('unfilled');
+            }
+          }, 3000);
+          activeTimersRef.current.push(adsenseTimeout);
+        } else {
+          const unavailableTimeout = setTimeout(() => {
+            if (isMountedRef.current) {
+              updateStatus('unfilled');
+            }
+          }, 1000);
+          activeTimersRef.current.push(unavailableTimeout);
         }
       } catch (err) {
         updateStatus('error');
@@ -423,17 +440,26 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         }
 
         const win = window as any;
+        win.Ads = win.Ads || [];
+        if (typeof win.Ads.push === 'function') {
+          win.Ads.push({ zone: Number(EXOCLICK_CONFIG.zoneId), el: domId });
+        }
+        if (typeof win.Ads.serve === 'function') {
+          win.Ads.serve({ zone: Number(EXOCLICK_CONFIG.zoneId), el: domId });
+        }
         win.AdProvider = win.AdProvider || [];
-        win.AdProvider.push({ zone: Number(EXOCLICK_CONFIG.zoneId), el: domId });
+        if (typeof win.AdProvider.push === 'function') {
+          win.AdProvider.push({ zone: Number(EXOCLICK_CONFIG.zoneId), el: domId });
+        }
 
         let attempts = 0;
         const checkTimer = setInterval(() => {
           if (!isMountedRef.current) { clearInterval(checkTimer); return; }
           const el = document.getElementById(domId);
-          if (el && (el.children.length > 0 || el.querySelector('iframe'))) {
+          if (el && (el.children.length > 0 || el.querySelector('iframe') || el.innerHTML.trim().length > 0)) {
             clearInterval(checkTimer);
             updateStatus('filled');
-          } else if (attempts >= 6) {
+          } else if (attempts >= 10) {
             clearInterval(checkTimer);
             updateStatus('unfilled');
           }
@@ -459,11 +485,24 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           document.head.appendChild(script);
         }
 
-        const tagTimer = setTimeout(() => {
-          if (!isMountedRef.current) return;
-          updateStatus('filled');
-        }, 500);
-        activeTimersRef.current.push(tagTimer);
+        let attempts = 0;
+        const monetagTimer = setInterval(() => {
+          if (!isMountedRef.current) {
+            clearInterval(monetagTimer);
+            return;
+          }
+          const wrapEl = document.getElementById(domId);
+          const hasContent = wrapEl && (wrapEl.children.length > 0 || wrapEl.querySelector('iframe') || wrapEl.innerHTML.trim().length > 0);
+          if (hasContent) {
+            clearInterval(monetagTimer);
+            updateStatus('filled');
+          } else if (attempts >= 10) {
+            clearInterval(monetagTimer);
+            updateStatus('unfilled');
+          }
+          attempts++;
+        }, 300);
+        activeTimersRef.current.push(monetagTimer);
       } catch {
         updateStatus('error');
       }

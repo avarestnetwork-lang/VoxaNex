@@ -166,6 +166,28 @@ async function runAdRenderingTests() {
   const composerCode = publicChatPageSource.slice(composerStart, composerEnd);
   assert(!composerCode.includes('AdPlacementBox'), '3.13 No ad inserted into message composer');
 
+  // --- Task 4: Phase Remediation 2 Provider Lifecycle & Reliability Assertions ---
+  console.log('\n--- 4. Phase Remediation 2 Lifecycle & Reliability Checks ---');
+  const monetagBlockStart = adPlacementBoxSource.indexOf("currentProvider === 'monetag'");
+  const monetagBlockEnd = adPlacementBoxSource.indexOf("} else {", monetagBlockStart);
+  const monetagBlock = adPlacementBoxSource.slice(monetagBlockStart, monetagBlockEnd);
+  assert(
+    monetagBlock.includes('monetagTimer') && !monetagBlock.includes('setTimeout'),
+    '4.1 Monetag uses verified container content check with bounded interval instead of unconditional 500ms fill'
+  );
+  assert(
+    adPlacementBoxSource.includes('win.Ads') && adPlacementBoxSource.includes('win.AdProvider'),
+    '4.2 ExoClick uses standardized publisher queue semantics'
+  );
+  assert(
+    adPlacementBoxSource.includes('adsenseTimeout') && adPlacementBoxSource.includes('unavailableTimeout'),
+    '4.3 AdSense implements bounded timeout for missing runtime and slow fill'
+  );
+  assert(
+    adPlacementBoxSource.indexOf('isVertical') < adPlacementBoxSource.indexOf('containerWidth >= 728'),
+    '4.4 JuicyAds evaluates vertical placement orientation before wide horizontal zones'
+  );
+
   console.log('\n================================================================');
   console.log(`  ALL ${totalAssertions} WORK PROMPT 6 TESTS PASSED SUCCESSFULLY!`);
   console.log('================================================================\n');
