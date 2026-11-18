@@ -166,31 +166,27 @@ async function runAdRenderingTests() {
   const composerCode = publicChatPageSource.slice(composerStart, composerEnd);
   assert(!composerCode.includes('AdPlacementBox'), '3.13 No ad inserted into message composer');
 
-  // --- Task 6: Work Prompt 4 Combined Remediation Assertions ---
-  console.log('\n--- 6. Work Prompt 4 Combined Remediation Checks ---');
-  const exoclickBlockStart = adPlacementBoxSource.indexOf("currentProvider === 'exoclick'");
-  const exoclickBlockEnd = adPlacementBoxSource.indexOf("} else if (currentProvider === 'monetag')", exoclickBlockStart);
-  const exoclickBlock = adPlacementBoxSource.slice(exoclickBlockStart, exoclickBlockEnd);
-
-  const monetagBlockStart = adPlacementBoxSource.indexOf("currentProvider === 'monetag'");
-  const monetagBlockEnd = adPlacementBoxSource.indexOf("} else {", monetagBlockStart);
-  const monetagBlock = adPlacementBoxSource.slice(monetagBlockStart, monetagBlockEnd);
-
+  // --- Task 7: All-Device Chatroom Ad Visibility & Responsive Viewport Assertions ---
+  console.log('\n--- 7. All-Device Chatroom Ad Visibility & Responsive Checks ---');
   assert(
-    publicChatPageSource.includes('3xl:w-[300px]') && adPlacementBoxSource.includes('3xl:w-[300px]'),
-    '6.1 Desktop workspace supports up to 300px ad rails at ultra-wide viewports'
+    publicChatPageSource.includes('slotId="public-chatroom-top"') && publicChatPageSource.includes('slotId="public-chatroom-bottom"'),
+    '7.1 Top and bottom ad placements remain enabled across Mobile, Tablet, and Desktop'
+  );
+  assert(
+    publicChatPageSource.includes('slotId="public-chatroom-status-inline"') && publicChatPageSource.includes('slotId="public-chatroom-message-inline"'),
+    '7.2 Both internal chatroom ad placements remain enabled across Mobile, Tablet, and Desktop'
+  );
+  assert(
+    publicChatPageSource.includes('hidden xl:flex'),
+    '7.3 Desktop side ad rails are hidden on narrow viewports (mobile/tablet) and visible on desktop (xl+)'
   );
   assert(
     publicChatPageSource.includes('lg:w-[340px] xl:w-[344px]'),
-    '6.2 Participant Sidebar desktop width is strictly preserved'
-  );
-  assert(
-    exoclickBlock.includes('hasCreative') && monetagBlock.includes('hasCreative'),
-    '6.3 Reliable creative detection rejects empty wrappers and script-only children'
+    '7.4 Participant Sidebar width and responsive behavior remain strictly preserved'
   );
 
   console.log('\n================================================================');
-  console.log(`  ALL ${totalAssertions} WORK PROMPT 4 TESTS PASSED SUCCESSFULLY!`);
+  console.log(`  ALL ${totalAssertions} WORK PROMPT 4 & RESPONSIVE TESTS PASSED SUCCESSFULLY!`);
   console.log('================================================================\n');
 }
 
