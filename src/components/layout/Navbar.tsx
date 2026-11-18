@@ -186,7 +186,10 @@ export const Navbar: React.FC = () => {
 
       {/* Mobile Menu Dropdown */}
       {mobileMenuOpen && (
-        <div id="mobile-menu" className="lg:hidden border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 pt-2 pb-4 space-y-1">
+        <div
+          id="mobile-menu"
+          className="lg:hidden border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 pt-2 pb-4 space-y-1 max-h-[calc(100vh-4.25rem)] overflow-y-auto"
+        >
           {navItems.map((item) => (
             <button
               key={item.route}

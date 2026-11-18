@@ -187,7 +187,7 @@ export const PublicChatPage: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected'>('connecting');
   const [onlineMembers, setOnlineMembers] = useState<RealtimePresenceMember[]>(() => {
-    if (user?.id) {
+    if (user?.id && user?.onlineVisibility !== 'stealth_invisible') {
       return [
         {
           id: user.id,
@@ -414,8 +414,10 @@ export const PublicChatPage: React.FC = () => {
   useEffect(() => {
     if (!canAccessRoom || !user.id) return;
     let isMounted = true;
+    let hasLeft = false;
+    const isStealth = user.onlineVisibility === 'stealth_invisible';
 
-    // 1. Subscribe to true Supabase Realtime Presence if configured
+    // 1. Subscribe to true Supabase Realtime Presence if configured (or observe passively in stealth mode)
     const untrackSupabase = databaseService.trackPresence(
       activeRoom.id,
       {
@@ -424,9 +426,10 @@ export const PublicChatPage: React.FC = () => {
         avatar: user.avatar || '👤',
         isGuest: Boolean(user.isGuest),
         gender: user.gender,
+        onlineVisibility: user.onlineVisibility,
       },
       (members) => {
-        if (isMounted && Array.isArray(members) && members.length > 0) {
+        if (isMounted && Array.isArray(members) && (members.length > 0 || isStealth)) {
           setOnlineMembers(members);
         }
       }
@@ -434,6 +437,7 @@ export const PublicChatPage: React.FC = () => {
 
     // 2. HTTP heartbeat fallback for environments without Supabase configured
     const sendHeartbeat = async () => {
+      if (isStealth) return;
       try {
         const members = await messagingService.sendPresence(activeRoom.id, {
           id: user.id,
@@ -457,16 +461,31 @@ export const PublicChatPage: React.FC = () => {
       }
     };
 
-    sendHeartbeat();
-    const interval = setInterval(sendHeartbeat, 25000);
+    const cleanupPresence = () => {
+      if (hasLeft) return;
+      hasLeft = true;
+      untrackSupabase();
+      if (user?.id && !isStealth) {
+        messagingService.leaveRoom(activeRoom.id, user.id);
+      }
+    };
+
+    if (!isStealth) {
+      sendHeartbeat();
+    }
+    const interval = isStealth ? null : setInterval(sendHeartbeat, 25000);
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('pagehide', cleanupPresence);
+    }
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
-      untrackSupabase();
-      if (user?.id) {
-        messagingService.leaveRoom(activeRoom.id, user.id);
+      if (interval) clearInterval(interval);
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('pagehide', cleanupPresence);
       }
+      cleanupPresence();
     };
   }, [canAccessRoom, activeRoom.id, user]);
 
@@ -1482,10 +1501,18 @@ export const PublicChatPage: React.FC = () => {
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-violet-300 pt-1 border-t border-violet-900/30 font-mono">
                       <span className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            user?.onlineVisibility === 'stealth_invisible'
+                              ? 'bg-slate-400'
+                              : 'bg-emerald-400 animate-pulse'
+                          }`}
+                        />
                         <span>You ({user?.isGuest ? 'Guest' : 'Member'})</span>
                       </span>
-                      <span className="text-violet-400 uppercase tracking-wider text-[9px]">Online</span>
+                      <span className="text-violet-400 uppercase tracking-wider text-[9px]">
+                        {user?.onlineVisibility === 'stealth_invisible' ? 'Stealth' : 'Online'}
+                      </span>
                     </div>
                   </div>
 

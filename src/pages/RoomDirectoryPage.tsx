@@ -5,6 +5,10 @@ import { useAuth } from '../context/AuthContext';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { Room, RoomCategory, CommunicationMode } from '../types';
 import { communityService } from '../services/communityService';
+import {
+  useRoomPresenceCounts,
+  resolveRoomPresenceBadge,
+} from '../hooks/useRoomPresenceCounts';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { SEOHead } from '../components/common/SEOHead';
@@ -61,7 +65,10 @@ export const RoomDirectoryPage: React.FC = () => {
   const [selectedRegion, setSelectedRegion] = useState<string>('all');
   const [inspectingRoom, setInspectingRoom] = useState<Room | null>(null);
 
-  // Load catalog with actual participant counts from server presence
+  const roomIds = useMemo(() => rooms.map((r) => r.id), [rooms]);
+  const { counts: liveCounts, statuses: liveStatuses, overallStatus } = useRoomPresenceCounts(roomIds);
+
+  // Load optional catalog metadata on mount while real-time presence drives live participant counts
   useEffect(() => {
     let mounted = true;
     const fetchRooms = async () => {
@@ -71,10 +78,8 @@ export const RoomDirectoryPage: React.FC = () => {
       }
     };
     fetchRooms();
-    const timer = setInterval(fetchRooms, 15000);
     return () => {
       mounted = false;
-      clearInterval(timer);
     };
   }, []);
 
@@ -278,7 +283,20 @@ export const RoomDirectoryPage: React.FC = () => {
       <div className="p-3 rounded-lg border border-slate-800/80 bg-[#0a0f1d] flex items-center justify-between text-xs text-slate-400 font-mono">
         <div className="flex items-center gap-2">
           <Info className="w-4 h-4 text-cyan-400 shrink-0" />
-          <span>{t.rooms.liveCountNotice} (Honest Active Session Telemetry)</span>
+          <span>
+            {t.rooms.liveCountNotice}{' '}
+            {overallStatus === 'synced'
+              ? language === 'bn'
+                ? '(রিয়েল-টাইম উপস্থিতি সক্রিয়)'
+                : '(Live Presence Synced)'
+              : overallStatus === 'connecting'
+                ? language === 'bn'
+                  ? '(রিয়েল-টাইম সিঙ্ক হচ্ছে...)'
+                  : '(Syncing Live Presence...)'
+                : language === 'bn'
+                  ? '(রিয়েল-টাইম উপস্থিতি অনুপলব্ধ)'
+                  : '(Live Presence Unavailable)'}
+          </span>
         </div>
         <span className="text-slate-500 hidden sm:inline">
           {filteredRooms.length} {language === 'bn' ? 'টি চ্যানেল উপলব্ধ' : 'channels available'}
@@ -290,16 +308,35 @@ export const RoomDirectoryPage: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredRooms.filter(r => r.category !== 'regional').map((room) => {
           const isAdult = room.is18Plus;
-          const participants = room.activeParticipants || 0;
+          const badge = resolveRoomPresenceBadge({
+            roomId: room.id,
+            fallbackCount: room.activeParticipants,
+            counts: liveCounts,
+            statuses: liveStatuses,
+            language,
+          });
           return (
             <div key={room.id} className={'p-5 rounded-xl border flex flex-col justify-between transition-all shadow-sm bg-white ' + (isAdult ? 'border-rose-200 hover:border-rose-300' : 'border-slate-200 hover:border-orange-300')}>
               <div>
                 <div className="flex items-center justify-between gap-2 mb-2 text-xs">
                   <span className="text-slate-500 font-medium">{room.categoryLabel[language] || room.categoryLabel.en}</span>
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                    <span className="flex items-center gap-1 font-mono text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-700">
-                      <span className={'w-1.5 h-1.5 rounded-full ' + (participants > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400')} />
-                      <span>{participants} {language === 'bn' ? 'সক্রিয়' : 'active'}</span>
+                    <span
+                      title={badge.title}
+                      data-room-count-status={badge.kind}
+                      className="flex items-center gap-1 font-mono text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-700"
+                    >
+                      <span
+                        className={
+                          'w-1.5 h-1.5 rounded-full ' +
+                          (badge.isLive
+                            ? 'bg-emerald-500 animate-pulse'
+                            : badge.kind === 'connecting'
+                              ? 'bg-amber-400 animate-pulse'
+                              : 'bg-slate-400')
+                        }
+                      />
+                      <span>{badge.label}</span>
                     </span>
                     <span className={'uppercase font-mono text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded'}>{room.language}</span>
                   </div>
@@ -323,16 +360,35 @@ export const RoomDirectoryPage: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredRooms.filter(r => r.category === 'regional').map((room) => {
           const isAdult = room.is18Plus;
-          const participants = room.activeParticipants || 0;
+          const badge = resolveRoomPresenceBadge({
+            roomId: room.id,
+            fallbackCount: room.activeParticipants,
+            counts: liveCounts,
+            statuses: liveStatuses,
+            language,
+          });
           return (
             <div key={room.id} className={'p-5 rounded-xl border flex flex-col justify-between transition-all shadow-sm bg-white ' + (isAdult ? 'border-rose-200 hover:border-rose-300' : 'border-slate-200 hover:border-orange-300')}>
               <div>
                 <div className="flex items-center justify-between gap-2 mb-2 text-xs">
                   <span className="text-slate-500 font-medium">{room.categoryLabel[language] || room.categoryLabel.en}</span>
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                    <span className="flex items-center gap-1 font-mono text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-700">
-                      <span className={'w-1.5 h-1.5 rounded-full ' + (participants > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400')} />
-                      <span>{participants} {language === 'bn' ? 'সক্রিয়' : 'active'}</span>
+                    <span
+                      title={badge.title}
+                      data-room-count-status={badge.kind}
+                      className="flex items-center gap-1 font-mono text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-700"
+                    >
+                      <span
+                        className={
+                          'w-1.5 h-1.5 rounded-full ' +
+                          (badge.isLive
+                            ? 'bg-emerald-500 animate-pulse'
+                            : badge.kind === 'connecting'
+                              ? 'bg-amber-400 animate-pulse'
+                              : 'bg-slate-400')
+                        }
+                      />
+                      <span>{badge.label}</span>
                     </span>
                   </div>
                 </div>
