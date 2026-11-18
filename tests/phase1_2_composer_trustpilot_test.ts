@@ -5,6 +5,8 @@ import * as path from 'path';
 import {
   validateMediaFileMetadata,
   validateMediaBinary,
+  classifyMediaUrl,
+  isSafeMediaUrl,
   IMAGE_ACCEPT_ATTRIBUTE,
   AUDIO_ACCEPT_ATTRIBUTE,
   MAX_IMAGE_SIZE_BYTES,
@@ -15,6 +17,7 @@ import {
   setTestAuthTokenResolver,
 } from '../src/services/messagingService';
 import { ComposerAttachmentPreview } from '../src/components/chat/ComposerAttachmentPreview';
+import { SecureMediaRenderer, loadSecureMediaAsset } from '../src/components/chat/SecureMediaRenderer';
 import { Footer } from '../src/components/layout/Footer';
 import { RouterProvider } from '../src/context/RouterContext';
 import { LanguageProvider } from '../src/context/LanguageContext';
@@ -410,8 +413,10 @@ async function runPhase12Tests() {
 
   const secureRendererSource = fs.readFileSync(path.resolve('src/components/chat/SecureMediaRenderer.tsx'), 'utf-8');
   assert(
-    secureRendererSource.includes('isSafeMediaUrl(mediaUrl)') &&
+    secureRendererSource.includes('classifyMediaUrl(mediaUrl') &&
+      !secureRendererSource.includes("includes('/api/media/')") &&
       secureRendererSource.includes('Authorization: `Bearer ${token}`') &&
+      secureRendererSource.includes("redirect: 'error'") &&
       secureRendererSource.includes('URL.createObjectURL(blob)') &&
       secureRendererSource.includes('URL.revokeObjectURL(') &&
       secureRendererSource.includes('res.status === 401') &&
@@ -419,7 +424,7 @@ async function runPhase12Tests() {
       secureRendererSource.includes('res.status === 404') &&
       secureRendererSource.includes("normalizedCt !== 'image/svg+xml'") &&
       secureRendererSource.includes('<audio'),
-    '3.8 SecureMediaRenderer validates URLs, fetches internal media with Bearer auth, enforces Content-Type, renders audio/img, handles 401/403/404, and revokes Blob URLs'
+    '3.8 SecureMediaRenderer enforces strict same-origin URL classification, fetches internal media with Bearer auth + redirect error, enforces Content-Type, renders audio/img, handles 401/403/404, and revokes Blob URLs'
   );
 
   // -------------------------------------------------------------------------
@@ -559,6 +564,218 @@ async function runPhase12Tests() {
 
   const dmFooterHtml = renderFooterForRoute('/messages');
   assert(!dmFooterHtml.includes('trustpilot-widget'), '5.8 Private messages route strictly excludes TrustBox widget');
+
+  // -------------------------------------------------------------------------
+  // 6. Security Remediation: Same-Origin Auth Boundary & Token Leakage Prevention
+  // -------------------------------------------------------------------------
+  console.log('\n--- 6. Same-Origin Media Classification & Bearer Token Boundary ---');
+
+  const APP_ORIGIN = 'https://chatlustora.com';
+  setupBrowserWindow('/chat/bangla');
+
+  const classificationCases: Array<{
+    url: string;
+    expected: 'internal' | 'external' | 'rejected';
+    label: string;
+  }> = [
+    { url: '/api/media/asset-123', expected: 'internal', label: 'Relative /api/media/asset-123' },
+    { url: 'https://chatlustora.com/api/media/asset-123', expected: 'internal', label: 'Absolute same-origin /api/media/asset-123' },
+    { url: 'https://attacker.example/api/media/asset-123', expected: 'external', label: 'External host with /api/media/ path' },
+    { url: 'https://attacker.example/path/api/media/asset-123', expected: 'external', label: 'External host with nested /path/api/media/' },
+    { url: 'https://api.media.example/asset-123', expected: 'external', label: 'External host with api.media subdomain' },
+    { url: 'https://attacker.example/?next=/api/media/asset-123', expected: 'external', label: 'External host with /api/media/ in query string' },
+    { url: 'https://chatlustora.com.attacker.example/api/media/asset-123', expected: 'external', label: 'External lookalike suffix domain' },
+    { url: 'https://chatlustora.com:8443/api/media/asset-123', expected: 'external', label: 'Different port on same hostname' },
+    { url: 'https://media.giphy.com/media/3o7TKSjRrfIPjeiDiM/giphy.gif', expected: 'external', label: 'External curated GIF URL' },
+    { url: '//attacker.example/api/media/asset-123', expected: 'rejected', label: 'Protocol-relative //attacker.example/api/media/asset-123' },
+    { url: '/api/media/../private', expected: 'rejected', label: 'Relative traversal /api/media/../private' },
+    { url: '/api/media/%2e%2e/private', expected: 'rejected', label: 'Encoded relative traversal /api/media/%2e%2e/private' },
+    { url: 'https://chatlustora.com/api/media/../private', expected: 'rejected', label: 'Absolute same-origin traversal' },
+    { url: 'https://chatlustora.com/api/media/%2e%2e/private', expected: 'rejected', label: 'Absolute encoded traversal' },
+    { url: 'https://user:pass@chatlustora.com/api/media/asset-123', expected: 'rejected', label: 'Embedded credentials in URL' },
+    { url: 'https://chatlustora.com\\@attacker.example/api/media/asset-123', expected: 'rejected', label: 'Backslash authority confusion URL' },
+    { url: 'ht!tp://malformed url', expected: 'rejected', label: 'Malformed URL' },
+    { url: 'javascript:alert(1)', expected: 'rejected', label: 'JavaScript pseudo-protocol' },
+  ];
+
+  classificationCases.forEach((tc, idx) => {
+    const result = classifyMediaUrl(tc.url, APP_ORIGIN);
+    assert(
+      result.status === tc.expected,
+      `6.${idx + 1} classifyMediaUrl(${tc.label}) -> ${tc.expected} (got ${result.status})`
+    );
+    if (tc.expected === 'rejected') {
+      assert(
+        !isSafeMediaUrl(tc.url),
+        `6.${idx + 1}a isSafeMediaUrl rejects ${tc.label}`
+      );
+    }
+  });
+
+  // Behavioral execution: prove getAuthToken() & fetch() NEVER run for external or rejected URLs
+  const originalFetch = globalThis.fetch;
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+
+  let authCallCount = 0;
+  const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+  const createdBlobs: string[] = [];
+  const revokedBlobs: string[] = [];
+  let nextMockResponse: () => Response = () =>
+    new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      status: 200,
+      headers: { 'content-type': 'image/png' },
+    });
+
+  setTestAuthTokenResolver(async () => {
+    authCallCount += 1;
+    return 'vx_secret_member_session_token';
+  });
+
+  (globalThis as any).fetch = async (input: any, init?: RequestInit) => {
+    fetchCalls.push({ url: String(input), init });
+    return nextMockResponse();
+  };
+  (URL as any).createObjectURL = () => {
+    const u = `blob:https://chatlustora.com/mock-${createdBlobs.length + 1}`;
+    createdBlobs.push(u);
+    return u;
+  };
+  (URL as any).revokeObjectURL = (u: string) => {
+    revokedBlobs.push(u);
+  };
+
+  try {
+    // 6.19 Crafted external URL with /api/media/ NEVER calls getAuthToken or fetch
+    const externalProbeUrls = [
+      'https://attacker.example/api/media/asset-123',
+      'https://attacker.example/path/api/media/asset-123',
+      'https://api.media.example/asset-123',
+      'https://attacker.example/?next=/api/media/asset-123',
+      'https://chatlustora.com.attacker.example/api/media/asset-123',
+      'https://media.giphy.com/media/3o7TKSjRrfIPjeiDiM/giphy.gif',
+    ];
+
+    for (const extUrl of externalProbeUrls) {
+      authCallCount = 0;
+      fetchCalls.length = 0;
+      const res = await loadSecureMediaAsset({
+        mediaUrl: extUrl,
+        mediaType: 'image',
+        currentOrigin: APP_ORIGIN,
+      });
+      assert(
+        res.kind === 'external' && authCallCount === 0 && fetchCalls.length === 0,
+        `6.19 External URL "${extUrl}" bypasses getAuthToken (0 calls) and authenticated fetch (0 calls)`
+      );
+    }
+
+    // SSR component rendering check on external & rejected URLs
+    const attackerRenderHtml = renderToString(
+      React.createElement(SecureMediaRenderer, {
+        mediaUrl: 'https://attacker.example/api/media/asset-123',
+        mediaType: 'image',
+      })
+    );
+    assert(
+      attackerRenderHtml.includes('src="https://attacker.example/api/media/asset-123"'),
+      '6.20 SecureMediaRenderer renders external URL directly as uncredentialed <img>'
+    );
+
+    const gifRenderHtml = renderToString(
+      React.createElement(SecureMediaRenderer, {
+        mediaUrl: 'https://media.giphy.com/media/3o7TKSjRrfIPjeiDiM/giphy.gif',
+        mediaType: 'gif',
+      })
+    );
+    assert(
+      gifRenderHtml.includes('src="https://media.giphy.com/media/3o7TKSjRrfIPjeiDiM/giphy.gif"'),
+      '6.21 External GIF rendering preserved without credentialed fetch'
+    );
+
+    const rejectedSsrHtml = renderToString(
+      React.createElement(SecureMediaRenderer, {
+        mediaUrl: '//attacker.example/api/media/asset-123',
+        mediaType: 'image',
+      })
+    );
+    assert(
+      rejectedSsrHtml.includes('Blocked unsafe or invalid media URL.'),
+      '6.22 Protocol-relative URL blocked in SecureMediaRenderer'
+    );
+
+    // 6.23 Rejected URLs never invoke getAuthToken or fetch
+    for (const badUrl of ['//attacker.example/api/media/asset-123', '/api/media/../private', 'ht!tp://bad']) {
+      authCallCount = 0;
+      fetchCalls.length = 0;
+      const res = await loadSecureMediaAsset({
+        mediaUrl: badUrl,
+        currentOrigin: APP_ORIGIN,
+      });
+      assert(
+        res.kind === 'error' && authCallCount === 0 && fetchCalls.length === 0,
+        `6.23 Rejected URL "${badUrl}" fails closed without calling getAuthToken or fetch`
+      );
+    }
+
+    // 6.24 Same-origin relative & absolute URLs DO invoke getAuthToken & send Bearer header with redirect:'error'
+    for (const internalUrl of ['/api/media/asset-123', 'https://chatlustora.com/api/media/asset-123']) {
+      authCallCount = 0;
+      fetchCalls.length = 0;
+      nextMockResponse = () =>
+        new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        });
+      const res = await loadSecureMediaAsset({
+        mediaUrl: internalUrl,
+        mediaType: 'image',
+        currentOrigin: APP_ORIGIN,
+      });
+      const hdrs = (fetchCalls[0]?.init?.headers || {}) as Record<string, string>;
+      assert(
+        res.kind === 'blob' &&
+          authCallCount === 1 &&
+          fetchCalls.length === 1 &&
+          fetchCalls[0].url === 'https://chatlustora.com/api/media/asset-123' &&
+          hdrs.Authorization === 'Bearer vx_secret_member_session_token' &&
+          fetchCalls[0].init?.redirect === 'error' &&
+          fetchCalls[0].init?.credentials === 'omit',
+        `6.24 Same-origin "${internalUrl}" sends Bearer token strictly to same-origin with redirect=error & creates Blob URL`
+      );
+      if (res.kind === 'blob') {
+        URL.revokeObjectURL(res.blobUrl);
+        assert(revokedBlobs.includes(res.blobUrl), '6.24a Blob URL cleanup verified');
+      }
+    }
+
+    // 6.25 HTTP 401, 403, 404, 302 redirect, and SVG MIME blocking
+    nextMockResponse = () => new Response('Unauthorized', { status: 401 });
+    const res401 = await loadSecureMediaAsset({ mediaUrl: '/api/media/asset-401', currentOrigin: APP_ORIGIN });
+    assert(res401.kind === 'error' && res401.error.includes('Authentication required'), '6.25a HTTP 401 handled');
+
+    nextMockResponse = () => new Response('Forbidden', { status: 403 });
+    const res403 = await loadSecureMediaAsset({ mediaUrl: '/api/media/asset-403', currentOrigin: APP_ORIGIN });
+    assert(res403.kind === 'error' && res403.error.includes('Forbidden'), '6.25b HTTP 403 handled');
+
+    nextMockResponse = () => new Response('Not found', { status: 404 });
+    const res404 = await loadSecureMediaAsset({ mediaUrl: '/api/media/asset-404', currentOrigin: APP_ORIGIN });
+    assert(res404.kind === 'error' && res404.error.includes('not found'), '6.25c HTTP 404 handled');
+
+    nextMockResponse = () => new Response('', { status: 302, headers: { Location: 'https://attacker.example/steal' } });
+    const res302 = await loadSecureMediaAsset({ mediaUrl: '/api/media/asset-302', currentOrigin: APP_ORIGIN });
+    assert(res302.kind === 'error' && res302.error.includes('redirect'), '6.25d Redirect on authenticated media blocked');
+
+    nextMockResponse = () =>
+      new Response('<svg onload="alert(1)"/>', { status: 200, headers: { 'content-type': 'image/svg+xml' } });
+    const resSvg = await loadSecureMediaAsset({ mediaUrl: '/api/media/asset-svg', currentOrigin: APP_ORIGIN });
+    assert(resSvg.kind === 'error' && resSvg.error.includes('Blocked unsupported'), '6.25e SVG Content-Type strictly blocked');
+  } finally {
+    setTestAuthTokenResolver(null);
+    (globalThis as any).fetch = originalFetch;
+    (URL as any).createObjectURL = originalCreateObjectURL;
+    (URL as any).revokeObjectURL = originalRevokeObjectURL;
+  }
 
   console.log('\n================================================================');
   console.log(`  ALL ${totalAssertions} PHASE 1.2 TESTS PASSED SUCCESSFULLY!`);

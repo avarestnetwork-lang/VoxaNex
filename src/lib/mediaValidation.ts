@@ -433,34 +433,197 @@ export function validateMediaBinary(params: {
   return meta;
 }
 
+export type MediaUrlClassification =
+  | { status: 'internal'; resolvedUrl: string; pathname: string; assetId: string }
+  | { status: 'external'; resolvedUrl: string }
+  | { status: 'rejected'; reason: string };
+
+const SAFE_MEDIA_ASSET_PATH_REGEX = /^\/api\/media\/([a-zA-Z0-9._-]+)$/;
+
+function hasUnsafePathTraversal(rawInput: string): boolean {
+  const lower = rawInput.toLowerCase();
+  if (lower.includes('\\')) return true;
+
+  // Extract raw path portion before query/hash (after scheme://authority if absolute)
+  let rawPath = rawInput;
+  const schemeMatch = rawInput.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/?#]*(.*)$/);
+  if (schemeMatch) {
+    rawPath = schemeMatch[1] || '/';
+  }
+  const pathOnly = rawPath.split(/[?#]/)[0];
+  const lowerPath = pathOnly.toLowerCase();
+  if (lowerPath.includes('%2e') || lowerPath.includes('%2f') || lowerPath.includes('%5c')) {
+    return true;
+  }
+  const segments = pathOnly.split('/');
+  if (segments.some((seg) => seg === '.' || seg === '..')) {
+    return true;
+  }
+  if (pathOnly.includes('..')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Strictly classify a media URL into:
+ * - 'internal': exact same-origin /api/media/{assetId} endpoint (eligible for Bearer auth fetch)
+ * - 'external': valid HTTP(S) URL on a different origin or non-media-API route (MUST NOT receive auth headers)
+ * - 'rejected': unsafe, malformed, protocol-relative, or path-traversal URL
+ */
+export function classifyMediaUrl(
+  rawUrl?: string | null,
+  currentOrigin?: string | null
+): MediaUrlClassification {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return { status: 'rejected', reason: 'Missing media URL.' };
+  }
+
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.length > 2048) {
+    return { status: 'rejected', reason: 'Invalid or overly long media URL.' };
+  }
+
+  if (/[\u0000-\u001F\u007F\s<>"]/.test(trimmed) || trimmed.includes('\\')) {
+    return { status: 'rejected', reason: 'Media URL contains prohibited characters.' };
+  }
+
+  // Strictly block protocol-relative URLs (e.g. //attacker.example/api/media/asset-123)
+  if (trimmed.startsWith('//')) {
+    return { status: 'rejected', reason: 'Protocol-relative media URLs are rejected.' };
+  }
+
+  const rawOrigin =
+    currentOrigin !== undefined
+      ? currentOrigin
+      : typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : '';
+
+  let normalizedOrigin = '';
+  if (rawOrigin && typeof rawOrigin === 'string') {
+    try {
+      const originParsed = new URL(rawOrigin);
+      if (originParsed.protocol === 'http:' || originParsed.protocol === 'https:') {
+        normalizedOrigin = originParsed.origin;
+      }
+    } catch {
+      normalizedOrigin = '';
+    }
+  }
+
+  // Relative paths: permit ONLY exact /api/media/{assetId} on valid application origin
+  if (trimmed.startsWith('/')) {
+    if (hasUnsafePathTraversal(trimmed)) {
+      return { status: 'rejected', reason: 'Path traversal in media URL is rejected.' };
+    }
+
+    const [rawPathOnly] = trimmed.split(/[?#]/);
+    const pathMatch = rawPathOnly.match(SAFE_MEDIA_ASSET_PATH_REGEX);
+    if (!pathMatch) {
+      return { status: 'rejected', reason: 'Unsupported relative media path.' };
+    }
+
+    const assetId = pathMatch[1];
+    if (!assetId || assetId === '.' || assetId === '..') {
+      return { status: 'rejected', reason: 'Invalid media asset identifier.' };
+    }
+
+    if (!normalizedOrigin) {
+      return { status: 'rejected', reason: 'Application origin is required for internal media URL.' };
+    }
+
+    try {
+      const parsed = new URL(trimmed, normalizedOrigin);
+      if (parsed.origin !== normalizedOrigin) {
+        return { status: 'rejected', reason: 'Origin mismatch for relative media URL.' };
+      }
+      if (parsed.pathname !== rawPathOnly || !SAFE_MEDIA_ASSET_PATH_REGEX.test(parsed.pathname)) {
+        return { status: 'rejected', reason: 'Normalized pathname mismatch for internal media URL.' };
+      }
+      return {
+        status: 'internal',
+        resolvedUrl: parsed.toString(),
+        pathname: parsed.pathname,
+        assetId,
+      };
+    } catch {
+      return { status: 'rejected', reason: 'Malformed relative media URL.' };
+    }
+  }
+
+  // Require explicit scheme:// for non-relative URLs
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) {
+    return { status: 'rejected', reason: 'Malformed or unsupported media URL scheme.' };
+  }
+
+  if (hasUnsafePathTraversal(trimmed)) {
+    return { status: 'rejected', reason: 'Path traversal in media URL is rejected.' };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { status: 'rejected', reason: 'Malformed absolute media URL.' };
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return { status: 'rejected', reason: 'Unsupported media URL protocol.' };
+  }
+
+  if (parsed.username || parsed.password) {
+    return { status: 'rejected', reason: 'Embedded credentials in media URL are rejected.' };
+  }
+
+  // Internal classification requires EXACT origin equality AND exact /api/media/{assetId} pathname match
+  if (normalizedOrigin && parsed.origin === normalizedOrigin) {
+    const pathMatch = parsed.pathname.match(SAFE_MEDIA_ASSET_PATH_REGEX);
+    if (pathMatch) {
+      const assetId = pathMatch[1];
+      if (!assetId || assetId === '.' || assetId === '..') {
+        return { status: 'rejected', reason: 'Invalid media asset identifier.' };
+      }
+      return {
+        status: 'internal',
+        resolvedUrl: parsed.toString(),
+        pathname: parsed.pathname,
+        assetId,
+      };
+    }
+  }
+
+  return {
+    status: 'external',
+    resolvedUrl: parsed.toString(),
+  };
+}
+
 /**
  * Validate that a chat message mediaUrl is safe to store and render.
  * Permits same-origin authenticated media routes (/api/media/...) and HTTP(S) URLs;
- * strictly blocks javascript:, vbscript:, data:, blob:, file:, protocol-relative //, and control characters.
+ * strictly blocks javascript:, vbscript:, data:, blob:, file:, protocol-relative //, path traversal, and control characters.
  */
 export function isSafeMediaUrl(rawUrl?: string | null): boolean {
   if (!rawUrl || typeof rawUrl !== 'string') return false;
   const trimmed = rawUrl.trim();
   if (!trimmed || trimmed.length > 2048) return false;
-  if (/[\u0000-\u001F\s<>"]/.test(trimmed)) return false;
+  if (/[\u0000-\u001F\u007F\s<>"]/.test(trimmed) || trimmed.includes('\\')) return false;
+  if (trimmed.startsWith('//')) return false;
+  if (hasUnsafePathTraversal(trimmed)) return false;
 
-  // Same-origin media API route
   if (trimmed.startsWith('/api/media/')) {
-    if (trimmed.includes('..') || trimmed.includes('\\') || trimmed.startsWith('//')) return false;
-    return /^\/api\/media\/[a-zA-Z0-9._-]+(?:\?[^\s<>"]*)?$/.test(trimmed);
+    const [rawPathOnly] = trimmed.split(/[?#]/);
+    const match = rawPathOnly.match(SAFE_MEDIA_ASSET_PATH_REGEX);
+    return Boolean(match && match[1] !== '.' && match[1] !== '..');
   }
 
-  // Block protocol-relative // or other relative paths
   if (trimmed.startsWith('/')) {
     return false;
   }
 
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-  } catch {
-    return false;
-  }
+  const classified = classifyMediaUrl(trimmed, null);
+  return classified.status === 'external';
 }
 
 export function isValidChatMediaType(mediaType?: string | null): mediaType is ChatMediaType {

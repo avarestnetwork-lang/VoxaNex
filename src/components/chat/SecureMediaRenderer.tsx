@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getAuthToken } from '../../services/messagingService';
-import { isSafeMediaUrl, normalizeMimeType } from '../../lib/mediaValidation';
+import {
+  classifyMediaUrl,
+  MediaUrlClassification,
+  normalizeMimeType,
+} from '../../lib/mediaValidation';
 import { Loader2, AlertCircle, Music, RefreshCw } from 'lucide-react';
 
 interface SecureMediaRendererProps {
@@ -12,6 +16,129 @@ interface SecureMediaRendererProps {
   userId?: string;
 }
 
+export type SecureMediaLoadResult =
+  | { kind: 'external'; src: string; detectedType: 'image' | 'audio' }
+  | { kind: 'blob'; blobUrl: string; detectedType: 'image' | 'audio' }
+  | { kind: 'error'; error: string; retryable: boolean };
+
+export async function loadSecureMediaAsset(params: {
+  mediaUrl: string;
+  mediaType?: 'gif' | 'image' | 'audio';
+  currentOrigin?: string | null;
+  isGuest?: boolean;
+  userId?: string;
+  signal?: AbortSignal;
+}): Promise<SecureMediaLoadResult> {
+  const { mediaUrl, mediaType, currentOrigin, isGuest, userId, signal } = params;
+  const classified: MediaUrlClassification = classifyMediaUrl(mediaUrl, currentOrigin);
+
+  if (classified.status === 'rejected') {
+    return {
+      kind: 'error',
+      error: 'Blocked unsafe or invalid media URL.',
+      retryable: false,
+    };
+  }
+
+  // External HTTP(S) URLs (e.g. curated Giphy GIFs) MUST NEVER receive getAuthToken() or Authorization headers.
+  if (classified.status === 'external') {
+    return {
+      kind: 'external',
+      src: classified.resolvedUrl,
+      detectedType: mediaType === 'audio' ? 'audio' : 'image',
+    };
+  }
+
+  // Defense-in-depth: re-verify resolved URL strictly matches current application origin before fetching credentials
+  const resolvedOrigin =
+    currentOrigin !== undefined
+      ? currentOrigin
+      : typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : '';
+  let expectedOrigin = '';
+  try {
+    expectedOrigin = resolvedOrigin ? new URL(resolvedOrigin).origin : '';
+  } catch {
+    expectedOrigin = '';
+  }
+
+  let parsedFetchUrl: URL;
+  try {
+    parsedFetchUrl = new URL(classified.resolvedUrl);
+  } catch {
+    return { kind: 'error', error: 'Blocked unsafe or invalid media URL.', retryable: false };
+  }
+
+  if (!expectedOrigin || parsedFetchUrl.origin !== expectedOrigin) {
+    return { kind: 'error', error: 'Blocked cross-origin credentialed media request.', retryable: false };
+  }
+
+  const token = await getAuthToken({
+    isGuest,
+    senderType: isGuest ? 'guest' : 'registered',
+    userId,
+    allowPublicFallback: true,
+  });
+
+  if (signal?.aborted) {
+    return { kind: 'error', error: 'Media request cancelled.', retryable: true };
+  }
+
+  if (!token) {
+    return { kind: 'error', error: 'Authentication required to view media.', retryable: true };
+  }
+
+  const res = await fetch(classified.resolvedUrl, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    credentials: 'omit',
+    redirect: 'error',
+    signal,
+  });
+
+  if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+    return { kind: 'error', error: 'Blocked redirect on authenticated media request.', retryable: false };
+  }
+
+  if (res.status === 401) {
+    return { kind: 'error', error: 'Authentication required to view media.', retryable: true };
+  }
+
+  if (res.status === 403) {
+    return { kind: 'error', error: 'Forbidden: Unauthorized to access private media.', retryable: false };
+  }
+
+  if (res.status === 404) {
+    return { kind: 'error', error: 'Media object not found.', retryable: false };
+  }
+
+  if (!res.ok) {
+    return { kind: 'error', error: `Unable to load media (HTTP ${res.status}).`, retryable: true };
+  }
+
+  const rawContentType = res.headers?.get?.('content-type') || '';
+  const normalizedCt = normalizeMimeType(rawContentType);
+  const isAllowedImage =
+    normalizedCt.startsWith('image/') && normalizedCt !== 'image/svg+xml';
+  const isAllowedAudio = normalizedCt.startsWith('audio/');
+
+  if (!isAllowedImage && !isAllowedAudio) {
+    return { kind: 'error', error: 'Blocked unsupported or unsafe media content type.', retryable: false };
+  }
+
+  const blob = await res.blob();
+  const createdUrl = URL.createObjectURL(blob);
+
+  return {
+    kind: 'blob',
+    blobUrl: createdUrl,
+    detectedType: isAllowedAudio || mediaType === 'audio' ? 'audio' : 'image',
+  };
+}
+
 const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
   mediaUrl,
   mediaType,
@@ -20,12 +147,22 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
   isGuest,
   userId,
 }) => {
-  const [renderSrc, setRenderSrc] = useState<string | null>(null);
+  const initialClassification = classifyMediaUrl(mediaUrl);
+
+  const [renderSrc, setRenderSrc] = useState<string | null>(() =>
+    initialClassification.status === 'external' ? initialClassification.resolvedUrl : null
+  );
   const [detectedType, setDetectedType] = useState<'image' | 'audio'>(
     mediaType === 'audio' ? 'audio' : 'image'
   );
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(
+    initialClassification.status === 'internal'
+  );
+  const [error, setError] = useState<string | null>(() =>
+    initialClassification.status === 'rejected'
+      ? 'Blocked unsafe or invalid media URL.'
+      : null
+  );
   const [retryKey, setRetryKey] = useState(0);
 
   const activeBlobUrlRef = useRef<string | null>(null);
@@ -41,17 +178,11 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
     }
   };
 
-  const safeUrl = isSafeMediaUrl(mediaUrl);
-
-  // Determine whether this is an internal authenticated Worker media route
-  const isInternalMedia =
-    safeUrl &&
-    (mediaUrl.startsWith('/api/media/') ||
-      mediaUrl.includes('/api/media/') ||
-      (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')));
+  const classification = classifyMediaUrl(mediaUrl);
+  const isInternalMedia = classification.status === 'internal';
 
   useEffect(() => {
-    if (!safeUrl) {
+    if (classification.status === 'rejected') {
       revokeActiveBlob();
       setRenderSrc(null);
       setError('Blocked unsafe or invalid media URL.');
@@ -59,10 +190,10 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
       return;
     }
 
-    // External URLs (e.g. curated Giphy GIFs) render directly without custom auth headers
-    if (!isInternalMedia) {
+    // External URLs (e.g. curated Giphy GIFs or third-party hosts) render directly without auth tokens
+    if (classification.status === 'external') {
       revokeActiveBlob();
-      setRenderSrc(mediaUrl);
+      setRenderSrc(classification.resolvedUrl);
       setDetectedType(mediaType === 'audio' ? 'audio' : 'image');
       setLoading(false);
       setError(null);
@@ -72,82 +203,48 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
     const abortController = new AbortController();
     let isCancelled = false;
 
-    async function fetchPrivateOrProtectedMedia() {
+    async function fetchProtectedMedia() {
       setLoading(true);
       setError(null);
       revokeActiveBlob();
       setRenderSrc(null);
 
       try {
-        const token = await getAuthToken({
+        const result = await loadSecureMediaAsset({
+          mediaUrl,
+          mediaType,
           isGuest,
-          senderType: isGuest ? 'guest' : 'registered',
           userId,
-          allowPublicFallback: true,
-        });
-
-        if (isCancelled) return;
-
-        if (!token) {
-          setError('Authentication required to view media.');
-          setLoading(false);
-          return;
-        }
-
-        const res = await fetch(mediaUrl, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
           signal: abortController.signal,
         });
 
-        if (isCancelled) return;
+        if (isCancelled) {
+          if (result.kind === 'blob') {
+            try {
+              URL.revokeObjectURL(result.blobUrl);
+            } catch {
+              // ignore
+            }
+          }
+          return;
+        }
 
-        if (res.status === 401) {
-          setError('Authentication required to view media.');
+        if (result.kind === 'blob') {
+          activeBlobUrlRef.current = result.blobUrl;
+          setRenderSrc(result.blobUrl);
+          setDetectedType(result.detectedType);
           setLoading(false);
           return;
         }
 
-        if (res.status === 403) {
-          setError('Forbidden: Unauthorized to access private media.');
+        if (result.kind === 'external') {
+          setRenderSrc(result.src);
+          setDetectedType(result.detectedType);
           setLoading(false);
           return;
         }
 
-        if (res.status === 404) {
-          setError('Media object not found.');
-          setLoading(false);
-          return;
-        }
-
-        if (!res.ok) {
-          setError(`Unable to load media (HTTP ${res.status}).`);
-          setLoading(false);
-          return;
-        }
-
-        const rawContentType = res.headers?.get?.('content-type') || '';
-        const normalizedCt = normalizeMimeType(rawContentType);
-        const isAllowedImage =
-          normalizedCt.startsWith('image/') && normalizedCt !== 'image/svg+xml';
-        const isAllowedAudio = normalizedCt.startsWith('audio/');
-
-        if (!isAllowedImage && !isAllowedAudio) {
-          setError('Blocked unsupported or unsafe media content type.');
-          setLoading(false);
-          return;
-        }
-
-        const blob = await res.blob();
-        if (isCancelled) return;
-
-        const createdUrl = URL.createObjectURL(blob);
-        activeBlobUrlRef.current = createdUrl;
-
-        setRenderSrc(createdUrl);
-        setDetectedType(isAllowedAudio || mediaType === 'audio' ? 'audio' : 'image');
+        setError(result.error);
         setLoading(false);
       } catch (err: any) {
         if (isCancelled || err?.name === 'AbortError') return;
@@ -156,14 +253,14 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
       }
     }
 
-    fetchPrivateOrProtectedMedia();
+    fetchProtectedMedia();
 
     return () => {
       isCancelled = true;
       abortController.abort();
       revokeActiveBlob();
     };
-  }, [mediaUrl, safeUrl, isInternalMedia, mediaType, isGuest, userId, retryKey]);
+  }, [mediaUrl, classification.status, mediaType, isGuest, userId, retryKey]);
 
   if (loading) {
     return (
@@ -181,7 +278,7 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
           <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
           <span className="truncate">{error}</span>
         </div>
-        {safeUrl && isInternalMedia && (
+        {isInternalMedia && (
           <button
             type="button"
             onClick={() => setRetryKey((k) => k + 1)}
