@@ -375,21 +375,47 @@ async function runTests() {
     '1.12 PublicChatPage outer wrapper uses overflow-x-clip instead of overflow-x-hidden'
   );
   assert(
-    publicChatSource.includes('top-[var(--vx-header-bottom,65px)] bottom-0 right-0 z-[35] lg:static lg:inset-auto lg:z-auto') &&
-      !publicChatSource.includes('inset-y-0 right-0 z-40'),
-    '1.13 PublicChatPage mobile participant sidebar begins below navigation header at z-[35] (< Navbar z-40) and restores static desktop layout on lg+'
+    publicChatSource.includes('data-testid="central-chatroom-container"') &&
+      publicChatSource.includes(
+        'className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 ring-1 ring-slate-800/50"'
+      ) &&
+      publicChatSource.includes('<div className="flex-1 flex overflow-hidden">'),
+    '1.13 Central Chatroom Container establishes the relative + overflow-hidden positioning reference without an intermediate relative wrapper blocking top/bottom alignment'
   );
   assert(
-    publicChatSource.includes('fixed inset-x-0 top-[var(--vx-header-bottom,65px)] bottom-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden') &&
-      !publicChatSource.includes('fixed inset-0 bg-black/60'),
-    '1.14 PublicChatPage mobile sidebar backdrop begins below navigation header at z-30 (< sidebar z-[35])'
+    publicChatSource.includes('absolute inset-y-0 right-0 z-30 lg:static lg:inset-auto lg:z-auto') &&
+      !publicChatSource.includes('inset-y-0 right-0 z-40') &&
+      !publicChatSource.includes('fixed top-[var(--vx-header-bottom,65px)]'),
+    '1.14 Mobile & tablet (<1024px) participant sidebar uses container-relative absolute inset-y-0 right-0 at z-30 and restores static inline layout on lg+ (1024px+)'
+  );
+  assert(
+    publicChatSource.includes('className="absolute inset-0 bg-black/60 backdrop-blur-xs z-20 lg:hidden"') &&
+      !publicChatSource.includes('fixed inset-0 bg-black/60') &&
+      !publicChatSource.includes('fixed inset-x-0 top-[var(--vx-header-bottom,65px)]'),
+    '1.15 Mobile & tablet (<1024px) backdrop uses container-relative absolute inset-0 at z-20 (< sidebar z-30), never covers global sticky navbar, and hides on lg+'
+  );
+  assert(
+    (() => {
+      const containerIdx = publicChatSource.indexOf('data-testid="central-chatroom-container"');
+      const sidebarIdx = publicChatSource.indexOf('data-testid="public-chat-sidebar"');
+      const backdropIdx = publicChatSource.indexOf('data-testid="public-chat-sidebar-backdrop"');
+      const rightAdIdx = publicChatSource.indexOf('slotId="public-chatroom-right"');
+      return containerIdx > 0 && sidebarIdx > containerIdx && backdropIdx > sidebarIdx && backdropIdx < rightAdIdx;
+    })(),
+    '1.16 Both mobile/tablet sidebar and backdrop render inside Central Chatroom Container boundaries (never overlapping outer ads or navbar)'
   );
   assert(
     publicChatSource.includes('translate-x-0') &&
       publicChatSource.includes('translate-x-full lg:translate-x-0') &&
       publicChatSource.includes('aria-label="Close participants sidebar"') &&
       publicChatSource.includes('overflow-y-auto overscroll-contain'),
-    '1.15 PublicChatPage preserves slide-in transition, close controls, and independent participant list scrolling'
+    '1.17 PublicChatPage preserves slide-in transition, close controls, and independent participant list scrolling'
+  );
+  assert(
+    publicChatSource.includes('w-80 sm:w-84 lg:w-[340px] xl:w-[344px]') &&
+      publicChatSource.includes('max-w-full') &&
+      publicChatSource.includes('onClick={() => setShowMobileSidebar(false)}'),
+    '1.18 Responsive drawer widths (mobile <768px, tablet 768-1023px, desktop 1024px+) and backdrop click-to-close remain intact'
   );
   assert(
     publicChatSource.includes('slotId="public-chatroom-top"') &&
@@ -397,7 +423,7 @@ async function runTests() {
       publicChatSource.includes('slotId="public-chatroom-right"') &&
       publicChatSource.includes('slotId="participant-box-horizontal"') &&
       publicChatSource.includes('slotId="public-chatroom-bottom"'),
-    '1.16 PublicChatPage preserves all five advertisement placements intact'
+    '1.19 PublicChatPage preserves all five advertisement placements intact'
   );
 
   // -------------------------------------------------------------------------

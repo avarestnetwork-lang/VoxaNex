@@ -1244,7 +1244,10 @@ export const PublicChatPage: React.FC = () => {
         </div>
 
         {/* Central Chatroom Container */}
-        <div className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 ring-1 ring-slate-800/50">
+        <div
+          data-testid="central-chatroom-container"
+          className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 ring-1 ring-slate-800/50"
+        >
           <div className="p-3 border-b border-slate-800 bg-[#0c1324] flex items-center justify-between gap-3 shrink-0">
             {/* ... tab buttons ... */}
             <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-x-auto no-scrollbar">
@@ -1400,9 +1403,9 @@ export const PublicChatPage: React.FC = () => {
       </div>
 
       {/* Main Container */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden">
         {activeMaximizedWindow ? (
-          <div className="flex-1 flex flex-col overflow-hidden relative" data-testid="maximized-private-pane">
+          <div className="flex-1 flex flex-col overflow-hidden relative z-0" data-testid="maximized-private-pane">
             <PrivateChatPane
               conversationId={activeMaximizedWindow.conversationId}
               partner={{
@@ -1425,7 +1428,7 @@ export const PublicChatPage: React.FC = () => {
             />
           </div>
         ) : (
-          <div className="flex-1 flex flex-col justify-between overflow-hidden relative">
+          <div className="flex-1 flex flex-col justify-between overflow-hidden relative z-0">
             {/* Safety & Retention Notification Strip */}
             <div className="px-4 py-2 bg-[#0c1324] border-b border-slate-800 text-[11px] text-slate-400 font-mono flex items-center justify-between shrink-0">
               <div className="flex items-center gap-1.5">
@@ -1813,7 +1816,7 @@ export const PublicChatPage: React.FC = () => {
           data-testid="public-chat-sidebar"
           className={`${
             showMobileSidebar ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'
-          } fixed top-[var(--vx-header-bottom,65px)] bottom-0 right-0 z-[35] lg:static lg:inset-auto lg:z-auto w-80 sm:w-84 lg:w-[340px] xl:w-[344px] border-l border-slate-800 bg-[#090d18] flex flex-col justify-between shrink-0 transition-transform duration-200 ease-in-out p-2 gap-2`}
+          } absolute inset-y-0 right-0 z-30 lg:static lg:inset-auto lg:z-auto max-w-full w-80 sm:w-84 lg:w-[340px] xl:w-[344px] border-l border-slate-800 bg-[#090d18] flex flex-col justify-between shrink-0 transition-transform duration-200 ease-in-out p-2 gap-2`}
         >
           {/* Complete Users/Participants Panel - 100% Ad-Free Internally with its own border */}
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-[#0c1220]">
@@ -2081,6 +2084,16 @@ export const PublicChatPage: React.FC = () => {
           />
         </div>
       </div>
+
+      {/* Mobile/Tablet Backdrop (Scoped to Central Chatroom Container) */}
+      {showMobileSidebar && (
+        <div
+          data-testid="public-chat-sidebar-backdrop"
+          aria-hidden="true"
+          onClick={() => setShowMobileSidebar(false)}
+          className="absolute inset-0 bg-black/60 backdrop-blur-xs z-20 lg:hidden"
+        />
+      )}
     </div>
 
       {/* Ad 3 — Right Vertical Ad (Visible on desktop xl+ outside chatroom right border) */}
@@ -2103,15 +2116,6 @@ export const PublicChatPage: React.FC = () => {
           position="bottom"
         />
       </div>
-      {/* Mobile Backdrop */}
-      {showMobileSidebar && (
-        <div
-          data-testid="public-chat-sidebar-backdrop"
-          aria-hidden="true"
-          onClick={() => setShowMobileSidebar(false)}
-          className="fixed inset-x-0 top-[var(--vx-header-bottom,65px)] bottom-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden"
-        />
-      )}
 
       {/* Contextual User Action Menu */}
       {userActionMenu && (
