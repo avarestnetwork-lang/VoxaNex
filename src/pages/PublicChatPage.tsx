@@ -1214,7 +1214,7 @@ export const PublicChatPage: React.FC = () => {
   }
 
   return (
-    <div className="relative w-full overflow-x-hidden min-h-[calc(100vh-5.5rem)] flex flex-col">
+    <div className="relative w-full overflow-x-clip min-h-[calc(100vh-5.5rem)] flex flex-col">
       <SEOHead
         title={`${activeRoom.name[language] || activeRoom.name.en} – ChatLustora`}
         description={`Real-time adult public group chat and live conversations in ${activeRoom.name[language] || activeRoom.name.en} on ChatLustora.`}
@@ -1810,12 +1810,13 @@ export const PublicChatPage: React.FC = () => {
 
         {/* Right Sidebar Column: Users | Private Chats | Rooms + External Ad below */}
         <div
+          data-testid="public-chat-sidebar"
           className={`${
             showMobileSidebar ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'
-          } fixed inset-y-0 right-0 z-40 lg:static w-80 sm:w-84 lg:w-[340px] xl:w-[344px] border-l border-slate-800 bg-[#090d18] flex flex-col justify-between shrink-0 transition-transform duration-200 ease-in-out p-2 gap-2`}
+          } fixed top-[var(--vx-header-bottom,65px)] bottom-0 right-0 z-[35] lg:static lg:inset-auto lg:z-auto w-80 sm:w-84 lg:w-[340px] xl:w-[344px] border-l border-slate-800 bg-[#090d18] flex flex-col justify-between shrink-0 transition-transform duration-200 ease-in-out p-2 gap-2`}
         >
           {/* Complete Users/Participants Panel - 100% Ad-Free Internally with its own border */}
-          <div className="flex-1 flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-[#0c1220]">
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-[#0c1220]">
             <div className="p-3 border-b border-slate-800 bg-[#090d18] flex items-center justify-between">
               <div className="flex items-center gap-1 bg-[#101729] p-1 rounded-xl border border-slate-800">
                 <button
@@ -1855,8 +1856,10 @@ export const PublicChatPage: React.FC = () => {
 
               {/* Close sidebar on mobile */}
               <button
+                type="button"
+                aria-label="Close participants sidebar"
                 onClick={() => setShowMobileSidebar(false)}
-                className="lg:hidden p-1.5 text-slate-400 hover:text-white"
+                className="lg:hidden p-1.5 text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1864,7 +1867,7 @@ export const PublicChatPage: React.FC = () => {
 
             {/* TAB CONTENT 1: ONLINE USERS */}
             {sidebarTab === 'users' && (
-              <div className="flex-1 flex flex-col p-3 overflow-hidden">
+              <div className="flex-1 min-h-0 flex flex-col p-3 overflow-hidden">
                 {/* Search user filter */}
                 <div className="relative mb-2 shrink-0">
                   <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
@@ -1886,7 +1889,7 @@ export const PublicChatPage: React.FC = () => {
                 </div>
 
                 {/* Users List */}
-                <div className="flex-1 overflow-y-auto space-y-1.5 pr-0.5">
+                <div className="flex-1 overflow-y-auto overscroll-contain space-y-1.5 pr-0.5">
                   {/* Current user card */}
                   <div
                     onClick={(e) => handleUserClick(e, user)}
@@ -1972,8 +1975,8 @@ export const PublicChatPage: React.FC = () => {
 
             {/* TAB CONTENT 2: PRIVATE CONVERSATIONS */}
             {sidebarTab === 'private' && (
-              <div className="flex-1 flex flex-col p-3 overflow-hidden">
-                <div className="flex-1 overflow-y-auto space-y-1.5">
+              <div className="flex-1 min-h-0 flex flex-col p-3 overflow-hidden">
+                <div className="flex-1 overflow-y-auto overscroll-contain space-y-1.5">
                   {directConversations.length === 0 ? (
                     <div className="py-8 text-center text-xs text-slate-400">
                       <MessageSquare className="w-8 h-8 text-slate-600 mx-auto mb-2" />
@@ -2024,8 +2027,8 @@ export const PublicChatPage: React.FC = () => {
 
             {/* TAB CONTENT 3: ROOMS DIRECTORY */}
             {sidebarTab === 'rooms' && (
-              <div className="flex-1 flex flex-col p-3 overflow-hidden">
-                <div className="flex-1 overflow-y-auto space-y-1.5">
+              <div className="flex-1 min-h-0 flex flex-col p-3 overflow-hidden">
+                <div className="flex-1 overflow-y-auto overscroll-contain space-y-1.5">
                   {ROOMS_CONFIG.map((r) => {
                     const isCurrent = r.slug === activeRoom.slug;
                     return (
@@ -2103,8 +2106,10 @@ export const PublicChatPage: React.FC = () => {
       {/* Mobile Backdrop */}
       {showMobileSidebar && (
         <div
+          data-testid="public-chat-sidebar-backdrop"
+          aria-hidden="true"
           onClick={() => setShowMobileSidebar(false)}
-          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden"
+          className="fixed inset-x-0 top-[var(--vx-header-bottom,65px)] bottom-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden"
         />
       )}
 

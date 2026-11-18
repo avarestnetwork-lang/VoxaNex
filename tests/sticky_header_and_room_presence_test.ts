@@ -351,6 +351,54 @@ async function runTests() {
       navbarHtml.includes('Register'),
     '1.8 Navbar SSR output retains sticky positioning and all navigation controls'
   );
+  assert(
+    navbarSource.includes('--vx-header-bottom') &&
+      navbarSource.includes('headerBarRef') &&
+      navbarSource.includes('overscroll-contain'),
+    '1.9 Navbar tracks visible top bar bottom offset via --vx-header-bottom and isolates mobile menu scrolling'
+  );
+  assert(
+    navbarSource.includes("e.key === 'Escape'") &&
+      navbarSource.includes('setMobileMenuOpen(false)') &&
+      navbarSource.includes('[currentRoute]'),
+    '1.10 Navbar closes mobile menu automatically on route navigation and Escape key'
+  );
+  assert(
+    navbarSource.includes('min-w-0 shrink') &&
+      navbarSource.includes('width={36}') &&
+      navbarSource.includes('height={36}') &&
+      navbarSource.includes('flex items-center gap-2 shrink-0'),
+    '1.11 Navbar prevents narrow-viewport horizontal overflow while preserving 36x36 logo dimensions'
+  );
+  assert(
+    publicChatSource.includes('overflow-x-clip') && !publicChatSource.includes('overflow-x-hidden'),
+    '1.12 PublicChatPage outer wrapper uses overflow-x-clip instead of overflow-x-hidden'
+  );
+  assert(
+    publicChatSource.includes('top-[var(--vx-header-bottom,65px)] bottom-0 right-0 z-[35] lg:static lg:inset-auto lg:z-auto') &&
+      !publicChatSource.includes('inset-y-0 right-0 z-40'),
+    '1.13 PublicChatPage mobile participant sidebar begins below navigation header at z-[35] (< Navbar z-40) and restores static desktop layout on lg+'
+  );
+  assert(
+    publicChatSource.includes('fixed inset-x-0 top-[var(--vx-header-bottom,65px)] bottom-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden') &&
+      !publicChatSource.includes('fixed inset-0 bg-black/60'),
+    '1.14 PublicChatPage mobile sidebar backdrop begins below navigation header at z-30 (< sidebar z-[35])'
+  );
+  assert(
+    publicChatSource.includes('translate-x-0') &&
+      publicChatSource.includes('translate-x-full lg:translate-x-0') &&
+      publicChatSource.includes('aria-label="Close participants sidebar"') &&
+      publicChatSource.includes('overflow-y-auto overscroll-contain'),
+    '1.15 PublicChatPage preserves slide-in transition, close controls, and independent participant list scrolling'
+  );
+  assert(
+    publicChatSource.includes('slotId="public-chatroom-top"') &&
+      publicChatSource.includes('slotId="public-chatroom-left"') &&
+      publicChatSource.includes('slotId="public-chatroom-right"') &&
+      publicChatSource.includes('slotId="participant-box-horizontal"') &&
+      publicChatSource.includes('slotId="public-chatroom-bottom"'),
+    '1.16 PublicChatPage preserves all five advertisement placements intact'
+  );
 
   // -------------------------------------------------------------------------
   // PART 2: PRIVACY-PRESERVING ROOM PRESENCE & RELIABILITY SUITE

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Heart,
   Video,
@@ -18,6 +18,7 @@ export const Navbar: React.FC = () => {
   const { language } = useLanguage();
   const { user, hasActiveSession } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const headerBarRef = useRef<HTMLDivElement>(null);
 
   const navItems = [
     { label: language === 'bn' ? 'হোম' : 'Home', route: '/' },
@@ -29,6 +30,60 @@ export const Navbar: React.FC = () => {
     { label: language === 'bn' ? 'ফোরাম' : 'Forum', route: '/forum' },
   ];
 
+  // Close mobile drawer automatically on route transitions
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [currentRoute]);
+
+  // Close mobile drawer on Escape key
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMobileMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mobileMenuOpen]);
+
+  // Keep --vx-header-bottom synced to the visible navigation bar bottom (excluding mobile dropdown)
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    let lastBottom = '';
+
+    const updateHeaderBottom = () => {
+      const bar = headerBarRef.current;
+      if (!bar) return;
+      const rect = bar.getBoundingClientRect();
+      const computedBottom = Math.max(0, Math.ceil(rect.bottom + 1));
+      const nextVal = `${computedBottom}px`;
+      if (nextVal !== lastBottom) {
+        lastBottom = nextVal;
+        document.documentElement.style.setProperty('--vx-header-bottom', nextVal);
+      }
+    };
+
+    updateHeaderBottom();
+
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' && headerBarRef.current
+        ? new ResizeObserver(updateHeaderBottom)
+        : null;
+    if (resizeObserver && headerBarRef.current) {
+      resizeObserver.observe(headerBarRef.current);
+    }
+
+    window.addEventListener('scroll', updateHeaderBottom, { passive: true });
+    window.addEventListener('resize', updateHeaderBottom, { passive: true });
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('scroll', updateHeaderBottom);
+      window.removeEventListener('resize', updateHeaderBottom);
+    };
+  }, []);
+
   const handleNav = (route: string) => {
     navigate(route);
     setMobileMenuOpen(false);
@@ -36,13 +91,13 @@ export const Navbar: React.FC = () => {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md shadow-sm transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+      <div ref={headerBarRef} className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16 gap-2">
           {/* Logo & Brand + 18+ Badge */}
-          <div className="flex items-center gap-3 shrink">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink">
             <button
               onClick={() => handleNav('/')}
-              className="flex items-center gap-2.5 text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded-lg cursor-pointer shrink-0"
+              className="flex items-center gap-2.5 text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded-lg cursor-pointer min-w-0"
             >
               <img
                 src="/logo.png"
@@ -146,7 +201,7 @@ export const Navbar: React.FC = () => {
           </nav>
 
           {/* Right Utilities: Register / Member Dashboard & Mobile Toggle */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {/* Member Dashboard button for logged in members */}
             {hasActiveSession && !user.isGuest ? (
               <button
@@ -188,7 +243,7 @@ export const Navbar: React.FC = () => {
       {mobileMenuOpen && (
         <div
           id="mobile-menu"
-          className="lg:hidden border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 pt-2 pb-4 space-y-1 max-h-[calc(100vh-4.25rem)] overflow-y-auto"
+          className="lg:hidden border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 pt-2 pb-4 space-y-1 max-h-[calc(100vh-4.25rem)] overflow-y-auto overscroll-contain"
         >
           {navItems.map((item) => (
             <button
