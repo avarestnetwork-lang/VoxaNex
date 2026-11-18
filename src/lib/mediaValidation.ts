@@ -122,10 +122,14 @@ const EXT_TO_CANONICAL_MIME: Record<string, string> = {
 export const IMAGE_ACCEPT_ATTRIBUTE =
   '.jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif';
 
+export const AUDIO_ACCEPT_ATTRIBUTE =
+  '.mp3,.wav,.ogg,.oga,.webm,audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/webm';
+
 export const ATTACHMENT_ACCEPT_ATTRIBUTE =
   '.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.ogg,.oga,.webm,image/jpeg,image/png,image/webp,image/gif,audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/webm';
 
 export const SUPPORTED_IMAGE_FORMATS_TEXT = 'JPG, PNG, WebP, GIF (max 5 MB)';
+export const SUPPORTED_AUDIO_FORMATS_TEXT = 'MP3, WAV, OGG, WebM (max 10 MB)';
 export const SUPPORTED_ALL_FORMATS_TEXT =
   'Images: JPG, PNG, WebP, GIF (max 5 MB) · Audio: MP3, WAV, OGG, WebM (max 10 MB)';
 
@@ -175,9 +179,10 @@ export function validateMediaFileMetadata(params: {
   fileSize: number;
   mimeType?: string;
   imageOnly?: boolean;
+  audioOnly?: boolean;
   inferMimeFromExtIfEmpty?: boolean;
 }): MediaMetadataValidationResult {
-  const { fileName, fileSize, mimeType, imageOnly = false, inferMimeFromExtIfEmpty = false } = params;
+  const { fileName, fileSize, mimeType, imageOnly = false, audioOnly = false, inferMimeFromExtIfEmpty = false } = params;
 
   if (!fileName || typeof fileName !== 'string' || fileName.trim().length === 0) {
     return { valid: false, error: 'File name is required.' };
@@ -231,6 +236,13 @@ export function validateMediaFileMetadata(params: {
     return {
       valid: false,
       error: `Only image uploads are allowed here (${SUPPORTED_IMAGE_FORMATS_TEXT}). Use New Attachment for audio clips.`,
+    };
+  }
+
+  if (audioOnly && spec.category !== 'audio') {
+    return {
+      valid: false,
+      error: `Only audio attachments are allowed here (${SUPPORTED_AUDIO_FORMATS_TEXT}). Use the Image button for images.`,
     };
   }
 
@@ -388,13 +400,15 @@ export function validateMediaBinary(params: {
   mimeType?: string;
   bytes: Uint8Array;
   imageOnly?: boolean;
+  audioOnly?: boolean;
 }): MediaMetadataValidationResult {
-  const { fileName, mimeType, bytes, imageOnly } = params;
+  const { fileName, mimeType, bytes, imageOnly, audioOnly } = params;
   const meta = validateMediaFileMetadata({
     fileName,
     fileSize: bytes ? bytes.byteLength : 0,
     mimeType,
     imageOnly,
+    audioOnly,
     inferMimeFromExtIfEmpty: true,
   });
   if (!meta.valid || !meta.canonicalMime) {

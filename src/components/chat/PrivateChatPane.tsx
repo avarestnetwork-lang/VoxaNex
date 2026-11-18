@@ -6,12 +6,23 @@ import { getGenderInfo } from '../../pages/PublicChatPage';
 import { EmojiPicker } from './EmojiPicker';
 import { GifPicker } from './GifPicker';
 import { TypingIndicator } from './TypingIndicator';
+import { SecureMediaRenderer } from './SecureMediaRenderer';
+import { ComposerAttachmentPreview } from './ComposerAttachmentPreview';
+import { useChatMediaAttachment } from '../../hooks/useChatMediaAttachment';
+import {
+  IMAGE_ACCEPT_ATTRIBUTE,
+  AUDIO_ACCEPT_ATTRIBUTE,
+  SUPPORTED_IMAGE_FORMATS_TEXT,
+  SUPPORTED_AUDIO_FORMATS_TEXT,
+} from '../../lib/mediaValidation';
 import { Button } from '../ui/Button';
 import {
   Send,
   ArrowLeft,
   Smile,
   Image as ImageIcon,
+  Paperclip,
+  Upload,
   Check,
   CheckCheck,
   RotateCcw,
@@ -60,11 +71,31 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
   const [partnerTyping, setPartnerTyping] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
-  const [attachedMedia, setAttachedMedia] = useState<{ url: string; type: 'gif' | 'image' } | null>(null);
+  const [showImageMenu, setShowImageMenu] = useState(false);
   const [lastReadMessageId, setLastReadMessageId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+
+  const {
+    attachment,
+    stagedMedia,
+    isBusy: isAttachmentBusy,
+    canSendMessage,
+    selectFile,
+    selectGif,
+    cancelUpload,
+    retryUpload,
+    removeAttachment,
+    markSent,
+  } = useChatMediaAttachment({
+    contextType: 'conversation',
+    contextId: activeConversationId,
+    isGuest: currentUser.isGuest,
+    userId: currentUser.id,
+  });
 
   const scrollToBottom = (smooth = true) => {
     messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
@@ -187,10 +218,11 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
     if (e) e.preventDefault();
     if (isComposerDisabled || !activeConversationId) return;
     const clean = inputText.trim();
-    if (!clean && !attachedMedia) return;
+    if (!canSendMessage(clean)) return;
 
     const tempId = `temp_${Date.now()}`;
     const nonce = `nonce_dm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const mediaToSend = stagedMedia;
 
     const optimisticMsg: ChatMessage = {
       id: tempId,
@@ -200,8 +232,8 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
       senderAvatar: currentUser.avatar,
       recipientId: partner.id,
       content: clean,
-      mediaUrl: attachedMedia?.url,
-      mediaType: attachedMedia?.type,
+      mediaUrl: mediaToSend?.url,
+      mediaType: mediaToSend?.type,
       timestamp: new Date().toISOString(),
       status: 'sending',
       clientNonce: nonce,
@@ -209,10 +241,10 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
     setMessages((prev) => [...prev, optimisticMsg]);
     setInputText('');
-    const mediaToSend = attachedMedia;
-    setAttachedMedia(null);
+    markSent();
     setShowEmojiPicker(false);
     setShowGifPicker(false);
+    setShowImageMenu(false);
     setTimeout(() => scrollToBottom(true), 50);
 
     const result = await messagingService.sendConversationMessage(activeConversationId, {
@@ -229,9 +261,17 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
     });
 
     if (result.success && result.message) {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === tempId ? { ...result.message!, status: 'delivered' } : m))
-      );
+      const confirmed = result.message;
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === confirmed.id)) {
+          return prev.filter((m) => m.id !== tempId);
+        }
+        return prev.map((m) =>
+          m.id === tempId || (nonce && m.clientNonce === nonce)
+            ? { ...confirmed, status: 'delivered' }
+            : m
+        );
+      });
     } else {
       setMessages((prev) =>
         prev.map((m) =>
@@ -241,6 +281,45 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
     }
   };
 
+  const handleRetryMessage = async (failedMsg: ChatMessage) => {
+    if (!activeConversationId) return;
+    setMessages((prev) =>
+      prev.map((m) => (m.id === failedMsg.id ? { ...m, status: 'sending' } : m))
+    );
+
+    const result = await messagingService.sendConversationMessage(activeConversationId, {
+      senderId: currentUser.id,
+      senderNickname: currentUser.nickname,
+      senderAvatar: currentUser.avatar,
+      recipientId: partner.id,
+      content: failedMsg.content,
+      mediaUrl: failedMsg.mediaUrl,
+      mediaType: failedMsg.mediaType,
+      clientNonce: failedMsg.clientNonce,
+      senderType: currentUser.isGuest ? 'guest' : 'registered',
+      isGuest: currentUser.isGuest,
+    });
+
+    if (result.success && result.message) {
+      const confirmed = result.message;
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === confirmed.id)) {
+          return prev.filter((m) => m.id !== failedMsg.id);
+        }
+        return prev.map((m) => (m.id === failedMsg.id ? { ...confirmed, status: 'delivered' } : m));
+      });
+    } else {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === failedMsg.id ? { ...m, status: 'failed' } : m))
+      );
+    }
+  };
+
+  const handleClosePane = () => {
+    removeAttachment();
+    onClose();
+  };
+
   const partnerGender = getGenderInfo(partner.gender);
 
   return (
@@ -248,9 +327,9 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
       {/* Conversation Top Header */}
       <div className="p-3 bg-[#0d1424] border-b border-slate-800 flex items-center justify-between gap-3 shrink-0 h-14 sm:h-16">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-          {onClose && !onMinimize && (
+          {!onMinimize && (
             <button
-              onClick={onClose}
+              onClick={handleClosePane}
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
               title="Return to Public Chatroom"
               aria-label="Back"
@@ -309,7 +388,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             </button>
           )}
           <button
-            onClick={onClose}
+            onClick={handleClosePane}
             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
             title="Close"
             aria-label="Close chat"
@@ -365,14 +444,30 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
                   {msg.mediaUrl && (
                     <div className="mt-2 rounded-lg overflow-hidden border border-slate-700/60 max-w-full">
-                      <img src={msg.mediaUrl} alt="Shared attachment" className="w-full max-h-48 object-contain bg-black/20" />
+                      <SecureMediaRenderer
+                        mediaUrl={msg.mediaUrl}
+                        mediaType={msg.mediaType}
+                        alt="Shared attachment"
+                        className="w-full max-h-48 object-contain bg-black/20"
+                        isGuest={currentUser.isGuest}
+                        userId={currentUser.id}
+                      />
                     </div>
                   )}
 
                   {isMe && (
                     <div className="mt-1 flex items-center justify-end gap-1 text-[9px] font-mono">
                       {isSending && <span className="text-violet-300">Sending...</span>}
-                      {isFailed && <span className="text-rose-300">Failed</span>}
+                      {isFailed && (
+                        <button
+                          type="button"
+                          onClick={() => handleRetryMessage(msg)}
+                          className="inline-flex items-center gap-0.5 text-rose-200 hover:text-white underline cursor-pointer"
+                        >
+                          <RotateCcw className="w-2.5 h-2.5" />
+                          <span>Failed · Retry</span>
+                        </button>
+                      )}
                       {isDelivered && (
                         <span className="flex items-center gap-0.5" title={isRead ? 'Read by partner' : 'Delivered'}>
                           {isRead ? (
@@ -406,8 +501,46 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
         </div>
       )}
 
+      {/* Attachment Staging & Upload Progress Preview */}
+      <ComposerAttachmentPreview
+        attachment={attachment}
+        onCancel={cancelUpload}
+        onRetry={retryUpload}
+        onRemove={removeAttachment}
+        compact={true}
+      />
+
       {/* Composer */}
       <div className="p-2 sm:p-3 border-t border-slate-800 bg-[#0c1222] shrink-0 relative">
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept={IMAGE_ACCEPT_ATTRIBUTE}
+          className="hidden"
+          data-testid="private-image-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) {
+              selectFile(file, 'image');
+            }
+          }}
+        />
+        <input
+          ref={audioInputRef}
+          type="file"
+          accept={AUDIO_ACCEPT_ATTRIBUTE}
+          className="hidden"
+          data-testid="private-audio-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) {
+              selectFile(file, 'audio');
+            }
+          }}
+        />
+
         {showEmojiPicker && (
           <EmojiPicker
             onSelectEmoji={(emoji) => {
@@ -417,10 +550,45 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             onClose={() => setShowEmojiPicker(false)}
           />
         )}
+        {showImageMenu && (
+          <div
+            data-testid="private-image-menu"
+            className="absolute bottom-full left-2 mb-2 w-60 rounded-xl border border-slate-700/80 bg-[#0e1526] shadow-2xl p-1.5 z-40"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setShowImageMenu(false);
+                imageInputRef.current?.click();
+              }}
+              className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-slate-800/80 text-left transition-colors cursor-pointer"
+            >
+              <Upload className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-white">Upload Image</div>
+                <div className="text-[10px] text-slate-400">{SUPPORTED_IMAGE_FORMATS_TEXT}</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowImageMenu(false);
+                setShowGifPicker(true);
+              }}
+              className="w-full flex items-start gap-2.5 p-2 rounded-lg hover:bg-slate-800/80 text-left transition-colors cursor-pointer"
+            >
+              <ImageIcon className="w-4 h-4 text-fuchsia-400 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-white">Pick Animated GIF</div>
+                <div className="text-[10px] text-slate-400">Search curated GIF library</div>
+              </div>
+            </button>
+          </div>
+        )}
         {showGifPicker && (
           <GifPicker
             onSelectGif={(gif) => {
-              setAttachedMedia({ url: gif.url, type: 'gif' });
+              selectGif(gif);
               setShowGifPicker(false);
             }}
             onClose={() => setShowGifPicker(false)}
@@ -429,32 +597,64 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
 
         <form onSubmit={handleSendMessage} className="flex items-center gap-1.5 sm:gap-2">
           <div className="flex items-center gap-1 shrink-0">
+            {/* 1. Emoji */}
             <button
               type="button"
               disabled={isComposerDisabled}
               onClick={() => {
                 setShowEmojiPicker(!showEmojiPicker);
+                setShowImageMenu(false);
                 setShowGifPicker(false);
               }}
               className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
               aria-label="Pick emoji"
+              title="Emoji picker"
             >
               <Smile className="w-4 h-4" />
             </button>
+
+            {/* 2. Image (Upload Image or Pick GIF) */}
             <button
               type="button"
-              disabled={isComposerDisabled}
+              disabled={isComposerDisabled || isAttachmentBusy}
               onClick={() => {
-                setShowGifPicker(!showGifPicker);
+                if (showGifPicker) {
+                  setShowGifPicker(false);
+                } else {
+                  setShowImageMenu(!showImageMenu);
+                }
                 setShowEmojiPicker(false);
               }}
-              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-              aria-label="Pick GIF"
+              className={`p-2 rounded-lg border transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0 ${
+                showImageMenu || showGifPicker
+                  ? 'bg-fuchsia-600 text-white border-fuchsia-500'
+                  : 'border-slate-800 bg-[#101729] text-slate-400 hover:text-white'
+              }`}
+              aria-label="Image or GIF attachment"
+              title={`Image (${SUPPORTED_IMAGE_FORMATS_TEXT}) or GIF`}
             >
               <ImageIcon className="w-4 h-4" />
             </button>
+
+            {/* 3. New Attachment (Audio clip upload) */}
+            <button
+              type="button"
+              disabled={isComposerDisabled || isAttachmentBusy}
+              onClick={() => {
+                setShowEmojiPicker(false);
+                setShowImageMenu(false);
+                setShowGifPicker(false);
+                audioInputRef.current?.click();
+              }}
+              className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-cyan-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              aria-label="Attach audio file"
+              title={`Attach Audio (${SUPPORTED_AUDIO_FORMATS_TEXT})`}
+            >
+              <Paperclip className="w-4 h-4" />
+            </button>
           </div>
 
+          {/* 4. Message Input */}
           <input
             type="text"
             disabled={isComposerDisabled}
@@ -464,9 +664,10 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             className="flex-1 min-w-0 bg-[#101729] border border-slate-800 rounded-lg px-3 py-2 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
           />
 
+          {/* 5. Send */}
           <button 
             type="submit" 
-            disabled={isComposerDisabled} 
+            disabled={isComposerDisabled || !canSendMessage(inputText.trim())} 
             className="bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 text-white p-2 rounded-lg transition-all flex items-center justify-center shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
             aria-label="Send message"
           >

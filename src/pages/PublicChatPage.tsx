@@ -16,6 +16,15 @@ import { ReportModal } from '../components/chat/ReportModal';
 import { UserActionMenu } from '../components/chat/UserActionMenu';
 import { MentionAutocomplete } from '../components/chat/MentionAutocomplete';
 import { UserProfileModal } from '../components/chat/UserProfileModal';
+import { SecureMediaRenderer } from '../components/chat/SecureMediaRenderer';
+import { ComposerAttachmentPreview } from '../components/chat/ComposerAttachmentPreview';
+import { useChatMediaAttachment } from '../hooks/useChatMediaAttachment';
+import {
+  IMAGE_ACCEPT_ATTRIBUTE,
+  AUDIO_ACCEPT_ATTRIBUTE,
+  SUPPORTED_IMAGE_FORMATS_TEXT,
+  SUPPORTED_AUDIO_FORMATS_TEXT,
+} from '../lib/mediaValidation';
 import { safetyService } from '../services/safetyService';
 import { Button } from '../components/ui/Button';
 import { SEOHead } from '../components/common/SEOHead';
@@ -34,6 +43,8 @@ import {
   Compass,
   Smile,
   Image as ImageIcon,
+  Paperclip,
+  Upload,
   AlertTriangle,
   RotateCcw,
   LogOut,
@@ -233,18 +244,36 @@ export const PublicChatPage: React.FC = () => {
   // Pickers & Modals
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showImageMenu, setShowImageMenu] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [reportTargetUser, setReportTargetUser] = useState<{ targetId: string; nickname: string; snippet?: string } | null>(null);
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
-
-  // Attached media for current message
-  const [attachedMedia, setAttachedMedia] = useState<{ url: string; type: 'gif' | 'image'; title?: string } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
   const isNearBottomRef = useRef(true);
+
+  const {
+    attachment,
+    stagedMedia,
+    isBusy: isAttachmentBusy,
+    canSendMessage,
+    selectFile,
+    selectGif,
+    cancelUpload,
+    retryUpload,
+    removeAttachment,
+    markSent,
+  } = useChatMediaAttachment({
+    contextType: 'room',
+    contextId: activeRoom.id,
+    isGuest: user.isGuest,
+    userId: user.id,
+  });
 
   const scrollToBottom = useCallback((smooth = true) => {
     messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
@@ -517,10 +546,11 @@ export const PublicChatPage: React.FC = () => {
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const clean = inputText.trim();
-    if (!clean && !attachedMedia) return;
+    if (!canSendMessage(clean)) return;
 
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const nonce = `nonce_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const mediaToSend = stagedMedia;
 
     const optimisticMsg: ExtendedChatMessage = {
       id: tempId,
@@ -529,8 +559,8 @@ export const PublicChatPage: React.FC = () => {
       senderNickname: user.nickname,
       senderAvatar: user.avatar,
       content: clean,
-      mediaUrl: attachedMedia?.url,
-      mediaType: attachedMedia?.type,
+      mediaUrl: mediaToSend?.url,
+      mediaType: mediaToSend?.type,
       timestamp: new Date().toISOString(),
       status: 'sending',
       clientNonce: nonce,
@@ -539,10 +569,10 @@ export const PublicChatPage: React.FC = () => {
     setMessages((prev) => [...prev, optimisticMsg]);
     setInputText('');
     setMentionQuery(null);
-    const mediaToSend = attachedMedia;
-    setAttachedMedia(null);
+    markSent();
     setShowEmojiPicker(false);
     setShowGifPicker(false);
+    setShowImageMenu(false);
     setTimeout(() => scrollToBottom(true), 50);
 
     let linkPreview: LinkPreviewData | undefined;
@@ -964,6 +994,7 @@ export const PublicChatPage: React.FC = () => {
                 id: user.id,
                 nickname: user.nickname,
                 avatar: user.avatar,
+                isGuest: user.isGuest,
               }}
               onClose={() => {
                 minimizeChat(activeMaximizedWindow.conversationId);
@@ -1105,14 +1136,16 @@ export const PublicChatPage: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Attached GIF / Media */}
+                      {/* Attached Media (GIF / Image / Audio) */}
                       {msg.mediaUrl && (
                         <div className="mt-2 rounded-xl overflow-hidden border border-slate-700/60 max-w-xs shadow-md">
-                          <img
-                            src={msg.mediaUrl}
+                          <SecureMediaRenderer
+                            mediaUrl={msg.mediaUrl}
+                            mediaType={msg.mediaType}
                             alt="Shared media"
                             className="w-full max-h-48 object-cover"
-                            loading="lazy"
+                            isGuest={user.isGuest}
+                            userId={user.id}
                           />
                         </div>
                       )}
@@ -1150,32 +1183,46 @@ export const PublicChatPage: React.FC = () => {
             {/* Typing indicator */}
             <TypingIndicator typers={typers} />
 
-            {/* Attached Media Staging Preview */}
-            {attachedMedia && (
-              <div className="px-4 py-2 bg-[#0c1222] border-t border-slate-800 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs text-slate-300">
-                  <img
-                    src={attachedMedia.url}
-                    alt="Attachment preview"
-                    className="w-10 h-10 object-cover rounded border border-slate-700"
-                  />
-                  <div>
-                    <span className="font-semibold block text-cyan-300">Attached Animated GIF</span>
-                    <span className="text-[10px] text-slate-400">{attachedMedia.title}</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setAttachedMedia(null)}
-                  className="text-xs text-rose-400 hover:text-white cursor-pointer"
-                >
-                  Remove
-                </button>
-              </div>
-            )}
+            {/* Attached Media Staging & Upload Progress Preview */}
+            <ComposerAttachmentPreview
+              attachment={attachment}
+              onCancel={cancelUpload}
+              onRetry={retryUpload}
+              onRemove={removeAttachment}
+            />
 
             {/* Composer Dock */}
             <div className="p-3 border-t border-slate-800 bg-[#0c1222] space-y-2 shrink-0 relative">
               <BanglishHelperBar onInsertText={(phrase) => setInputText((prev) => (prev ? `${prev} ${phrase}` : phrase))} />
+
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept={IMAGE_ACCEPT_ATTRIBUTE}
+                className="hidden"
+                data-testid="public-image-input"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (file) {
+                    selectFile(file, 'image');
+                  }
+                }}
+              />
+              <input
+                ref={audioInputRef}
+                type="file"
+                accept={AUDIO_ACCEPT_ATTRIBUTE}
+                className="hidden"
+                data-testid="public-audio-input"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (file) {
+                    selectFile(file, 'audio');
+                  }
+                }}
+              />
 
               {/* Mention Autocomplete Dropdown */}
               {mentionQuery !== null && (
@@ -1188,7 +1235,7 @@ export const PublicChatPage: React.FC = () => {
                 />
               )}
 
-              {/* Emoji & GIF Popovers */}
+              {/* Emoji, Image & GIF Popovers */}
               {showEmojiPicker && (
                 <EmojiPicker
                   onSelectEmoji={(emoji) => {
@@ -1198,10 +1245,45 @@ export const PublicChatPage: React.FC = () => {
                   onClose={() => setShowEmojiPicker(false)}
                 />
               )}
+              {showImageMenu && (
+                <div
+                  data-testid="public-image-menu"
+                  className="absolute bottom-full left-3 mb-2 w-64 rounded-xl border border-slate-700/80 bg-[#0e1526] shadow-2xl p-1.5 z-40"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowImageMenu(false);
+                      imageInputRef.current?.click();
+                    }}
+                    className="w-full flex items-start gap-2.5 p-2.5 rounded-lg hover:bg-slate-800/80 text-left transition-colors cursor-pointer"
+                  >
+                    <Upload className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-white">Upload Image</div>
+                      <div className="text-[10px] text-slate-400">{SUPPORTED_IMAGE_FORMATS_TEXT}</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowImageMenu(false);
+                      setShowGifPicker(true);
+                    }}
+                    className="w-full flex items-start gap-2.5 p-2.5 rounded-lg hover:bg-slate-800/80 text-left transition-colors cursor-pointer"
+                  >
+                    <ImageIcon className="w-4 h-4 text-fuchsia-400 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-white">Pick Animated GIF</div>
+                      <div className="text-[10px] text-slate-400">Search curated GIF library</div>
+                    </div>
+                  </button>
+                </div>
+              )}
               {showGifPicker && (
                 <GifPicker
                   onSelectGif={(gif) => {
-                    setAttachedMedia({ url: gif.url, type: 'gif', title: gif.title });
+                    selectGif(gif);
                     setShowGifPicker(false);
                   }}
                   onClose={() => setShowGifPicker(false)}
@@ -1209,11 +1291,13 @@ export const PublicChatPage: React.FC = () => {
               )}
 
               <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* 1. Emoji */}
                   <button
                     type="button"
                     onClick={() => {
                       setShowEmojiPicker(!showEmojiPicker);
+                      setShowImageMenu(false);
                       setShowGifPicker(false);
                     }}
                     className={`p-2 rounded-xl border transition-colors cursor-pointer ${
@@ -1222,27 +1306,53 @@ export const PublicChatPage: React.FC = () => {
                         : 'border-slate-800 bg-[#101729] text-slate-400 hover:text-white'
                     }`}
                     title="Emoji picker"
+                    aria-label="Emoji picker"
                   >
                     <Smile className="w-4 h-4" />
                   </button>
 
+                  {/* 2. Image (Upload Image or Pick GIF) */}
                   <button
                     type="button"
+                    disabled={isAttachmentBusy}
                     onClick={() => {
-                      setShowGifPicker(!showGifPicker);
+                      if (showGifPicker) {
+                        setShowGifPicker(false);
+                      } else {
+                        setShowImageMenu(!showImageMenu);
+                      }
                       setShowEmojiPicker(false);
                     }}
-                    className={`p-2 rounded-xl border transition-colors cursor-pointer ${
-                      showGifPicker
+                    className={`p-2 rounded-xl border transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                      showImageMenu || showGifPicker
                         ? 'bg-fuchsia-600 text-white border-fuchsia-500'
                         : 'border-slate-800 bg-[#101729] text-slate-400 hover:text-white'
                     }`}
-                    title="Curated GIF search"
+                    title={`Image (${SUPPORTED_IMAGE_FORMATS_TEXT}) or GIF`}
+                    aria-label="Image or GIF attachment"
                   >
                     <ImageIcon className="w-4 h-4" />
                   </button>
+
+                  {/* 3. New Attachment (Audio upload) */}
+                  <button
+                    type="button"
+                    disabled={isAttachmentBusy}
+                    onClick={() => {
+                      setShowEmojiPicker(false);
+                      setShowImageMenu(false);
+                      setShowGifPicker(false);
+                      audioInputRef.current?.click();
+                    }}
+                    className="p-2 rounded-xl border border-slate-800 bg-[#101729] text-slate-400 hover:text-cyan-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={`Attach Audio (${SUPPORTED_AUDIO_FORMATS_TEXT})`}
+                    aria-label="Attach audio file"
+                  >
+                    <Paperclip className="w-4 h-4" />
+                  </button>
                 </div>
 
+                {/* 4. Message Input */}
                 <div className="flex-1 relative">
                   <input
                     ref={inputRef}
@@ -1261,7 +1371,14 @@ export const PublicChatPage: React.FC = () => {
                   )}
                 </div>
 
-                <Button type="submit" variant="primary" size="md" className="shrink-0 rounded-xl">
+                {/* 5. Send */}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  disabled={!canSendMessage(inputText.trim())}
+                  className="shrink-0 rounded-xl"
+                >
                   <Send className="w-4 h-4 mr-1.5" />
                   <span>Send</span>
                 </Button>

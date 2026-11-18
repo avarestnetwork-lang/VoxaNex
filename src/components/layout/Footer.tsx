@@ -15,6 +15,7 @@ export const Footer: React.FC = () => {
 
   const [footerWidth, setFooterWidth] = useState(0);
   const footerRef = useRef<HTMLDivElement>(null);
+  const trustBoxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const updateWidth = () => {
@@ -31,6 +32,23 @@ export const Footer: React.FC = () => {
 
   const showFooterAd = !isRouteExcludedFromFooterAds(currentRoute);
   const responsiveAdUnit = getAdsterraUnitForWidth(footerWidth, 'footer');
+
+  const normalizedRoute = (currentRoute || '').toLowerCase();
+  const showTrustpilotWidget =
+    !normalizedRoute.startsWith('/admin') &&
+    !normalizedRoute.startsWith('/moderator') &&
+    !normalizedRoute.startsWith('/chat') &&
+    normalizedRoute !== '/messages' &&
+    normalizedRoute !== '/av-chat' &&
+    normalizedRoute !== '/random';
+
+  useEffect(() => {
+    if (!showTrustpilotWidget || !trustBoxRef.current) return;
+    const tp = (window as any)?.Trustpilot;
+    if (tp && typeof tp.loadFromElement === 'function') {
+      tp.loadFromElement(trustBoxRef.current, true);
+    }
+  }, [showTrustpilotWidget, currentRoute]);
 
   return (
     <footer className="w-full bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 text-xs mt-auto border-t border-slate-200 dark:border-slate-800 shadow-inner transition-colors" ref={footerRef}>
@@ -233,6 +251,28 @@ export const Footer: React.FC = () => {
             </ul>
           </div>
         </div>
+
+        {showTrustpilotWidget && (
+          <div className="mb-8 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60">
+            <div
+              ref={trustBoxRef}
+              className="trustpilot-widget"
+              data-locale="en-US"
+              data-template-id="56278e9abfbbba0bdcd568bc"
+              data-businessunit-id="6afc185ca7dbf30ad4d2897c"
+              data-style-height="52px"
+              data-style-width="100%"
+            >
+              <a
+                href="https://www.trustpilot.com/review/chatlustora.com"
+                target="_blank"
+                rel="noopener"
+              >
+                Trustpilot
+              </a>
+            </div>
+          </div>
+        )}
 
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4 text-slate-500 dark:text-slate-400 text-xs sm:text-sm">
