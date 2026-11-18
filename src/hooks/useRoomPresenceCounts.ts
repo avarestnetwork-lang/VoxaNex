@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   databaseService,
+  isCanonicalRoomId,
   RoomPresenceSyncStatus,
 } from '../services/databaseService';
 import { AppLanguage } from '../types';
+
+export type OverallPresenceStatus =
+  | 'connecting'
+  | 'synced'
+  | 'partial'
+  | 'unavailable'
+  | 'error';
 
 export interface RoomPresenceSnapshot {
   counts: Record<string, number>;
@@ -18,42 +26,33 @@ export interface RoomPresenceBadgeDisplay {
   title: string;
 }
 
+/**
+ * Resolve the individual room badge display strictly from verified channel status.
+ * Stale counts from an earlier sync are NEVER displayed once status transitions to error/unavailable/connecting.
+ */
 export function resolveRoomPresenceBadge(params: {
   roomId: string;
-  fallbackCount?: number;
   counts: Record<string, number>;
   statuses: Record<string, RoomPresenceSyncStatus>;
   language: AppLanguage;
 }): RoomPresenceBadgeDisplay {
-  const { roomId, fallbackCount, counts, statuses, language } = params;
+  const { roomId, counts, statuses, language } = params;
   const status = statuses[roomId];
-  const liveCount = counts[roomId];
 
-  if (typeof liveCount === 'number' && Number.isFinite(liveCount)) {
-    const safeCount = Math.max(0, Math.floor(liveCount));
+  if (status === 'error' || status === 'unavailable') {
     return {
-      kind: 'synced',
-      count: safeCount,
-      label: `${safeCount} ${language === 'bn' ? 'সক্রিয়' : 'active'}`,
-      isLive: safeCount > 0,
+      kind: 'unavailable',
+      count: null,
+      label: language === 'bn' ? 'অনুপলব্ধ' : 'Live N/A',
+      isLive: false,
       title:
         language === 'bn'
-          ? `এই মুহূর্তে ${safeCount} জন সক্রিয়`
-          : `${safeCount} active in this room`,
+          ? 'রিয়েল-টাইম উপস্থিতি সংযোগ অনুপলব্ধ'
+          : 'Real-time presence unavailable',
     };
   }
 
-  if (status === 'synced') {
-    return {
-      kind: 'synced',
-      count: 0,
-      label: `0 ${language === 'bn' ? 'সক্রিয়' : 'active'}`,
-      isLive: false,
-      title: language === 'bn' ? 'এই মুহূর্তে ০ জন সক্রিয়' : '0 active in this room',
-    };
-  }
-
-  if (status === 'connecting') {
+  if (status === 'connecting' || !status) {
     return {
       kind: 'connecting',
       count: null,
@@ -66,41 +65,83 @@ export function resolveRoomPresenceBadge(params: {
     };
   }
 
-  if (typeof fallbackCount === 'number' && Number.isFinite(fallbackCount) && fallbackCount >= 0) {
-    const safeFallback = Math.floor(fallbackCount);
-    return {
-      kind: 'synced',
-      count: safeFallback,
-      label: `${safeFallback} ${language === 'bn' ? 'সক্রিয়' : 'active'}`,
-      isLive: safeFallback > 0,
-      title:
-        language === 'bn'
-          ? `সার্ভার থেকে ${safeFallback} জন সক্রিয়`
-          : `${safeFallback} active from server catalog`,
-    };
-  }
+  // Only reached when status === 'synced'
+  const rawCount = counts[roomId];
+  const safeCount =
+    typeof rawCount === 'number' && Number.isFinite(rawCount)
+      ? Math.max(0, Math.floor(rawCount))
+      : 0;
 
   return {
-    kind: 'unavailable',
-    count: null,
-    label: language === 'bn' ? 'অনুপলব্ধ' : 'Live N/A',
-    isLive: false,
+    kind: 'synced',
+    count: safeCount,
+    label: `${safeCount} ${language === 'bn' ? 'সক্রিয়' : 'active'}`,
+    isLive: safeCount > 0,
     title:
       language === 'bn'
-        ? 'রিয়েল-টাইম উপস্থিতি সংযোগ অনুপলব্ধ'
-        : 'Real-time presence unavailable',
+        ? `এই মুহূর্তে ${safeCount} জন সক্রিয়`
+        : `${safeCount} active in this room`,
   };
+}
+
+/**
+ * Compute accurate directory-wide synchronization status across all configured rooms.
+ */
+export function computeOverallPresenceStatus(
+  roomIds: string[],
+  statuses: Record<string, RoomPresenceSyncStatus>
+): OverallPresenceStatus {
+  const canonicalIds = Array.from(
+    new Set(
+      roomIds
+        .filter((id) => typeof id === 'string')
+        .map((id) => id.trim())
+        .filter((id) => isCanonicalRoomId(id))
+    )
+  );
+
+  if (canonicalIds.length === 0) {
+    return 'unavailable';
+  }
+
+  const values = canonicalIds.map((id) => statuses[id] ?? 'connecting');
+  const syncedCount = values.filter((s) => s === 'synced').length;
+  const connectingCount = values.filter((s) => s === 'connecting').length;
+  const failedCount = values.filter((s) => s === 'error' || s === 'unavailable').length;
+
+  if (syncedCount === canonicalIds.length) {
+    return 'synced';
+  }
+
+  if (syncedCount > 0) {
+    return failedCount > 0 ? 'partial' : 'connecting';
+  }
+
+  if (connectingCount > 0) {
+    return 'connecting';
+  }
+
+  if (values.every((s) => s === 'unavailable')) {
+    return 'unavailable';
+  }
+
+  return 'error';
 }
 
 export function useRoomPresenceCounts(
   roomIds: string[],
   overrideClient?: any
 ): RoomPresenceSnapshot & {
-  overallStatus: RoomPresenceSyncStatus;
+  overallStatus: OverallPresenceStatus;
 } {
   const roomIdsKey = useMemo(() => {
     const unique = Array.from(
-      new Set(roomIds.filter((id) => typeof id === 'string' && id.trim().length > 0))
+      new Set(
+        roomIds
+          .filter((id) => typeof id === 'string')
+          .map((id) => id.trim())
+          .filter((id) => isCanonicalRoomId(id))
+      )
     ).sort();
     return unique.join('|');
   }, [roomIds]);
@@ -137,14 +178,10 @@ export function useRoomPresenceCounts(
     };
   }, [normalizedRoomIds, overrideClient]);
 
-  const overallStatus = useMemo<RoomPresenceSyncStatus>(() => {
-    const statusValues = Object.values(snapshot.statuses);
-    if (statusValues.length === 0) return 'connecting';
-    if (statusValues.some((s) => s === 'synced')) return 'synced';
-    if (statusValues.some((s) => s === 'connecting')) return 'connecting';
-    if (statusValues.every((s) => s === 'unavailable')) return 'unavailable';
-    return 'error';
-  }, [snapshot.statuses]);
+  const overallStatus = useMemo<OverallPresenceStatus>(
+    () => computeOverallPresenceStatus(normalizedRoomIds, snapshot.statuses),
+    [normalizedRoomIds, snapshot.statuses]
+  );
 
   return {
     counts: snapshot.counts,

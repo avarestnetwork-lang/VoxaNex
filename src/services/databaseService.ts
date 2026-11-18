@@ -2,6 +2,19 @@ import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabaseClient';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { Room, ChatMessage, SafetyReport, ForumTopic, BlogArticle } from '../types';
 
+export const CANONICAL_ROOM_IDS = new Set<string>(ROOMS_CONFIG.map((r) => r.id));
+
+export function isCanonicalRoomId(roomId: string): boolean {
+  return typeof roomId === 'string' && CANONICAL_ROOM_IDS.has(roomId.trim());
+}
+
+function generateEphemeralPresenceKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export interface RoomPresenceMember {
   id: string;
   nickname: string;
@@ -33,7 +46,18 @@ interface PresenceChannelEntry {
   syncStatus: RoomPresenceSyncStatus;
 }
 
+interface CountChannelEntry {
+  channel: any;
+  refs: number;
+  trackerRefs: number;
+  trackActive: boolean;
+  listeners: Set<(count: number) => void>;
+  statusListeners: Set<(status: RoomPresenceSyncStatus) => void>;
+  syncStatus: RoomPresenceSyncStatus;
+}
+
 const presenceChannelRegistries = new WeakMap<object, Map<string, PresenceChannelEntry>>();
+const countChannelRegistries = new WeakMap<object, Map<string, CountChannelEntry>>();
 
 function getPresenceRegistry(supabase: any): Map<string, PresenceChannelEntry> {
   let reg = presenceChannelRegistries.get(supabase);
@@ -44,11 +68,53 @@ function getPresenceRegistry(supabase: any): Map<string, PresenceChannelEntry> {
   return reg;
 }
 
+function getCountRegistry(supabase: any): Map<string, CountChannelEntry> {
+  let reg = countChannelRegistries.get(supabase);
+  if (!reg) {
+    reg = new Map();
+    countChannelRegistries.set(supabase, reg);
+  }
+  return reg;
+}
+
 /**
- * Extract unique, non-stealth active members from Supabase Realtime presenceState().
- * Preserves the platform's unique user/guest identity model (keyed by member.id).
- * Transient duplicate presence_refs for the same member.id (e.g., reconnects or multiple tabs)
- * are deduplicated so unique active counts do not double-count.
+ * Derive aggregate active count from the anonymous count-only channel state.
+ * Never extracts, stores, or returns nicknames, avatars, gender, guest flags, or user IDs.
+ */
+export function extractAnonymousPresenceCount(
+  state: Record<string, any> | null | undefined
+): number {
+  if (!state || typeof state !== 'object') {
+    return 0;
+  }
+
+  let activeCount = 0;
+  Object.entries(state).forEach(([presenceKey, presences]) => {
+    if (!presenceKey || !String(presenceKey).trim() || !Array.isArray(presences) || presences.length === 0) {
+      return;
+    }
+    const hasVisibleEntry = presences.some((p: any) => {
+      if (!p || typeof p !== 'object') return false;
+      if (
+        p.onlineVisibility === 'stealth_invisible' ||
+        p.stealth === true ||
+        p.invisible === true
+      ) {
+        return false;
+      }
+      return true;
+    });
+    if (hasVisibleEntry) {
+      activeCount++;
+    }
+  });
+
+  return Math.max(0, activeCount);
+}
+
+/**
+ * Extract unique, non-stealth active members from in-room roster presenceState().
+ * Used exclusively by in-room participants inside PublicChatPage.
  */
 export function extractActivePresenceMembers(
   state: Record<string, any> | null | undefined
@@ -612,34 +678,37 @@ export const databaseService = {
   },
 
   /**
-   * Passively observe a single room's Supabase Realtime Presence without tracking the viewer as an active participant.
+   * Passively observe a single room's privacy-preserving count-only channel (`public_room_presence_count:${roomId}`).
+   * Receives only anonymous presence key counts — never roster metadata or user/guest identifiers.
    */
   observeRoomPresence(
     roomId: string,
-    onSync: (members: RoomPresenceMember[]) => void,
+    onCount: (count: number) => void,
     onStatus?: (status: RoomPresenceSyncStatus) => void,
     overrideClient?: any
   ): () => void {
+    const normalizedRoomId = typeof roomId === 'string' ? roomId.trim() : '';
     const supabase = overrideClient || getSupabaseClient();
-    if (!supabase || !roomId) {
+    if (!supabase || !isCanonicalRoomId(normalizedRoomId)) {
       onStatus?.('unavailable');
       return () => {};
     }
 
-    const channelName = `public_room_presence:${roomId}`;
-    const registry = getPresenceRegistry(supabase);
+    const channelName = `public_room_presence_count:${normalizedRoomId}`;
+    const registry = getCountRegistry(supabase);
     let entry = registry.get(channelName);
 
-    const emitCurrentState = (targetEntry: PresenceChannelEntry) => {
+    const emitCurrentCount = (targetEntry: CountChannelEntry) => {
       try {
+        if (targetEntry.syncStatus !== 'synced') return;
         const state =
           typeof targetEntry.channel.presenceState === 'function'
             ? targetEntry.channel.presenceState()
             : {};
-        const members = extractActivePresenceMembers(state);
-        targetEntry.listeners.forEach((l) => l(members));
+        const count = extractAnonymousPresenceCount(state);
+        targetEntry.listeners.forEach((l) => l(count));
       } catch (err) {
-        console.warn('[VX-PRESENCE] Sync error:', err);
+        console.warn('[VX-PRESENCE] Count sync error:', err);
       }
     };
 
@@ -652,11 +721,11 @@ export const databaseService = {
         },
       });
 
-      const newEntry: PresenceChannelEntry = {
+      const newEntry: CountChannelEntry = {
         channel,
         refs: 0,
         trackerRefs: 0,
-        trackedMember: null,
+        trackActive: false,
         listeners: new Set(),
         statusListeners: new Set(),
         syncStatus: 'connecting',
@@ -664,7 +733,7 @@ export const databaseService = {
       entry = newEntry;
       registry.set(channelName, newEntry);
 
-      const handlePresenceEvent = () => emitCurrentState(newEntry);
+      const handlePresenceEvent = () => emitCurrentCount(newEntry);
 
       channel
         .on('presence', { event: 'sync' }, handlePresenceEvent)
@@ -674,17 +743,14 @@ export const databaseService = {
           if (status === 'SUBSCRIBED') {
             newEntry.syncStatus = 'synced';
             newEntry.statusListeners.forEach((sl) => sl('synced'));
-            if (newEntry.trackedMember && typeof channel.track === 'function') {
+            if (newEntry.trackActive && typeof channel.track === 'function') {
               try {
-                await channel.track({
-                  ...newEntry.trackedMember,
-                  lastSeen: Date.now(),
-                });
+                await channel.track({});
               } catch (trackErr) {
-                console.error(`[VX-PRESENCE] [${channelName}] Track failed:`, trackErr);
+                console.error(`[VX-PRESENCE] [${channelName}] Anonymous count track failed:`, trackErr);
               }
             }
-            emitCurrentState(newEntry);
+            emitCurrentCount(newEntry);
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
             console.warn(`[VX-PRESENCE] [${channelName}] Status: ${status}`, err || '');
             newEntry.syncStatus = 'error';
@@ -694,7 +760,7 @@ export const databaseService = {
     }
 
     entry.refs++;
-    const listener = (members: RoomPresenceMember[]) => onSync(members);
+    const listener = (count: number) => onCount(count);
     entry.listeners.add(listener);
 
     const statusListener = onStatus ? (s: RoomPresenceSyncStatus) => onStatus(s) : null;
@@ -709,7 +775,7 @@ export const databaseService = {
           typeof entry.channel.presenceState === 'function'
             ? entry.channel.presenceState()
             : {};
-        onSync(extractActivePresenceMembers(state));
+        onCount(extractAnonymousPresenceCount(state));
       } catch {
         // non-fatal
       }
@@ -724,8 +790,8 @@ export const databaseService = {
       }
       currentEntry.refs = Math.max(0, currentEntry.refs - 1);
       if (currentEntry.refs <= 0) {
-        if (currentEntry.trackedMember && typeof currentEntry.channel.untrack === 'function') {
-          currentEntry.trackedMember = null;
+        if (currentEntry.trackActive && typeof currentEntry.channel.untrack === 'function') {
+          currentEntry.trackActive = false;
           Promise.resolve(currentEntry.channel.untrack()).catch(() => {});
         }
         if (typeof supabase.removeChannel === 'function') {
@@ -737,8 +803,8 @@ export const databaseService = {
   },
 
   /**
-   * Passively observe live participant counts across multiple rooms for directory views.
-   * Never calls channel.track(), so directory visitors are never counted as active participants.
+   * Passively observe live aggregate participant counts across canonical rooms for `/rooms`.
+   * Subscribes strictly to count-only anonymous channels and invalidates stale counts on channel error.
    */
   observeRoomsPresence(
     roomIds: string[],
@@ -748,7 +814,14 @@ export const databaseService = {
     }) => void,
     overrideClient?: any
   ): () => void {
-    const uniqueRoomIds = Array.from(new Set(roomIds.filter((id) => typeof id === 'string' && id.trim())));
+    const uniqueRoomIds = Array.from(
+      new Set(
+        roomIds
+          .filter((id) => typeof id === 'string')
+          .map((id) => id.trim())
+          .filter((id) => isCanonicalRoomId(id))
+      )
+    );
     if (uniqueRoomIds.length === 0) {
       onUpdate({ counts: {}, statuses: {} });
       return () => {};
@@ -779,12 +852,16 @@ export const databaseService = {
       statuses[roomId] = 'connecting';
       return this.observeRoomPresence(
         roomId,
-        (members) => {
-          counts[roomId] = Math.max(0, members.length);
+        (count) => {
+          if (statuses[roomId] !== 'synced') return;
+          counts[roomId] = Math.max(0, Math.floor(count));
           emitSnapshot();
         },
         (status) => {
           statuses[roomId] = status;
+          if (status !== 'synced') {
+            delete counts[roomId];
+          }
           emitSnapshot();
         },
         supabase
@@ -800,8 +877,10 @@ export const databaseService = {
   },
 
   /**
-   * Track presence state and listen for updates via Supabase Realtime Presence.
-   * When member.onlineVisibility === 'stealth_invisible', observes room presence passively without tracking self.
+   * Track active room participant roster inside chat AND emit an anonymous presence token on the
+   * count-only channel (`public_room_presence_count:${roomId}`).
+   * When member.onlineVisibility === 'stealth_invisible', passively observes the in-room roster
+   * without tracking on either the roster channel or the count-only channel.
    */
   trackPresence(
     roomId: string,
@@ -809,18 +888,16 @@ export const databaseService = {
     onSync: (members: RoomPresenceMember[]) => void,
     overrideClient?: any
   ): () => void {
-    if (member.onlineVisibility === 'stealth_invisible') {
-      return this.observeRoomPresence(roomId, onSync, undefined, overrideClient);
-    }
-
+    const normalizedRoomId = typeof roomId === 'string' ? roomId.trim() : '';
     const supabase = overrideClient || getSupabaseClient();
-    if (!supabase || !roomId || !member?.id) return () => {};
+    if (!supabase || !isCanonicalRoomId(normalizedRoomId) || !member?.id) return () => {};
 
-    const channelName = `public_room_presence:${roomId}`;
-    const registry = getPresenceRegistry(supabase);
-    let entry = registry.get(channelName);
+    const isStealth = member.onlineVisibility === 'stealth_invisible';
+    const rosterChannelName = `public_room_presence:${normalizedRoomId}`;
+    const rosterRegistry = getPresenceRegistry(supabase);
+    let rosterEntry = rosterRegistry.get(rosterChannelName);
 
-    const emitCurrentState = (targetEntry: PresenceChannelEntry) => {
+    const emitRosterState = (targetEntry: PresenceChannelEntry) => {
       try {
         const state =
           typeof targetEntry.channel.presenceState === 'function'
@@ -829,45 +906,43 @@ export const databaseService = {
         const members = extractActivePresenceMembers(state);
         targetEntry.listeners.forEach((l) => l(members));
       } catch (err) {
-        console.warn('[VX-PRESENCE] Sync error:', err);
+        console.warn('[VX-PRESENCE] Roster sync error:', err);
       }
     };
 
-    if (!entry) {
-      console.log('[VX-PRESENCE] Initializing shared presence channel:', channelName);
-      const channel = supabase.channel(channelName, {
-        config: {
-          presence: {
-            key: member.id,
-          },
-        },
-      });
+    if (!rosterEntry) {
+      console.log('[VX-PRESENCE] Initializing shared presence channel:', rosterChannelName);
+      const channel = supabase.channel(
+        rosterChannelName,
+        isStealth
+          ? { config: { presence: { enabled: true } } }
+          : { config: { presence: { key: member.id } } }
+      );
 
       const newEntry: PresenceChannelEntry = {
         channel,
         refs: 0,
         trackerRefs: 0,
-        trackedMember: member,
+        trackedMember: isStealth ? null : member,
         listeners: new Set(),
         statusListeners: new Set(),
         syncStatus: 'connecting',
       };
-      entry = newEntry;
-      registry.set(channelName, newEntry);
+      rosterEntry = newEntry;
+      rosterRegistry.set(rosterChannelName, newEntry);
 
-      const handlePresenceEvent = () => emitCurrentState(newEntry);
+      const handleRosterEvent = () => emitRosterState(newEntry);
 
-      // Register ALL event types before subscribing
       channel
-        .on('presence', { event: 'sync' }, handlePresenceEvent)
-        .on('presence', { event: 'join' }, handlePresenceEvent)
-        .on('presence', { event: 'leave' }, handlePresenceEvent)
+        .on('presence', { event: 'sync' }, handleRosterEvent)
+        .on('presence', { event: 'join' }, handleRosterEvent)
+        .on('presence', { event: 'leave' }, handleRosterEvent)
         .on('broadcast', { event: 'presence' }, () => {
           // Compatibility shim for legacy broadcast-based presence
         })
         .subscribe(async (status: string, err?: any) => {
           if (status === 'SUBSCRIBED') {
-            console.log(`[VX-PRESENCE] [${channelName}] Subscribed successfully`);
+            console.log(`[VX-PRESENCE] [${rosterChannelName}] Subscribed successfully`);
             newEntry.syncStatus = 'synced';
             newEntry.statusListeners.forEach((sl) => sl('synced'));
             if (newEntry.trackedMember && typeof channel.track === 'function') {
@@ -882,21 +957,21 @@ export const databaseService = {
                   lastSeen: Date.now(),
                 });
               } catch (trackErr) {
-                console.error(`[VX-PRESENCE] [${channelName}] Track failed:`, trackErr);
+                console.error(`[VX-PRESENCE] [${rosterChannelName}] Track failed:`, trackErr);
               }
             }
-            emitCurrentState(newEntry);
+            emitRosterState(newEntry);
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-            console.warn(`[VX-PRESENCE] [${channelName}] Status: ${status}`, err || '');
+            console.warn(`[VX-PRESENCE] [${rosterChannelName}] Status: ${status}`, err || '');
             newEntry.syncStatus = 'error';
             newEntry.statusListeners.forEach((sl) => sl('error'));
           }
         });
-    } else {
-      entry.trackedMember = member;
-      if (entry.syncStatus === 'synced' && typeof entry.channel.track === 'function') {
+    } else if (!isStealth) {
+      rosterEntry.trackedMember = member;
+      if (rosterEntry.syncStatus === 'synced' && typeof rosterEntry.channel.track === 'function') {
         Promise.resolve(
-          entry.channel.track({
+          rosterEntry.channel.track({
             id: member.id,
             nickname: member.nickname,
             avatar: member.avatar,
@@ -906,21 +981,23 @@ export const databaseService = {
             lastSeen: Date.now(),
           })
         ).catch((trackErr) => {
-          console.error(`[VX-PRESENCE] [${channelName}] Track failed:`, trackErr);
+          console.error(`[VX-PRESENCE] [${rosterChannelName}] Track failed:`, trackErr);
         });
       }
     }
 
-    entry.refs++;
-    entry.trackerRefs++;
+    rosterEntry.refs++;
+    if (!isStealth) {
+      rosterEntry.trackerRefs++;
+    }
     const listener = (members: RoomPresenceMember[]) => onSync(members);
-    entry.listeners.add(listener);
+    rosterEntry.listeners.add(listener);
 
-    if (entry.syncStatus === 'synced') {
+    if (rosterEntry.syncStatus === 'synced') {
       try {
         const state =
-          typeof entry.channel.presenceState === 'function'
-            ? entry.channel.presenceState()
+          typeof rosterEntry.channel.presenceState === 'function'
+            ? rosterEntry.channel.presenceState()
             : {};
         onSync(extractActivePresenceMembers(state));
       } catch {
@@ -928,12 +1005,70 @@ export const databaseService = {
       }
     }
 
+    // Track anonymous, metadata-free presence token on the count-only channel for non-stealth users
+    const countChannelName = `public_room_presence_count:${normalizedRoomId}`;
+    const countRegistry = getCountRegistry(supabase);
+    let hasCountTrackerRef = false;
+
+    if (!isStealth) {
+      let countEntry = countRegistry.get(countChannelName);
+      if (!countEntry) {
+        const ephemeralKey = generateEphemeralPresenceKey();
+        const countChannel = supabase.channel(countChannelName, {
+          config: {
+            presence: {
+              key: ephemeralKey,
+            },
+          },
+        });
+        const newCountEntry: CountChannelEntry = {
+          channel: countChannel,
+          refs: 0,
+          trackerRefs: 0,
+          trackActive: true,
+          listeners: new Set(),
+          statusListeners: new Set(),
+          syncStatus: 'connecting',
+        };
+        countEntry = newCountEntry;
+        countRegistry.set(countChannelName, newCountEntry);
+
+        countChannel.subscribe(async (status: string) => {
+          if (status === 'SUBSCRIBED') {
+            newCountEntry.syncStatus = 'synced';
+            newCountEntry.statusListeners.forEach((sl) => sl('synced'));
+            if (newCountEntry.trackActive && typeof countChannel.track === 'function') {
+              try {
+                await countChannel.track({});
+              } catch (trackErr) {
+                console.error(`[VX-PRESENCE] [${countChannelName}] Count track failed:`, trackErr);
+              }
+            }
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            newCountEntry.syncStatus = 'error';
+            newCountEntry.statusListeners.forEach((sl) => sl('error'));
+          }
+        });
+      } else {
+        countEntry.trackActive = true;
+        if (countEntry.syncStatus === 'synced' && typeof countEntry.channel.track === 'function') {
+          Promise.resolve(countEntry.channel.track({})).catch(() => {});
+        }
+      }
+
+      countEntry.refs++;
+      countEntry.trackerRefs++;
+      hasCountTrackerRef = true;
+    }
+
     return () => {
-      const currentEntry = registry.get(channelName);
+      const currentEntry = rosterRegistry.get(rosterChannelName);
       if (currentEntry) {
         currentEntry.listeners.delete(listener);
         currentEntry.refs = Math.max(0, currentEntry.refs - 1);
-        currentEntry.trackerRefs = Math.max(0, currentEntry.trackerRefs - 1);
+        if (!isStealth) {
+          currentEntry.trackerRefs = Math.max(0, currentEntry.trackerRefs - 1);
+        }
         if (currentEntry.trackerRefs <= 0 && currentEntry.trackedMember) {
           currentEntry.trackedMember = null;
           if (typeof currentEntry.channel.untrack === 'function') {
@@ -941,11 +1076,31 @@ export const databaseService = {
           }
         }
         if (currentEntry.refs <= 0) {
-          console.log('[VX-PRESENCE] Cleaning up shared presence channel:', channelName);
+          console.log('[VX-PRESENCE] Cleaning up shared presence channel:', rosterChannelName);
           if (typeof supabase.removeChannel === 'function') {
             supabase.removeChannel(currentEntry.channel);
           }
-          registry.delete(channelName);
+          rosterRegistry.delete(rosterChannelName);
+        }
+      }
+
+      if (hasCountTrackerRef) {
+        const currentCountEntry = countRegistry.get(countChannelName);
+        if (currentCountEntry) {
+          currentCountEntry.refs = Math.max(0, currentCountEntry.refs - 1);
+          currentCountEntry.trackerRefs = Math.max(0, currentCountEntry.trackerRefs - 1);
+          if (currentCountEntry.trackerRefs <= 0 && currentCountEntry.trackActive) {
+            currentCountEntry.trackActive = false;
+            if (typeof currentCountEntry.channel.untrack === 'function') {
+              Promise.resolve(currentCountEntry.channel.untrack()).catch(() => {});
+            }
+          }
+          if (currentCountEntry.refs <= 0) {
+            if (typeof supabase.removeChannel === 'function') {
+              supabase.removeChannel(currentCountEntry.channel);
+            }
+            countRegistry.delete(countChannelName);
+          }
         }
       }
     };

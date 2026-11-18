@@ -289,13 +289,17 @@ export const RoomDirectoryPage: React.FC = () => {
               ? language === 'bn'
                 ? '(রিয়েল-টাইম উপস্থিতি সক্রিয়)'
                 : '(Live Presence Synced)'
-              : overallStatus === 'connecting'
+              : overallStatus === 'partial'
                 ? language === 'bn'
-                  ? '(রিয়েল-টাইম সিঙ্ক হচ্ছে...)'
-                  : '(Syncing Live Presence...)'
-                : language === 'bn'
-                  ? '(রিয়েল-টাইম উপস্থিতি অনুপলব্ধ)'
-                  : '(Live Presence Unavailable)'}
+                  ? '(আংশিক রিয়েল-টাইম উপস্থিতি সক্রিয়)'
+                  : '(Live Presence Partially Available)'
+                : overallStatus === 'connecting'
+                  ? language === 'bn'
+                    ? '(রিয়েল-টাইম সিঙ্ক হচ্ছে...)'
+                    : '(Syncing Live Presence...)'
+                  : language === 'bn'
+                    ? '(রিয়েল-টাইম উপস্থিতি অনুপলব্ধ)'
+                    : '(Live Presence Unavailable)'}
           </span>
         </div>
         <span className="text-slate-500 hidden sm:inline">
@@ -310,7 +314,6 @@ export const RoomDirectoryPage: React.FC = () => {
           const isAdult = room.is18Plus;
           const badge = resolveRoomPresenceBadge({
             roomId: room.id,
-            fallbackCount: room.activeParticipants,
             counts: liveCounts,
             statuses: liveStatuses,
             language,
@@ -362,7 +365,6 @@ export const RoomDirectoryPage: React.FC = () => {
           const isAdult = room.is18Plus;
           const badge = resolveRoomPresenceBadge({
             roomId: room.id,
-            fallbackCount: room.activeParticipants,
             counts: liveCounts,
             statuses: liveStatuses,
             language,

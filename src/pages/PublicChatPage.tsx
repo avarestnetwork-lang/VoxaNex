@@ -73,6 +73,113 @@ interface ExtendedChatMessage extends ChatMessage {
   clientNonce?: string;
 }
 
+export interface RoomPresenceLifecycleOptions {
+  isStealth: boolean;
+  canTrack: () => boolean;
+  startRealtimePresence: () => () => void;
+  sendHeartbeat: () => Promise<void> | void;
+  sendLeave: () => Promise<void> | void;
+  heartbeatIntervalMs?: number;
+  eventTarget?: {
+    addEventListener: (event: string, listener: (e: any) => void) => void;
+    removeEventListener: (event: string, listener: (e: any) => void) => void;
+  } | null;
+}
+
+export interface RoomPresenceLifecycleHandle {
+  dispose: () => void;
+  handlePageHide: () => void;
+  handlePageShow: (event?: { persisted?: boolean }) => void;
+  isActive: () => boolean;
+}
+
+/**
+ * Manages room presence tracking across browser BFCache transitions (`pagehide` / `pageshow`)
+ * and React mount/unmount without duplicate subscriptions or restoring invalid/stealth sessions.
+ */
+export function createRoomPresenceLifecycle(
+  options: RoomPresenceLifecycleOptions
+): RoomPresenceLifecycleHandle {
+  let disposed = false;
+  let active = false;
+  let untrackRealtime: (() => void) | null = null;
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  const start = () => {
+    if (disposed || active || !options.canTrack()) return;
+    active = true;
+    untrackRealtime = options.startRealtimePresence();
+
+    if (!options.isStealth) {
+      Promise.resolve(options.sendHeartbeat()).catch(() => {});
+      heartbeatTimer = setInterval(() => {
+        if (!disposed && active && options.canTrack()) {
+          Promise.resolve(options.sendHeartbeat()).catch(() => {});
+        }
+      }, options.heartbeatIntervalMs ?? 25000);
+    }
+  };
+
+  const stop = () => {
+    if (!active) return;
+    active = false;
+    if (heartbeatTimer !== null) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    if (untrackRealtime) {
+      const cleanupFn = untrackRealtime;
+      untrackRealtime = null;
+      cleanupFn();
+    }
+    if (!options.isStealth) {
+      Promise.resolve(options.sendLeave()).catch(() => {});
+    }
+  };
+
+  const handlePageHide = () => {
+    stop();
+  };
+
+  const handlePageShow = (event?: { persisted?: boolean }) => {
+    if (disposed || !event?.persisted) return;
+    if (!options.canTrack()) return;
+    if (active) return;
+    start();
+  };
+
+  const target =
+    options.eventTarget !== undefined
+      ? options.eventTarget
+      : typeof window !== 'undefined' &&
+          typeof window.addEventListener === 'function' &&
+          typeof window.removeEventListener === 'function'
+        ? window
+        : null;
+
+  if (target) {
+    target.addEventListener('pagehide', handlePageHide);
+    target.addEventListener('pageshow', handlePageShow);
+  }
+
+  start();
+
+  return {
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      if (target) {
+        target.removeEventListener('pagehide', handlePageHide);
+        target.removeEventListener('pageshow', handlePageShow);
+      }
+      stop();
+    },
+    handlePageHide,
+    handlePageShow,
+    isActive: () => active,
+  };
+}
+
 export const getGenderInfo = (gender?: string) => {
   const norm = (gender || 'male').toLowerCase();
   switch (norm) {
@@ -410,82 +517,66 @@ export const PublicChatPage: React.FC = () => {
     };
   }, [canAccessRoom, activeRoom.id, user.nickname, scrollToBottom]);
 
-  // 3. Presence Tracking via Supabase Realtime Presence & HTTP fallback
+  // 3. Presence Tracking via Supabase Realtime Presence & HTTP fallback (BFCache-safe)
   useEffect(() => {
     if (!canAccessRoom || !user.id) return;
     let isMounted = true;
-    let hasLeft = false;
     const isStealth = user.onlineVisibility === 'stealth_invisible';
 
-    // 1. Subscribe to true Supabase Realtime Presence if configured (or observe passively in stealth mode)
-    const untrackSupabase = databaseService.trackPresence(
-      activeRoom.id,
-      {
-        id: user.id,
-        nickname: user.nickname || 'You',
-        avatar: user.avatar || '👤',
-        isGuest: Boolean(user.isGuest),
-        gender: user.gender,
-        onlineVisibility: user.onlineVisibility,
-      },
-      (members) => {
-        if (isMounted && Array.isArray(members) && (members.length > 0 || isStealth)) {
-          setOnlineMembers(members);
-        }
-      }
-    );
-
-    // 2. HTTP heartbeat fallback for environments without Supabase configured
-    const sendHeartbeat = async () => {
-      if (isStealth) return;
-      try {
-        const members = await messagingService.sendPresence(activeRoom.id, {
-          id: user.id,
-          nickname: user.nickname || 'You',
-          avatar: user.avatar || '👤',
-          isGuest: Boolean(user.isGuest),
-          gender: user.gender,
-        });
-        if (isMounted && Array.isArray(members) && members.length > 0) {
-          setOnlineMembers((prev) => {
-            // Merge gracefully without wiping out real-time presence
-            const merged = [...members];
-            prev.forEach((m) => {
-              if (!merged.some((x) => x.id === m.id)) merged.push(m);
-            });
-            return merged;
+    const lifecycle = createRoomPresenceLifecycle({
+      isStealth,
+      canTrack: () => isMounted && Boolean(canAccessRoom && user.id),
+      startRealtimePresence: () =>
+        databaseService.trackPresence(
+          activeRoom.id,
+          {
+            id: user.id,
+            nickname: user.nickname || 'You',
+            avatar: user.avatar || '👤',
+            isGuest: Boolean(user.isGuest),
+            gender: user.gender,
+            onlineVisibility: user.onlineVisibility,
+          },
+          (members) => {
+            if (isMounted && Array.isArray(members) && (members.length > 0 || isStealth)) {
+              setOnlineMembers(members);
+            }
+          }
+        ),
+      sendHeartbeat: async () => {
+        if (isStealth) return;
+        try {
+          const members = await messagingService.sendPresence(activeRoom.id, {
+            id: user.id,
+            nickname: user.nickname || 'You',
+            avatar: user.avatar || '👤',
+            isGuest: Boolean(user.isGuest),
+            gender: user.gender,
           });
+          if (isMounted && Array.isArray(members) && members.length > 0) {
+            setOnlineMembers((prev) => {
+              // Merge gracefully without wiping out real-time presence
+              const merged = [...members];
+              prev.forEach((m) => {
+                if (!merged.some((x) => x.id === m.id)) merged.push(m);
+              });
+              return merged;
+            });
+          }
+        } catch (err) {
+          console.warn('Presence heartbeat non-fatal error:', err);
         }
-      } catch (err) {
-        console.warn('Presence heartbeat non-fatal error:', err);
-      }
-    };
-
-    const cleanupPresence = () => {
-      if (hasLeft) return;
-      hasLeft = true;
-      untrackSupabase();
-      if (user?.id && !isStealth) {
-        messagingService.leaveRoom(activeRoom.id, user.id);
-      }
-    };
-
-    if (!isStealth) {
-      sendHeartbeat();
-    }
-    const interval = isStealth ? null : setInterval(sendHeartbeat, 25000);
-
-    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-      window.addEventListener('pagehide', cleanupPresence);
-    }
+      },
+      sendLeave: () => {
+        if (user?.id && !isStealth) {
+          messagingService.leaveRoom(activeRoom.id, user.id);
+        }
+      },
+    });
 
     return () => {
       isMounted = false;
-      if (interval) clearInterval(interval);
-      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
-        window.removeEventListener('pagehide', cleanupPresence);
-      }
-      cleanupPresence();
+      lifecycle.dispose();
     };
   }, [canAccessRoom, activeRoom.id, user]);
 
