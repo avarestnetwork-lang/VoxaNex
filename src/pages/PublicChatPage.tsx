@@ -1231,9 +1231,9 @@ export const PublicChatPage: React.FC = () => {
       </div>
 
       {/* Main Responsive Desktop Workspace containing Side Ads + Central Chatroom Container */}
-      <div className="w-full max-w-[1720px] mx-auto px-2 sm:px-4 xl:px-6 mb-4 h-[calc(100vh-5.5rem)] min-h-[580px] flex gap-2.5 xl:gap-3.5 items-stretch overflow-hidden">
+      <div className="w-full max-w-[1720px] 2xl:max-w-[1920px] 3xl:max-w-[2160px] mx-auto px-2 sm:px-4 xl:px-6 mb-4 h-[calc(100vh-5.5rem)] min-h-[580px] flex gap-2.5 xl:gap-3.5 2xl:gap-5 items-stretch overflow-hidden">
         {/* Ad 2 — Left Vertical Ad (Visible on desktop xl+ outside chatroom left border) */}
-        <div className="hidden xl:flex shrink-0 w-[140px] xl:w-[160px] items-center justify-center">
+        <div className="hidden xl:flex shrink-0 w-[140px] xl:w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
           <AdPlacementBox
             slotId="public-chatroom-left"
             adUnitId={ADSTERRA_CONFIG.nativeUnitId}
@@ -2124,7 +2124,7 @@ export const PublicChatPage: React.FC = () => {
     </div>
 
       {/* Ad 3 — Right Vertical Ad (Visible on desktop xl+ outside chatroom right border) */}
-      <div className="hidden xl:flex shrink-0 w-[140px] xl:w-[160px] items-center justify-center">
+      <div className="hidden xl:flex shrink-0 w-[140px] xl:w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
         <AdPlacementBox
           slotId="public-chatroom-right"
           adUnitId={ADSTERRA_CONFIG.nativeUnitId}

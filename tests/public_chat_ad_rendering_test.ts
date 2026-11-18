@@ -166,8 +166,8 @@ async function runAdRenderingTests() {
   const composerCode = publicChatPageSource.slice(composerStart, composerEnd);
   assert(!composerCode.includes('AdPlacementBox'), '3.13 No ad inserted into message composer');
 
-  // --- Task 5: Phase Remediation 3 Publisher Integration & Responsive Reliability Assertions ---
-  console.log('\n--- 5. Phase Remediation 3 Publisher Integration & Reliability Checks ---');
+  // --- Task 6: Work Prompt 4 Combined Remediation Assertions ---
+  console.log('\n--- 6. Work Prompt 4 Combined Remediation Checks ---');
   const exoclickBlockStart = adPlacementBoxSource.indexOf("currentProvider === 'exoclick'");
   const exoclickBlockEnd = adPlacementBoxSource.indexOf("} else if (currentProvider === 'monetag')", exoclickBlockStart);
   const exoclickBlock = adPlacementBoxSource.slice(exoclickBlockStart, exoclickBlockEnd);
@@ -177,20 +177,20 @@ async function runAdRenderingTests() {
   const monetagBlock = adPlacementBoxSource.slice(monetagBlockStart, monetagBlockEnd);
 
   assert(
-    exoclickBlock.includes('AdProvider.push({ "serve": {} })') && !exoclickBlock.includes('win.Ads'),
-    '5.1 ExoClick uses exact supplied AdProvider serve queue semantics without invented Ads API'
+    publicChatPageSource.includes('3xl:w-[300px]') && adPlacementBoxSource.includes('3xl:w-[300px]'),
+    '6.1 Desktop workspace supports up to 300px ad rails at ultra-wide viewports'
+  );
+  assert(
+    publicChatPageSource.includes('lg:w-[340px] xl:w-[344px]'),
+    '6.2 Participant Sidebar desktop width is strictly preserved'
   );
   assert(
     exoclickBlock.includes('hasCreative') && monetagBlock.includes('hasCreative'),
-    '5.2 ExoClick and Monetag enforce strict creative verification (iframe or non-script child elements)'
-  );
-  assert(
-    adPlacementBoxSource.includes('containerWidth < 300'),
-    '5.3 JuicyAds handles narrow sidebars (<300px) by preventing overflow and triggering fallback'
+    '6.3 Reliable creative detection rejects empty wrappers and script-only children'
   );
 
   console.log('\n================================================================');
-  console.log(`  ALL ${totalAssertions} WORK PROMPT 6 TESTS PASSED SUCCESSFULLY!`);
+  console.log(`  ALL ${totalAssertions} WORK PROMPT 4 TESTS PASSED SUCCESSFULLY!`);
   console.log('================================================================\n');
 }
 

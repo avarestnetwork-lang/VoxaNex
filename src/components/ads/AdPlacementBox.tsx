@@ -520,13 +520,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   if (position === 'top') posClasses += ' mb-2.5 shrink-0';
   else if (position === 'bottom' || position === 'footer') posClasses += ' mt-1 shrink-0';
   else if (position === 'left' || position === 'right') {
-    posClasses = 'hidden xl:flex shrink-0 w-[140px] xl:w-[160px] max-w-[200px] justify-center overflow-hidden';
+    posClasses = 'hidden xl:flex shrink-0 w-[140px] xl:w-[160px] 2xl:w-[240px] 3xl:w-[300px] max-w-[320px] justify-center overflow-hidden';
   } else if (position === 'sidebar-horizontal') {
     posClasses = 'w-full my-2 flex justify-center overflow-hidden';
   } else if (position === 'content-gap') {
     posClasses = 'w-full my-8 flex justify-center overflow-hidden';
   } else if (isVertical) {
-    posClasses = 'hidden xl:flex shrink-0 w-[140px] xl:w-[160px] max-w-[200px] justify-center overflow-hidden';
+    posClasses = 'hidden xl:flex shrink-0 w-[140px] xl:w-[160px] 2xl:w-[240px] 3xl:w-[300px] max-w-[320px] justify-center overflow-hidden';
   }
 
   const containerProps = {
