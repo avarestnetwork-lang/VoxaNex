@@ -143,12 +143,18 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
     if (p === 'juicyads') {
       if (isVertical || position === 'left' || position === 'right') {
+        if (containerWidth !== null && containerWidth < 300) {
+          return null;
+        }
         return JUICYADS_CONFIG.zones.banner300x262; // 1131765
       }
       if (containerWidth && containerWidth >= 728) {
         return JUICYADS_CONFIG.zones.banner728x102; // 1131766
       }
-      return JUICYADS_CONFIG.zones.banner300x62; // 1131763
+      if (containerWidth && containerWidth >= 300) {
+        return JUICYADS_CONFIG.zones.banner300x62; // 1131763
+      }
+      return null;
     }
 
     if (p === 'adsense') {
@@ -440,23 +446,18 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         }
 
         const win = window as any;
-        win.Ads = win.Ads || [];
-        if (typeof win.Ads.push === 'function') {
-          win.Ads.push({ zone: Number(EXOCLICK_CONFIG.zoneId), el: domId });
-        }
-        if (typeof win.Ads.serve === 'function') {
-          win.Ads.serve({ zone: Number(EXOCLICK_CONFIG.zoneId), el: domId });
-        }
         win.AdProvider = win.AdProvider || [];
         if (typeof win.AdProvider.push === 'function') {
-          win.AdProvider.push({ zone: Number(EXOCLICK_CONFIG.zoneId), el: domId });
+          win.AdProvider.push({ "serve": {} });
         }
 
         let attempts = 0;
         const checkTimer = setInterval(() => {
           if (!isMountedRef.current) { clearInterval(checkTimer); return; }
           const el = document.getElementById(domId);
-          if (el && (el.children.length > 0 || el.querySelector('iframe') || el.innerHTML.trim().length > 0)) {
+          // Strict creative verification: require iframe or non-script child element
+          const hasCreative = el && (Boolean(el.querySelector('iframe')) || (el.children.length > 0 && Array.from(el.children).some(child => child.tagName !== 'SCRIPT')));
+          if (hasCreative) {
             clearInterval(checkTimer);
             updateStatus('filled');
           } else if (attempts >= 10) {
@@ -492,8 +493,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             return;
           }
           const wrapEl = document.getElementById(domId);
-          const hasContent = wrapEl && (wrapEl.children.length > 0 || wrapEl.querySelector('iframe') || wrapEl.innerHTML.trim().length > 0);
-          if (hasContent) {
+          // Strict creative verification: require iframe or non-script child element distinct from empty wrapper
+          const hasCreative = wrapEl && (Boolean(wrapEl.querySelector('iframe')) || (wrapEl.children.length > 0 && Array.from(wrapEl.children).some(child => child.tagName !== 'SCRIPT')));
+          if (hasCreative) {
             clearInterval(monetagTimer);
             updateStatus('filled');
           } else if (attempts >= 10) {

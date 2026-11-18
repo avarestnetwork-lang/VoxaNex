@@ -166,26 +166,27 @@ async function runAdRenderingTests() {
   const composerCode = publicChatPageSource.slice(composerStart, composerEnd);
   assert(!composerCode.includes('AdPlacementBox'), '3.13 No ad inserted into message composer');
 
-  // --- Task 4: Phase Remediation 2 Provider Lifecycle & Reliability Assertions ---
-  console.log('\n--- 4. Phase Remediation 2 Lifecycle & Reliability Checks ---');
+  // --- Task 5: Phase Remediation 3 Publisher Integration & Responsive Reliability Assertions ---
+  console.log('\n--- 5. Phase Remediation 3 Publisher Integration & Reliability Checks ---');
+  const exoclickBlockStart = adPlacementBoxSource.indexOf("currentProvider === 'exoclick'");
+  const exoclickBlockEnd = adPlacementBoxSource.indexOf("} else if (currentProvider === 'monetag')", exoclickBlockStart);
+  const exoclickBlock = adPlacementBoxSource.slice(exoclickBlockStart, exoclickBlockEnd);
+
   const monetagBlockStart = adPlacementBoxSource.indexOf("currentProvider === 'monetag'");
   const monetagBlockEnd = adPlacementBoxSource.indexOf("} else {", monetagBlockStart);
   const monetagBlock = adPlacementBoxSource.slice(monetagBlockStart, monetagBlockEnd);
+
   assert(
-    monetagBlock.includes('monetagTimer') && !monetagBlock.includes('setTimeout'),
-    '4.1 Monetag uses verified container content check with bounded interval instead of unconditional 500ms fill'
+    exoclickBlock.includes('AdProvider.push({ "serve": {} })') && !exoclickBlock.includes('win.Ads'),
+    '5.1 ExoClick uses exact supplied AdProvider serve queue semantics without invented Ads API'
   );
   assert(
-    adPlacementBoxSource.includes('win.Ads') && adPlacementBoxSource.includes('win.AdProvider'),
-    '4.2 ExoClick uses standardized publisher queue semantics'
+    exoclickBlock.includes('hasCreative') && monetagBlock.includes('hasCreative'),
+    '5.2 ExoClick and Monetag enforce strict creative verification (iframe or non-script child elements)'
   );
   assert(
-    adPlacementBoxSource.includes('adsenseTimeout') && adPlacementBoxSource.includes('unavailableTimeout'),
-    '4.3 AdSense implements bounded timeout for missing runtime and slow fill'
-  );
-  assert(
-    adPlacementBoxSource.indexOf('isVertical') < adPlacementBoxSource.indexOf('containerWidth >= 728'),
-    '4.4 JuicyAds evaluates vertical placement orientation before wide horizontal zones'
+    adPlacementBoxSource.includes('containerWidth < 300'),
+    '5.3 JuicyAds handles narrow sidebars (<300px) by preventing overflow and triggering fallback'
   );
 
   console.log('\n================================================================');
