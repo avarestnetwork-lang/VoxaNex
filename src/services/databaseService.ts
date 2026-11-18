@@ -40,6 +40,7 @@ interface PresenceChannelEntry {
   channel: any;
   refs: number;
   trackerRefs: number;
+  disposed: boolean;
   trackedMember: TrackedPresencePayload | null;
   listeners: Set<(members: RoomPresenceMember[]) => void>;
   statusListeners: Set<(status: RoomPresenceSyncStatus) => void>;
@@ -50,6 +51,7 @@ interface CountChannelEntry {
   channel: any;
   refs: number;
   trackerRefs: number;
+  disposed: boolean;
   trackActive: boolean;
   listeners: Set<(count: number) => void>;
   statusListeners: Set<(status: RoomPresenceSyncStatus) => void>;
@@ -725,6 +727,7 @@ export const databaseService = {
         channel,
         refs: 0,
         trackerRefs: 0,
+        disposed: false,
         trackActive: false,
         listeners: new Set(),
         statusListeners: new Set(),
@@ -740,6 +743,7 @@ export const databaseService = {
         .on('presence', { event: 'join' }, handlePresenceEvent)
         .on('presence', { event: 'leave' }, handlePresenceEvent)
         .subscribe(async (status: string, err?: any) => {
+          if (newEntry.disposed) return;
           if (status === 'SUBSCRIBED') {
             newEntry.syncStatus = 'synced';
             newEntry.statusListeners.forEach((sl) => sl('synced'));
@@ -781,7 +785,10 @@ export const databaseService = {
       }
     }
 
+    let cleanedUp = false;
     return () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
       const currentEntry = registry.get(channelName);
       if (!currentEntry) return;
       currentEntry.listeners.delete(listener);
@@ -790,6 +797,7 @@ export const databaseService = {
       }
       currentEntry.refs = Math.max(0, currentEntry.refs - 1);
       if (currentEntry.refs <= 0) {
+        currentEntry.disposed = true;
         if (currentEntry.trackActive && typeof currentEntry.channel.untrack === 'function') {
           currentEntry.trackActive = false;
           Promise.resolve(currentEntry.channel.untrack()).catch(() => {});
@@ -871,6 +879,7 @@ export const databaseService = {
     emitSnapshot();
 
     return () => {
+      if (isDisposed) return;
       isDisposed = true;
       unsubscribers.forEach((unsub) => unsub());
     };
@@ -923,6 +932,7 @@ export const databaseService = {
         channel,
         refs: 0,
         trackerRefs: 0,
+        disposed: false,
         trackedMember: isStealth ? null : member,
         listeners: new Set(),
         statusListeners: new Set(),
@@ -941,6 +951,7 @@ export const databaseService = {
           // Compatibility shim for legacy broadcast-based presence
         })
         .subscribe(async (status: string, err?: any) => {
+          if (newEntry.disposed) return;
           if (status === 'SUBSCRIBED') {
             console.log(`[VX-PRESENCE] [${rosterChannelName}] Subscribed successfully`);
             newEntry.syncStatus = 'synced';
@@ -1025,6 +1036,7 @@ export const databaseService = {
           channel: countChannel,
           refs: 0,
           trackerRefs: 0,
+          disposed: false,
           trackActive: true,
           listeners: new Set(),
           statusListeners: new Set(),
@@ -1034,6 +1046,7 @@ export const databaseService = {
         countRegistry.set(countChannelName, newCountEntry);
 
         countChannel.subscribe(async (status: string) => {
+          if (newCountEntry.disposed) return;
           if (status === 'SUBSCRIBED') {
             newCountEntry.syncStatus = 'synced';
             newCountEntry.statusListeners.forEach((sl) => sl('synced'));
@@ -1061,7 +1074,11 @@ export const databaseService = {
       hasCountTrackerRef = true;
     }
 
+    let cleanedUp = false;
     return () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+
       const currentEntry = rosterRegistry.get(rosterChannelName);
       if (currentEntry) {
         currentEntry.listeners.delete(listener);
@@ -1076,6 +1093,7 @@ export const databaseService = {
           }
         }
         if (currentEntry.refs <= 0) {
+          currentEntry.disposed = true;
           console.log('[VX-PRESENCE] Cleaning up shared presence channel:', rosterChannelName);
           if (typeof supabase.removeChannel === 'function') {
             supabase.removeChannel(currentEntry.channel);
@@ -1096,6 +1114,7 @@ export const databaseService = {
             }
           }
           if (currentCountEntry.refs <= 0) {
+            currentCountEntry.disposed = true;
             if (typeof supabase.removeChannel === 'function') {
               supabase.removeChannel(currentCountEntry.channel);
             }

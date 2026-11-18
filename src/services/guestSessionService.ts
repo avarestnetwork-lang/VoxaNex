@@ -68,9 +68,16 @@ export const guestSessionService = {
   /**
    * Validate an existing token against the server
    */
-  async validateSession(token?: string): Promise<{ valid: boolean; session?: Partial<ValidatedGuestSession> }> {
-    const targetToken = token || localStorage.getItem(STORAGE_KEY);
-    if (!targetToken) return { valid: false };
+  async validateSession(token?: string): Promise<{
+    valid: boolean;
+    session?: Partial<ValidatedGuestSession>;
+    status?: 'valid' | 'invalid' | 'network_error';
+    error?: string;
+  }> {
+    const targetToken = token || (typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null);
+    if (!targetToken) {
+      return { valid: false, status: 'invalid', error: 'No guest session token found.' };
+    }
 
     try {
       const response = await fetch('/api/guest/validate', {
@@ -79,12 +86,43 @@ export const guestSessionService = {
         body: JSON.stringify({ token: targetToken }),
       });
 
-      if (!response.ok) return { valid: false };
-      const data = (await response.json()) as { valid?: boolean; session?: Partial<ValidatedGuestSession> };
-      return { valid: Boolean(data.valid), session: data.session };
+      if (response.status >= 500 || response.status === 429 || response.status === 408) {
+        return {
+          valid: false,
+          status: 'network_error',
+          error: `Guest session validation temporarily unavailable (HTTP ${response.status}).`,
+        };
+      }
+
+      if (!response.ok) {
+        const errData = (await response.json().catch(() => ({}))) as { error?: string };
+        return {
+          valid: false,
+          status: 'invalid',
+          error: errData.error || 'Guest session is invalid, expired, or revoked.',
+        };
+      }
+
+      const data = (await response.json()) as {
+        valid?: boolean;
+        session?: Partial<ValidatedGuestSession>;
+        error?: string;
+      };
+      if (Boolean(data.valid)) {
+        return { valid: true, session: data.session, status: 'valid' };
+      }
+      return {
+        valid: false,
+        status: 'invalid',
+        error: data.error || 'Guest session is invalid, expired, or revoked.',
+      };
     } catch {
-      // Fail closed on network or server error during validation
-      return { valid: false };
+      // Distinguish connectivity errors from authoritative session invalidation
+      return {
+        valid: false,
+        status: 'network_error',
+        error: 'Network error validating guest session.',
+      };
     }
   },
 

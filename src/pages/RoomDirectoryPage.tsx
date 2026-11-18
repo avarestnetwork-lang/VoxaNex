@@ -8,6 +8,7 @@ import { communityService } from '../services/communityService';
 import {
   useRoomPresenceCounts,
   resolveRoomPresenceBadge,
+  RoomPresenceBadgeDisplay,
 } from '../hooks/useRoomPresenceCounts';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -156,6 +157,45 @@ export const RoomDirectoryPage: React.FC = () => {
     if (!decision) return;
     setInspectingRoom(null);
     navigate(decision.route, decision.params);
+  };
+
+  const renderRoomActiveBadge = (badge: RoomPresenceBadgeDisplay) => {
+    const isPositiveLive = badge.kind === 'synced' && badge.isLive;
+    const isZeroSynced = badge.kind === 'synced' && !badge.isLive;
+    const isConnecting = badge.kind === 'connecting';
+
+    const containerClasses = isPositiveLive
+      ? 'bg-emerald-50 text-emerald-800 border-emerald-200/90 shadow-xs dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-700/70'
+      : isZeroSynced
+        ? 'bg-emerald-50/40 text-slate-700 border-emerald-200/60 dark:bg-emerald-950/25 dark:text-slate-200 dark:border-emerald-800/50'
+        : 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700';
+
+    const dotClasses = isPositiveLive
+      ? 'w-2 h-2 rounded-full bg-emerald-600 dark:bg-emerald-400 motion-safe:animate-pulse motion-reduce:animate-none'
+      : isZeroSynced
+        ? 'w-1.5 h-1.5 rounded-full bg-emerald-600/55 dark:bg-emerald-400/55'
+        : isConnecting
+          ? 'w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-400 motion-safe:animate-pulse motion-reduce:animate-none'
+          : 'w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500';
+
+    const textClasses = isPositiveLive
+      ? 'font-bold tabular-nums'
+      : isZeroSynced
+        ? 'font-semibold tabular-nums'
+        : 'font-medium';
+
+    return (
+      <span
+        title={badge.title}
+        aria-label={badge.title}
+        data-room-count-status={badge.kind}
+        data-room-count-live={isPositiveLive ? 'true' : 'false'}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[11px] leading-tight tracking-tight whitespace-nowrap shrink-0 transition-colors ${containerClasses}`}
+      >
+        <span aria-hidden="true" className={dotClasses} />
+        <span className={textClasses}>{badge.label}</span>
+      </span>
+    );
   };
 
   return (
@@ -321,27 +361,11 @@ export const RoomDirectoryPage: React.FC = () => {
           return (
             <div key={room.id} className={'p-5 rounded-xl border flex flex-col justify-between transition-all shadow-sm bg-white ' + (isAdult ? 'border-rose-200 hover:border-rose-300' : 'border-slate-200 hover:border-orange-300')}>
               <div>
-                <div className="flex items-center justify-between gap-2 mb-2 text-xs">
-                  <span className="text-slate-500 font-medium">{room.categoryLabel[language] || room.categoryLabel.en}</span>
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                    <span
-                      title={badge.title}
-                      data-room-count-status={badge.kind}
-                      className="flex items-center gap-1 font-mono text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-700"
-                    >
-                      <span
-                        className={
-                          'w-1.5 h-1.5 rounded-full ' +
-                          (badge.isLive
-                            ? 'bg-emerald-500 animate-pulse'
-                            : badge.kind === 'connecting'
-                              ? 'bg-amber-400 animate-pulse'
-                              : 'bg-slate-400')
-                        }
-                      />
-                      <span>{badge.label}</span>
-                    </span>
-                    <span className={'uppercase font-mono text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded'}>{room.language}</span>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5 text-xs">
+                  <span className="text-slate-500 font-medium min-w-0 truncate">{room.categoryLabel[language] || room.categoryLabel.en}</span>
+                  <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-slate-600">
+                    {renderRoomActiveBadge(badge)}
+                    <span className={'uppercase font-mono text-[10px] bg-orange-50 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded shrink-0'}>{room.language}</span>
                   </div>
                 </div>
                 <h3 className="text-base font-bold text-slate-900 mb-1.5">{room.name[language] || room.name.en}</h3>
@@ -372,26 +396,10 @@ export const RoomDirectoryPage: React.FC = () => {
           return (
             <div key={room.id} className={'p-5 rounded-xl border flex flex-col justify-between transition-all shadow-sm bg-white ' + (isAdult ? 'border-rose-200 hover:border-rose-300' : 'border-slate-200 hover:border-orange-300')}>
               <div>
-                <div className="flex items-center justify-between gap-2 mb-2 text-xs">
-                  <span className="text-slate-500 font-medium">{room.categoryLabel[language] || room.categoryLabel.en}</span>
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                    <span
-                      title={badge.title}
-                      data-room-count-status={badge.kind}
-                      className="flex items-center gap-1 font-mono text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-700"
-                    >
-                      <span
-                        className={
-                          'w-1.5 h-1.5 rounded-full ' +
-                          (badge.isLive
-                            ? 'bg-emerald-500 animate-pulse'
-                            : badge.kind === 'connecting'
-                              ? 'bg-amber-400 animate-pulse'
-                              : 'bg-slate-400')
-                        }
-                      />
-                      <span>{badge.label}</span>
-                    </span>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5 text-xs">
+                  <span className="text-slate-500 font-medium min-w-0 truncate">{room.categoryLabel[language] || room.categoryLabel.en}</span>
+                  <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-slate-600">
+                    {renderRoomActiveBadge(badge)}
                   </div>
                 </div>
                 <h3 className="text-base font-bold text-slate-900 mb-1.5">{room.name[language] || room.name.en}</h3>

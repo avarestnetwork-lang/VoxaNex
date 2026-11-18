@@ -56,7 +56,7 @@ export function resolveRoomPresenceBadge(params: {
     return {
       kind: 'connecting',
       count: null,
-      label: language === 'bn' ? '... সক্রিয়' : '... active',
+      label: language === 'bn' ? 'সিঙ্ক হচ্ছে...' : 'Syncing...',
       isLive: false,
       title:
         language === 'bn'
@@ -75,7 +75,7 @@ export function resolveRoomPresenceBadge(params: {
   return {
     kind: 'synced',
     count: safeCount,
-    label: `${safeCount} ${language === 'bn' ? 'সক্রিয়' : 'active'}`,
+    label: `${safeCount} ${language === 'bn' ? 'সক্রিয়' : 'Active'}`,
     isLive: safeCount > 0,
     title:
       language === 'bn'

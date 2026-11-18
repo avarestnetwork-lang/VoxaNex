@@ -6,7 +6,9 @@ import { usePrivateChat } from '../context/PrivateChatContext';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
 import { ChatMessage, Room } from '../types';
 import { formatDhakaTime } from '../utils/date';
-import { databaseService } from '../services/databaseService';
+import { databaseService, isCanonicalRoomId } from '../services/databaseService';
+import { guestSessionService } from '../services/guestSessionService';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabaseClient';
 import { BanglishHelperBar } from '../components/layout/BanglishHelperBar';
 import { EmojiPicker } from '../components/chat/EmojiPicker';
 import { GifPicker } from '../components/chat/GifPicker';
@@ -73,12 +75,210 @@ interface ExtendedChatMessage extends ChatMessage {
   clientNonce?: string;
 }
 
+export type BFCacheValidationResult =
+  | { status: 'valid' }
+  | { status: 'invalid'; reason?: string }
+  | { status: 'denied'; reason?: string }
+  | { status: 'network_error'; reason?: string };
+
+export interface RevalidateSessionAccessParams {
+  roomId: string;
+  roomIs18Plus: boolean;
+  expectedUserId: string;
+  isGuest: boolean;
+  hasLocalAgeAccess: boolean;
+  isSupabaseConfiguredFn?: () => boolean;
+  getSupabaseClientFn?: () => any;
+  validateGuestTokenFn?: (token?: string) => Promise<{
+    valid: boolean;
+    session?: {
+      id?: string;
+      expiresAt?: number;
+      is18Verified?: boolean;
+      ageDeclarationAccepted?: boolean;
+    };
+    status?: 'valid' | 'invalid' | 'network_error';
+    error?: string;
+  }>;
+  getStoredGuestTokenFn?: () => string | null;
+  getStoredProfileFn?: () => string | null;
+  isStillCurrent?: () => boolean;
+}
+
+function isAuthNetworkFailure(err: any): boolean {
+  if (!err) return false;
+  const name = typeof err.name === 'string' ? err.name : '';
+  const message = typeof err.message === 'string' ? err.message.toLowerCase() : '';
+  const status = typeof err.status === 'number' ? err.status : undefined;
+  if (status === 401 || status === 403 || status === 400 || status === 404) {
+    return false;
+  }
+  if (typeof status === 'number' && status >= 500) {
+    return true;
+  }
+  if (name === 'AuthRetryableFetchError') {
+    return true;
+  }
+  return (
+    message.includes('network') ||
+    message.includes('failed to fetch') ||
+    message.includes('fetch') ||
+    message.includes('timeout') ||
+    message.includes('offline')
+  );
+}
+
+/**
+ * Revalidates the underlying guest token or Supabase member session AND room access
+ * before restarting Presence after BFCache restoration.
+ */
+export async function revalidateRoomSessionAndAccess(
+  params: RevalidateSessionAccessParams
+): Promise<BFCacheValidationResult> {
+  if (!isCanonicalRoomId(params.roomId)) {
+    return { status: 'denied', reason: 'Non-canonical chatroom.' };
+  }
+  if (!params.expectedUserId) {
+    return { status: 'invalid', reason: 'Missing active user session.' };
+  }
+
+  if (params.isGuest) {
+    const getToken = params.getStoredGuestTokenFn ?? (() => guestSessionService.getStoredToken());
+    const token = getToken();
+    if (!token) {
+      return { status: 'invalid', reason: 'Guest session token missing.' };
+    }
+
+    const validateFn =
+      params.validateGuestTokenFn ?? ((t?: string) => guestSessionService.validateSession(t));
+
+    let check: Awaited<ReturnType<typeof validateFn>>;
+    try {
+      check = await validateFn(token);
+    } catch {
+      return { status: 'network_error', reason: 'Network error validating guest session.' };
+    }
+
+    if (params.isStillCurrent && !params.isStillCurrent()) {
+      return { status: 'invalid', reason: 'Lifecycle no longer current.' };
+    }
+
+    if (check.status === 'network_error') {
+      return {
+        status: 'network_error',
+        reason: check.error || 'Network error validating guest session.',
+      };
+    }
+
+    if (!check.valid || !check.session) {
+      return {
+        status: 'invalid',
+        reason: check.error || 'Guest session is invalid, expired, or revoked.',
+      };
+    }
+
+    if (
+      typeof check.session.expiresAt === 'number' &&
+      Number.isFinite(check.session.expiresAt) &&
+      Date.now() >= check.session.expiresAt
+    ) {
+      return { status: 'invalid', reason: 'Guest session has expired.' };
+    }
+
+    if (check.session.id && check.session.id !== params.expectedUserId) {
+      return { status: 'invalid', reason: 'Guest identity changed.' };
+    }
+
+    const hasVerifiedAdultAccess = Boolean(
+      check.session.is18Verified || check.session.ageDeclarationAccepted || params.hasLocalAgeAccess
+    );
+    if (params.roomIs18Plus && !hasVerifiedAdultAccess) {
+      return { status: 'denied', reason: 'Adult room access verification required.' };
+    }
+
+    return { status: 'valid' };
+  }
+
+  // Authenticated member revalidation
+  const supabaseConfigured = (params.isSupabaseConfiguredFn ?? isSupabaseConfigured)();
+  if (!supabaseConfigured) {
+    // Offline / local simulation mode: verify stored local profile consistency without bypassing room gates
+    const getProfileRaw =
+      params.getStoredProfileFn ??
+      (() => (typeof localStorage !== 'undefined' ? localStorage.getItem('voxanex_user_profile') : null));
+    const raw = getProfileRaw();
+    if (!raw) {
+      return { status: 'invalid', reason: 'Member session no longer present.' };
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.id !== params.expectedUserId || parsed.isGuest === true) {
+        return { status: 'invalid', reason: 'Member identity mismatch.' };
+      }
+    } catch {
+      return { status: 'invalid', reason: 'Corrupted local session state.' };
+    }
+    if (params.roomIs18Plus && !params.hasLocalAgeAccess) {
+      return { status: 'denied', reason: 'Adult room access verification required.' };
+    }
+    return { status: 'valid' };
+  }
+
+  const supabase = (params.getSupabaseClientFn ?? getSupabaseClient)();
+  if (!supabase || !supabase.auth) {
+    return { status: 'network_error', reason: 'Authentication client unavailable.' };
+  }
+
+  try {
+    const sessionRes = await supabase.auth.getSession();
+    if (params.isStillCurrent && !params.isStillCurrent()) {
+      return { status: 'invalid', reason: 'Lifecycle no longer current.' };
+    }
+    if (sessionRes?.error) {
+      return isAuthNetworkFailure(sessionRes.error)
+        ? { status: 'network_error', reason: 'Network error reading member session.' }
+        : { status: 'invalid', reason: 'Member session error.' };
+    }
+    const activeSession = sessionRes?.data?.session;
+    if (!activeSession?.user?.id || activeSession.user.id !== params.expectedUserId) {
+      return { status: 'invalid', reason: 'Member session is missing or mismatched.' };
+    }
+
+    if (typeof supabase.auth.getUser === 'function') {
+      const userRes = await supabase.auth.getUser();
+      if (params.isStillCurrent && !params.isStillCurrent()) {
+        return { status: 'invalid', reason: 'Lifecycle no longer current.' };
+      }
+      if (userRes?.error) {
+        return isAuthNetworkFailure(userRes.error)
+          ? { status: 'network_error', reason: 'Network error validating member session.' }
+          : { status: 'invalid', reason: 'Member session is invalid or expired.' };
+      }
+      if (!userRes?.data?.user?.id || userRes.data.user.id !== params.expectedUserId) {
+        return { status: 'invalid', reason: 'Authenticated user mismatch.' };
+      }
+    }
+
+    if (params.roomIs18Plus && !params.hasLocalAgeAccess) {
+      return { status: 'denied', reason: 'Adult room access verification required.' };
+    }
+
+    return { status: 'valid' };
+  } catch (err) {
+    return isAuthNetworkFailure(err)
+      ? { status: 'network_error', reason: 'Network error verifying member session.' }
+      : { status: 'invalid', reason: 'Unable to validate member session.' };
+  }
+}
+
 export interface RoomPresenceLifecycleOptions {
   isStealth: boolean;
   canTrack: () => boolean;
   startRealtimePresence: () => () => void;
   sendHeartbeat: () => Promise<void> | void;
   sendLeave: () => Promise<void> | void;
+  validateSessionAndAccess?: () => Promise<BFCacheValidationResult> | BFCacheValidationResult;
+  onValidationFailed?: (result: Exclude<BFCacheValidationResult, { status: 'valid' }>) => void;
   heartbeatIntervalMs?: number;
   eventTarget?: {
     addEventListener: (event: string, listener: (e: any) => void) => void;
@@ -89,25 +289,30 @@ export interface RoomPresenceLifecycleOptions {
 export interface RoomPresenceLifecycleHandle {
   dispose: () => void;
   handlePageHide: () => void;
-  handlePageShow: (event?: { persisted?: boolean }) => void;
+  handlePageShow: (event?: { persisted?: boolean }) => Promise<void>;
   isActive: () => boolean;
+  isValidating: () => boolean;
 }
 
 /**
  * Manages room presence tracking across browser BFCache transitions (`pagehide` / `pageshow`)
- * and React mount/unmount without duplicate subscriptions or restoring invalid/stealth sessions.
+ * and React mount/unmount with fresh session + room-access revalidation on BFCache restore.
  */
 export function createRoomPresenceLifecycle(
   options: RoomPresenceLifecycleOptions
 ): RoomPresenceLifecycleHandle {
   let disposed = false;
   let active = false;
+  let validating = false;
+  let needsOnlineRetry = false;
+  let validationSeq = 0;
   let untrackRealtime: (() => void) | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   const start = () => {
     if (disposed || active || !options.canTrack()) return;
     active = true;
+    needsOnlineRetry = false;
     untrackRealtime = options.startRealtimePresence();
 
     if (!options.isStealth) {
@@ -121,6 +326,9 @@ export function createRoomPresenceLifecycle(
   };
 
   const stop = () => {
+    validationSeq++;
+    validating = false;
+    needsOnlineRetry = false;
     if (!active) return;
     active = false;
     if (heartbeatTimer !== null) {
@@ -137,15 +345,62 @@ export function createRoomPresenceLifecycle(
     }
   };
 
+  const runRestoreValidation = async () => {
+    if (disposed || active || validating || !options.canTrack()) return;
+
+    if (!options.validateSessionAndAccess) {
+      start();
+      return;
+    }
+
+    const seq = ++validationSeq;
+    validating = true;
+
+    let result: BFCacheValidationResult;
+    try {
+      result = await options.validateSessionAndAccess();
+    } catch {
+      result = { status: 'network_error', reason: 'Validation failed unexpectedly.' };
+    }
+
+    if (disposed || validationSeq !== seq) {
+      return;
+    }
+
+    validating = false;
+
+    if (!options.canTrack()) {
+      return;
+    }
+
+    if (result.status !== 'valid') {
+      if (result.status === 'network_error') {
+        needsOnlineRetry = true;
+      } else {
+        needsOnlineRetry = false;
+      }
+      options.onValidationFailed?.(result);
+      return;
+    }
+
+    start();
+  };
+
   const handlePageHide = () => {
     stop();
   };
 
-  const handlePageShow = (event?: { persisted?: boolean }) => {
+  const handlePageShow = async (event?: { persisted?: boolean }) => {
     if (disposed || !event?.persisted) return;
+    if (active || validating) return;
     if (!options.canTrack()) return;
-    if (active) return;
-    start();
+    await runRestoreValidation();
+  };
+
+  const handleOnline = () => {
+    if (disposed || active || validating || !needsOnlineRetry) return;
+    if (!options.canTrack()) return;
+    void runRestoreValidation();
   };
 
   const target =
@@ -160,6 +415,7 @@ export function createRoomPresenceLifecycle(
   if (target) {
     target.addEventListener('pagehide', handlePageHide);
     target.addEventListener('pageshow', handlePageShow);
+    target.addEventListener('online', handleOnline);
   }
 
   start();
@@ -168,15 +424,20 @@ export function createRoomPresenceLifecycle(
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      validationSeq++;
+      validating = false;
+      needsOnlineRetry = false;
       if (target) {
         target.removeEventListener('pagehide', handlePageHide);
         target.removeEventListener('pageshow', handlePageShow);
+        target.removeEventListener('online', handleOnline);
       }
       stop();
     },
     handlePageHide,
     handlePageShow,
     isActive: () => active,
+    isValidating: () => validating,
   };
 }
 
@@ -249,6 +510,27 @@ export const PublicChatPage: React.FC = () => {
     is18Verified || user.is18Verified || ageDeclarationAccepted || user.ageDeclarationAccepted
   );
   const canAccessRoom = !isLoading && hasActiveSession && (!activeRoom.is18Plus || hasAgeAccess);
+
+  const liveAccessRef = useRef({
+    canAccessRoom,
+    hasActiveSession,
+    userId: user.id,
+    isGuest: Boolean(user.isGuest),
+    hasAgeAccess,
+    roomId: activeRoom.id,
+    roomSlug: activeRoom.slug,
+    roomIs18Plus: activeRoom.is18Plus,
+  });
+  liveAccessRef.current = {
+    canAccessRoom,
+    hasActiveSession,
+    userId: user.id,
+    isGuest: Boolean(user.isGuest),
+    hasAgeAccess,
+    roomId: activeRoom.id,
+    roomSlug: activeRoom.slug,
+    roomIs18Plus: activeRoom.is18Plus,
+  };
 
   // Authoritative main view tab: 'room' for public group chat, or conversationId for maximized private chat
   const [activeMainTab, setActiveMainTab] = useState<'room' | string>('room');
@@ -522,18 +804,47 @@ export const PublicChatPage: React.FC = () => {
     if (!canAccessRoom || !user.id) return;
     let isMounted = true;
     const isStealth = user.onlineVisibility === 'stealth_invisible';
+    const capturedUserId = user.id;
+    const capturedIsGuest = Boolean(user.isGuest);
+    const capturedRoomId = activeRoom.id;
+    const capturedRoomSlug = activeRoom.slug;
+    const capturedRoomIs18Plus = activeRoom.is18Plus;
+
+    const isStillCurrentContext = () =>
+      isMounted &&
+      liveAccessRef.current.canAccessRoom &&
+      liveAccessRef.current.roomId === capturedRoomId &&
+      liveAccessRef.current.userId === capturedUserId;
 
     const lifecycle = createRoomPresenceLifecycle({
       isStealth,
-      canTrack: () => isMounted && Boolean(canAccessRoom && user.id),
+      canTrack: isStillCurrentContext,
+      validateSessionAndAccess: () =>
+        revalidateRoomSessionAndAccess({
+          roomId: capturedRoomId,
+          roomIs18Plus: capturedRoomIs18Plus,
+          expectedUserId: capturedUserId,
+          isGuest: capturedIsGuest,
+          hasLocalAgeAccess: liveAccessRef.current.hasAgeAccess,
+          isStillCurrent: isStillCurrentContext,
+        }),
+      onValidationFailed: (result) => {
+        if (!isMounted || liveAccessRef.current.roomId !== capturedRoomId) return;
+        if (result.status === 'invalid') {
+          navigate('/user/guest-entry', { targetRoom: capturedRoomSlug });
+        } else if (result.status === 'denied') {
+          navigate('/age-gate', { targetRoom: capturedRoomSlug });
+        }
+        // On 'network_error': keep session unverified and Presence inactive without falsely reporting logout
+      },
       startRealtimePresence: () =>
         databaseService.trackPresence(
-          activeRoom.id,
+          capturedRoomId,
           {
-            id: user.id,
+            id: capturedUserId,
             nickname: user.nickname || 'You',
             avatar: user.avatar || '👤',
-            isGuest: Boolean(user.isGuest),
+            isGuest: capturedIsGuest,
             gender: user.gender,
             onlineVisibility: user.onlineVisibility,
           },
@@ -546,11 +857,11 @@ export const PublicChatPage: React.FC = () => {
       sendHeartbeat: async () => {
         if (isStealth) return;
         try {
-          const members = await messagingService.sendPresence(activeRoom.id, {
-            id: user.id,
+          const members = await messagingService.sendPresence(capturedRoomId, {
+            id: capturedUserId,
             nickname: user.nickname || 'You',
             avatar: user.avatar || '👤',
-            isGuest: Boolean(user.isGuest),
+            isGuest: capturedIsGuest,
             gender: user.gender,
           });
           if (isMounted && Array.isArray(members) && members.length > 0) {
@@ -568,8 +879,8 @@ export const PublicChatPage: React.FC = () => {
         }
       },
       sendLeave: () => {
-        if (user?.id && !isStealth) {
-          messagingService.leaveRoom(activeRoom.id, user.id);
+        if (capturedUserId && !isStealth) {
+          messagingService.leaveRoom(capturedRoomId, capturedUserId);
         }
       },
     });
@@ -578,7 +889,7 @@ export const PublicChatPage: React.FC = () => {
       isMounted = false;
       lifecycle.dispose();
     };
-  }, [canAccessRoom, activeRoom.id, user]);
+  }, [canAccessRoom, activeRoom.id, activeRoom.slug, activeRoom.is18Plus, user, navigate]);
 
   // Handle typing input with mention autocomplete detection
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {

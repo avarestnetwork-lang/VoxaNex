@@ -8,7 +8,13 @@ import { LanguageProvider } from '../src/context/LanguageContext';
 import { AuthProvider } from '../src/context/AuthContext';
 import { RouterProvider } from '../src/context/RouterContext';
 import { ROOMS_CONFIG } from '../src/config/voxanexConfig';
-import { createRoomPresenceLifecycle, PublicChatPage } from '../src/pages/PublicChatPage';
+import {
+  BFCacheValidationResult,
+  createRoomPresenceLifecycle,
+  PublicChatPage,
+  revalidateRoomSessionAndAccess,
+} from '../src/pages/PublicChatPage';
+import { guestSessionService } from '../src/services/guestSessionService';
 import {
   databaseService,
   extractActivePresenceMembers,
@@ -580,6 +586,47 @@ async function runTests() {
     '2.12 Abrupt socket expiry removes anonymous token and updates /rooms count to 2'
   );
 
+  // 2.9b Multi-visitor cross-browser simulation & room isolation (Bangla Chat vs Indian Chat)
+  const directoryVisitorB = new MockSupabaseClient(server, 'dir-visitor-b');
+  let visitorBSnap: { counts: Record<string, number>; statuses: Record<string, RoomPresenceSyncStatus> } = {
+    counts: {},
+    statuses: {},
+  };
+  const unsubVisitorB = databaseService.observeRoomsPresence(
+    allRoomIds,
+    (snap) => {
+      visitorBSnap = snap;
+    },
+    directoryVisitorB
+  );
+  assert(
+    visitorBSnap.counts['room-bangla'] === 2 && visitorBSnap.counts['room-indian'] === 0,
+    '2.12b Second independent /rooms visitor receives identical live synchronized counts without refresh'
+  );
+  const indianGuestClient = new MockSupabaseClient(server, 'indian-guest');
+  const unsubIndianGuest = databaseService.trackPresence(
+    'room-indian',
+    { id: 'guest-indian-1', nickname: 'IndGuest', avatar: '🪷', isGuest: true, onlineVisibility: 'online' },
+    () => {},
+    indianGuestClient
+  );
+  assert(
+    latestSnapshot.counts['room-indian'] === 1 &&
+      visitorBSnap.counts['room-indian'] === 1 &&
+      latestSnapshot.counts['room-bangla'] === 2 &&
+      visitorBSnap.counts['room-bangla'] === 2,
+    '2.12c Joining room-indian updates all directory visitors in real time while leaving room-bangla isolated'
+  );
+  unsubIndianGuest();
+  assert(
+    latestSnapshot.counts['room-indian'] === 0 &&
+      visitorBSnap.counts['room-indian'] === 0 &&
+      latestSnapshot.counts['room-bangla'] === 2 &&
+      visitorBSnap.counts['room-bangla'] === 2,
+    '2.12d Leaving room-indian decrements room-indian across both visitors without altering room-bangla'
+  );
+  unsubVisitorB();
+
   // 2.10 Stale Count Invalidation on Channel Failure + Recovery on Reconnect (REMEDIATION B)
   const dirBanglaChannel = directoryClient.getChannelByTopic('public_room_presence_count:room-bangla')!;
   const dirSexChannel = directoryClient.getChannelByTopic('public_room_presence_count:room-sex')!;
@@ -590,8 +637,8 @@ async function runTests() {
         counts: latestSnapshot.counts,
         statuses: latestSnapshot.statuses,
         language: 'en',
-      }).label === '2 active',
-    '2.13 Pre-failure badge shows live 2 active on room-bangla'
+      }).label === '2 Active',
+    '2.13 Pre-failure badge shows live 2 Active on room-bangla'
   );
 
   dirBanglaChannel.simulateStatus('CHANNEL_ERROR');
@@ -648,9 +695,9 @@ async function runTests() {
     latestSnapshot.statuses['room-bangla'] === 'synced' &&
       latestSnapshot.counts['room-bangla'] === 1 &&
       reconnectedBadge.kind === 'synced' &&
-      reconnectedBadge.label === '1 active' &&
+      reconnectedBadge.label === '1 Active' &&
       computeOverallPresenceStatus(allRoomIds, latestSnapshot.statuses) === 'synced',
-    '2.16 Channel reconnect restores fresh count (1 active) and recovers overallStatus back to synced'
+    '2.16 Channel reconnect restores fresh count (1 Active) and recovers overallStatus back to synced'
   );
 
   // Clean up remaining participants cleanly -> 0
@@ -693,13 +740,31 @@ async function runTests() {
     statuses: partialSnap.statuses,
     language: 'en',
   });
+  const connectingBadgeCheck = resolveRoomPresenceBadge({
+    roomId: 'room-bangla',
+    counts: {},
+    statuses: { 'room-bangla': 'connecting' },
+    language: 'en',
+  });
+  const connectingBadgeBnCheck = resolveRoomPresenceBadge({
+    roomId: 'room-bangla',
+    counts: {},
+    statuses: { 'room-bangla': 'connecting' },
+    language: 'bn',
+  });
   assert(
     onlyOneSyncedStatus === 'partial' &&
       banglaBadgeInPartial.kind === 'synced' &&
-      banglaBadgeInPartial.label === '0 active' &&
+      banglaBadgeInPartial.isLive === false &&
+      banglaBadgeInPartial.label === '0 Active' &&
       sexBadgeInPartial.kind === 'unavailable' &&
-      sexBadgeInPartial.label === 'Live N/A',
-    '2.18 1 synced room + remaining error rooms computes overallStatus=partial while preserving independent per-room badges'
+      sexBadgeInPartial.isLive === false &&
+      sexBadgeInPartial.label === 'Live N/A' &&
+      connectingBadgeCheck.kind === 'connecting' &&
+      connectingBadgeCheck.isLive === false &&
+      connectingBadgeCheck.label === 'Syncing...' &&
+      connectingBadgeBnCheck.label === 'সিঙ্ক হচ্ছে...',
+    '2.18 Badge resolver and overallStatus enforce Active (pos/zero), Syncing..., Live N/A, and partial states'
   );
   unsubPartial();
 
@@ -723,7 +788,7 @@ async function runTests() {
     '2.19 Overall status accurately distinguishes connecting, unavailable, error, partial, and synced states'
   );
 
-  // 2.12 Strict Mode mount -> unmount -> remount cleanup for both roster & count channels
+  // 2.12 Strict Mode mount -> unmount -> remount cleanup & idempotent double-unsub protection
   const strictClient = new MockSupabaseClient(server, 'strict-dir');
   let strictSnap: { counts: Record<string, number>; statuses: Record<string, RoomPresenceSyncStatus> } = {
     counts: {},
@@ -737,9 +802,10 @@ async function runTests() {
     strictClient
   );
   strictUnsub1();
+  strictUnsub1(); // repeated cleanup must be strictly idempotent
   assert(
     strictClient.removedChannels.length === 2,
-    '2.20 Strict Mode unmount 1 removes all directory count channels'
+    '2.20 Strict Mode unmount 1 removes all directory count channels idempotently'
   );
   const strictUnsub2 = databaseService.observeRoomsPresence(
     ['room-bangla', 'room-sex'],
@@ -749,40 +815,222 @@ async function runTests() {
     strictClient
   );
   const strictMemberClient = new MockSupabaseClient(server, 'strict-user');
-  const unsubStrictUser = databaseService.trackPresence(
+  const unsubStrictUserA = databaseService.trackPresence(
     'room-bangla',
     { id: 'strict-u1', nickname: 'StrictUser', avatar: '⚡', isGuest: true },
     () => {},
     strictMemberClient
   );
-  assert(
-    strictSnap.counts['room-bangla'] === 1 && strictSnap.counts['room-sex'] === 0,
-    '2.21 Strict Mode remount receives accurate live presence updates without duplicate listeners'
+  const unsubStrictUserB = databaseService.trackPresence(
+    'room-bangla',
+    { id: 'strict-u1', nickname: 'StrictUser', avatar: '⚡', isGuest: true },
+    () => {},
+    strictMemberClient
   );
-  unsubStrictUser();
+  // Calling cleanup A twice must NOT remove channel while cleanup B is still active!
+  unsubStrictUserA();
+  unsubStrictUserA();
+  assert(
+    strictSnap.counts['room-bangla'] === 1 &&
+      strictSnap.counts['room-sex'] === 0 &&
+      strictMemberClient.removedChannels.length === 0,
+    '2.21 Repeated unsubscribe calls do not underflow shared ref-counts while another ref remains active'
+  );
+  unsubStrictUserB();
   assert(
     strictMemberClient.removedChannels.some((c) => c.topic === 'public_room_presence:room-bangla') &&
       strictMemberClient.removedChannels.some((c) => c.topic === 'public_room_presence_count:room-bangla'),
-    '2.22 Leaving chat room removes BOTH roster and count-only channels cleanly'
+    '2.22 Leaving chat room removes BOTH roster and count-only channels cleanly when last ref unsubscribes'
   );
   strictUnsub2();
   unsubDirectory();
   assert(
     directoryClient.removedChannels.length === allRoomIds.length,
-    '2.23 Leaving /rooms removes all directory channels cleanly'
+    '2.23 Leaving /rooms removes all 25 directory channels cleanly'
   );
 
-  // 2.13 BFCache Lifecycle Tests (`pagehide` & `pageshow` recovery in PublicChatPage)
+  // 2.13 BFCache Session Validation & Lifecycle Tests (`pagehide` / `pageshow` / async revalidation)
+  console.log('\n--- Part 3: Secure BFCache Session & Room-Access Revalidation ---');
+
+  const validGuestRes = await revalidateRoomSessionAndAccess({
+    roomId: 'room-bangla',
+    roomIs18Plus: false,
+    expectedUserId: 'guest-bf-1',
+    isGuest: true,
+    hasLocalAgeAccess: false,
+    getStoredGuestTokenFn: () => 'vx_gst_valid_1',
+    validateGuestTokenFn: async () => ({
+      valid: true,
+      status: 'valid',
+      session: { id: 'guest-bf-1', expiresAt: Date.now() + 60000, is18Verified: false, ageDeclarationAccepted: false },
+    }),
+  });
+  const revokedGuestRes = await revalidateRoomSessionAndAccess({
+    roomId: 'room-bangla',
+    roomIs18Plus: false,
+    expectedUserId: 'guest-bf-1',
+    isGuest: true,
+    hasLocalAgeAccess: false,
+    getStoredGuestTokenFn: () => 'vx_gst_revoked_1',
+    validateGuestTokenFn: async () => ({
+      valid: false,
+      status: 'invalid',
+      error: 'Guest session revoked.',
+    }),
+  });
+  const expiredGuestRes = await revalidateRoomSessionAndAccess({
+    roomId: 'room-bangla',
+    roomIs18Plus: false,
+    expectedUserId: 'guest-bf-1',
+    isGuest: true,
+    hasLocalAgeAccess: false,
+    getStoredGuestTokenFn: () => 'vx_gst_expired_1',
+    validateGuestTokenFn: async () => ({
+      valid: true,
+      status: 'valid',
+      session: { id: 'guest-bf-1', expiresAt: Date.now() - 1000 },
+    }),
+  });
+  const guestAdultDeniedRes = await revalidateRoomSessionAndAccess({
+    roomId: 'room-sex',
+    roomIs18Plus: true,
+    expectedUserId: 'guest-bf-1',
+    isGuest: true,
+    hasLocalAgeAccess: false,
+    getStoredGuestTokenFn: () => 'vx_gst_no18',
+    validateGuestTokenFn: async () => ({
+      valid: true,
+      status: 'valid',
+      session: { id: 'guest-bf-1', expiresAt: Date.now() + 60000, is18Verified: false, ageDeclarationAccepted: false },
+    }),
+  });
+  const nonCanonicalRoomRes = await revalidateRoomSessionAndAccess({
+    roomId: 'not-a-real-room',
+    roomIs18Plus: false,
+    expectedUserId: 'guest-bf-1',
+    isGuest: true,
+    hasLocalAgeAccess: false,
+  });
+  assert(
+    validGuestRes.status === 'valid' &&
+      revokedGuestRes.status === 'invalid' &&
+      expiredGuestRes.status === 'invalid' &&
+      guestAdultDeniedRes.status === 'denied' &&
+      nonCanonicalRoomRes.status === 'denied',
+    '3.1 revalidateRoomSessionAndAccess enforces valid guest, revoked guest, expired guest, and adult/canonical room access'
+  );
+
+  // Real guestSessionService.validateSession HTTP 401 vs 503 vs fetch network error
+  const origFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ valid: false }), { status: 401 })) as any;
+    const http401Guest = await guestSessionService.validateSession('vx_gst_test_401');
+    globalThis.fetch = (async () => new Response('Service Unavailable', { status: 503 })) as any;
+    const http503Guest = await guestSessionService.validateSession('vx_gst_test_503');
+    globalThis.fetch = (async () => {
+      throw new Error('Failed to fetch');
+    }) as any;
+    const netErrGuest = await guestSessionService.validateSession('vx_gst_test_net');
+    assert(
+      http401Guest.status === 'invalid' &&
+        http503Guest.status === 'network_error' &&
+        netErrGuest.status === 'network_error',
+      '3.2 guestSessionService.validateSession distinguishes HTTP 401 invalidation from HTTP 503/network errors'
+    );
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+
+  // Authenticated member Supabase revalidation: valid, revoked/401, mismatched user, and network error
+  const validMemberRes = await revalidateRoomSessionAndAccess({
+    roomId: 'room-bangla',
+    roomIs18Plus: false,
+    expectedUserId: 'member-101',
+    isGuest: false,
+    hasLocalAgeAccess: true,
+    isSupabaseConfiguredFn: () => true,
+    getSupabaseClientFn: () => ({
+      auth: {
+        getSession: async () => ({ data: { session: { user: { id: 'member-101' } } }, error: null }),
+        getUser: async () => ({ data: { user: { id: 'member-101' } }, error: null }),
+      },
+    }),
+  });
+  const expiredMemberRes = await revalidateRoomSessionAndAccess({
+    roomId: 'room-bangla',
+    roomIs18Plus: false,
+    expectedUserId: 'member-101',
+    isGuest: false,
+    hasLocalAgeAccess: true,
+    isSupabaseConfiguredFn: () => true,
+    getSupabaseClientFn: () => ({
+      auth: {
+        getSession: async () => ({ data: { session: { user: { id: 'member-101' } } }, error: null }),
+        getUser: async () => ({
+          data: { user: null },
+          error: { name: 'AuthApiError', message: 'JWT expired', status: 401 },
+        }),
+      },
+    }),
+  });
+  const netErrMemberRes = await revalidateRoomSessionAndAccess({
+    roomId: 'room-bangla',
+    roomIs18Plus: false,
+    expectedUserId: 'member-101',
+    isGuest: false,
+    hasLocalAgeAccess: true,
+    isSupabaseConfiguredFn: () => true,
+    getSupabaseClientFn: () => ({
+      auth: {
+        getSession: async () => ({ data: { session: { user: { id: 'member-101' } } }, error: null }),
+        getUser: async () => ({
+          data: { user: null },
+          error: { name: 'AuthRetryableFetchError', message: 'Failed to fetch' },
+        }),
+      },
+    }),
+  });
+  const deniedMemberAdultRes = await revalidateRoomSessionAndAccess({
+    roomId: 'room-sex',
+    roomIs18Plus: true,
+    expectedUserId: 'member-101',
+    isGuest: false,
+    hasLocalAgeAccess: false,
+    isSupabaseConfiguredFn: () => true,
+    getSupabaseClientFn: () => ({
+      auth: {
+        getSession: async () => ({ data: { session: { user: { id: 'member-101' } } }, error: null }),
+        getUser: async () => ({ data: { user: { id: 'member-101' } }, error: null }),
+      },
+    }),
+  });
+  assert(
+    validMemberRes.status === 'valid' &&
+      expiredMemberRes.status === 'invalid' &&
+      netErrMemberRes.status === 'network_error' &&
+      deniedMemberAdultRes.status === 'denied',
+    '3.3 Member BFCache revalidation distinguishes valid Supabase Auth sessions, 401 expiry, network failures, and 18+ denial'
+  );
   const fakeWindow = new MockWindowEventTarget();
   let bfValidSession = true;
   let bfStartCalls = 0;
   let bfCleanupCalls = 0;
   let bfHeartbeats = 0;
   let bfLeaves = 0;
+  let bfValidationCalls = 0;
+  let nextValidationResult: BFCacheValidationResult = { status: 'valid' };
+  const failedResults: string[] = [];
 
   const bfLifecycle = createRoomPresenceLifecycle({
     isStealth: false,
     canTrack: () => bfValidSession,
+    validateSessionAndAccess: async () => {
+      bfValidationCalls++;
+      return nextValidationResult;
+    },
+    onValidationFailed: (res) => {
+      failedResults.push(res.status);
+    },
     startRealtimePresence: () => {
       bfStartCalls++;
       return () => {
@@ -804,61 +1052,181 @@ async function runTests() {
       bfStartCalls === 1 &&
       bfHeartbeats === 1 &&
       fakeWindow.listenerCount('pagehide') === 1 &&
-      fakeWindow.listenerCount('pageshow') === 1,
-    '2.24 BFCache lifecycle starts presence cleanly and attaches pagehide + pageshow listeners'
+      fakeWindow.listenerCount('pageshow') === 1 &&
+      fakeWindow.listenerCount('online') === 1,
+    '3.4 BFCache lifecycle starts presence cleanly and attaches pagehide, pageshow, and online listeners'
   );
 
   // Dispatch non-persisted pageshow while active -> must NOT duplicate
-  fakeWindow.dispatch('pageshow', { persisted: false });
-  fakeWindow.dispatch('pageshow', { persisted: true });
+  await bfLifecycle.handlePageShow({ persisted: false });
+  await bfLifecycle.handlePageShow({ persisted: true });
   assert(
-    bfStartCalls === 1 && bfHeartbeats === 1,
-    '2.25 Duplicate or non-persisted pageshow while active does not duplicate subscriptions or heartbeats'
+    bfStartCalls === 1 && bfHeartbeats === 1 && bfValidationCalls === 0,
+    '3.5 Duplicate or non-persisted pageshow while active does not duplicate subscriptions or validations'
   );
 
   // Simulate BFCache freeze (pagehide) -> untracks & leaves
   fakeWindow.dispatch('pagehide');
   assert(
     !bfLifecycle.isActive() && bfCleanupCalls === 1 && bfLeaves === 1,
-    '2.26 pagehide stops presence cleanly and sends leave signal'
+    '3.6 pagehide stops presence cleanly and sends leave signal'
   );
 
-  // Simulate BFCache restore (pageshow { persisted: true }) -> restores cleanly once
-  fakeWindow.dispatch('pageshow', { persisted: true });
+  // Valid BFCache restore -> revalidates & restores once; repeated cycle works cleanly
+  await bfLifecycle.handlePageShow({ persisted: true });
   assert(
-    bfLifecycle.isActive() && bfStartCalls === 2 && bfHeartbeats === 2,
-    '2.27 pageshow (persisted: true) restores presence cleanly when session remains valid'
+    bfLifecycle.isActive() && bfStartCalls === 2 && bfHeartbeats === 2 && bfValidationCalls === 1,
+    '3.7 pageshow (persisted: true) revalidates and restores presence cleanly when session & access are valid'
   );
 
-  // Invalid session guard on restore after pagehide
   fakeWindow.dispatch('pagehide');
-  bfValidSession = false;
-  fakeWindow.dispatch('pageshow', { persisted: true });
+  await bfLifecycle.handlePageShow({ persisted: true });
   assert(
-    !bfLifecycle.isActive() && bfStartCalls === 2,
-    '2.28 pageshow refuses to restore presence when session validity check returns false'
+    bfLifecycle.isActive() && bfStartCalls === 3 && bfValidationCalls === 2,
+    '3.8 Repeated BFCache hide/restore cycles revalidate cleanly without duplicate subscriptions'
   );
 
-  // Dispose removes listeners and blocks future BFCache events
+  // Network error keeps session unverified & Presence inactive (NOT reported as invalid/logout), and recovers when online fires
+  fakeWindow.dispatch('pagehide');
+  nextValidationResult = { status: 'network_error', reason: 'Offline' };
+  await bfLifecycle.handlePageShow({ persisted: true });
+  assert(
+    !bfLifecycle.isActive() &&
+      bfStartCalls === 3 &&
+      failedResults[failedResults.length - 1] === 'network_error' &&
+      !failedResults.includes('invalid'),
+    '3.9 Network failure during BFCache validation keeps Presence inactive without falsely reporting logout'
+  );
+
+  nextValidationResult = { status: 'valid' };
+  fakeWindow.dispatch('online');
+  await new Promise((r) => setTimeout(r, 0));
+  assert(
+    bfLifecycle.isActive() && bfStartCalls === 4,
+    '3.10 Subsequent connectivity recovery (online event) safely completes deferred validation and restores Presence'
+  );
+
+  // Authoritative invalid session & adult denial keep Presence inactive
+  fakeWindow.dispatch('pagehide');
+  nextValidationResult = { status: 'invalid', reason: 'Revoked' };
+  await bfLifecycle.handlePageShow({ persisted: true });
+  assert(
+    !bfLifecycle.isActive() && bfStartCalls === 4 && failedResults[failedResults.length - 1] === 'invalid',
+    '3.11 Authoritative invalid/revoked session keeps Presence inactive'
+  );
+
+  nextValidationResult = { status: 'denied', reason: '18+ required' };
+  await bfLifecycle.handlePageShow({ persisted: true });
+  assert(
+    !bfLifecycle.isActive() && bfStartCalls === 4 && failedResults[failedResults.length - 1] === 'denied',
+    '3.12 Denied room access keeps Presence inactive'
+  );
+
+  // Concurrent duplicate pageshow + logout/unmount during in-flight async validation
+  let resolveAsyncValidation!: (val: BFCacheValidationResult) => void;
+  let asyncStarts = 0;
+  let asyncFails = 0;
+  let asyncValCalls = 0;
+  let canTrackLogoutTest = true;
+  const logoutRaceWindow = new MockWindowEventTarget();
+  const logoutRaceLifecycle = createRoomPresenceLifecycle({
+    isStealth: false,
+    canTrack: () => canTrackLogoutTest,
+    validateSessionAndAccess: () => {
+      asyncValCalls++;
+      return new Promise<BFCacheValidationResult>((resolve) => {
+        resolveAsyncValidation = resolve;
+      });
+    },
+    onValidationFailed: () => {
+      asyncFails++;
+    },
+    startRealtimePresence: () => {
+      asyncStarts++;
+      return () => {};
+    },
+    sendHeartbeat: () => {},
+    sendLeave: () => {},
+    heartbeatIntervalMs: 60000,
+    eventTarget: logoutRaceWindow,
+  });
+  logoutRaceWindow.dispatch('pagehide');
+  const p1 = logoutRaceLifecycle.handlePageShow({ persisted: true });
+  const p2 = logoutRaceLifecycle.handlePageShow({ persisted: true }); // concurrent duplicate pageshow!
+  assert(
+    logoutRaceLifecycle.isValidating() && asyncValCalls === 1,
+    '3.13 Concurrent duplicate pageshow events trigger only a single in-flight validation'
+  );
+  // Logout happens while validation is in flight
+  canTrackLogoutTest = false;
+  resolveAsyncValidation({ status: 'valid' });
+  await Promise.all([p1, p2]);
+  assert(
+    !logoutRaceLifecycle.isActive() && asyncStarts === 1 && asyncFails === 0,
+    '3.14 Logout during in-flight validation blocks stale async restoration'
+  );
+  logoutRaceLifecycle.dispose();
+
+  // Component unmount / room change during async validation
+  let resolveUnmountValidation!: (val: BFCacheValidationResult) => void;
+  let unmountStarts = 0;
+  let unmountFails = 0;
+  const unmountWindow = new MockWindowEventTarget();
+  const unmountLifecycle = createRoomPresenceLifecycle({
+    isStealth: false,
+    canTrack: () => true,
+    validateSessionAndAccess: () =>
+      new Promise<BFCacheValidationResult>((resolve) => {
+        resolveUnmountValidation = resolve;
+      }),
+    onValidationFailed: () => {
+      unmountFails++;
+    },
+    startRealtimePresence: () => {
+      unmountStarts++;
+      return () => {};
+    },
+    sendHeartbeat: () => {},
+    sendLeave: () => {},
+    heartbeatIntervalMs: 60000,
+    eventTarget: unmountWindow,
+  });
+  unmountWindow.dispatch('pagehide');
+  const unmountPending = unmountLifecycle.handlePageShow({ persisted: true });
+  unmountLifecycle.dispose(); // Simulates unmount or room change while async validation is pending
+  resolveUnmountValidation({ status: 'valid' });
+  await unmountPending;
+  assert(
+    !unmountLifecycle.isActive() && unmountStarts === 1 && unmountFails === 0,
+    '3.15 Component unmount or room change during pending validation ignores stale async result'
+  );
+
+  // Dispose removes all listeners and blocks future BFCache events
   bfLifecycle.dispose();
   bfValidSession = true;
-  fakeWindow.dispatch('pageshow', { persisted: true });
+  await bfLifecycle.handlePageShow({ persisted: true });
   assert(
     fakeWindow.listenerCount('pagehide') === 0 &&
       fakeWindow.listenerCount('pageshow') === 0 &&
+      fakeWindow.listenerCount('online') === 0 &&
       !bfLifecycle.isActive() &&
-      bfStartCalls === 2,
-    '2.29 dispose() detaches pagehide/pageshow listeners and blocks subsequent restoration'
+      bfStartCalls === 4,
+    '3.16 dispose() detaches all event listeners and blocks subsequent restoration'
   );
 
-  // Stealth BFCache test: never sends heartbeat or leave across pagehide/pageshow
+  // Stealth BFCache test: validates session & re-observes roster without ever firing heartbeat or leave calls
   const stealthWindow = new MockWindowEventTarget();
   let stealthHeartbeats = 0;
   let stealthLeaves = 0;
   let stealthSubs = 0;
+  let stealthValidations = 0;
   const stealthBf = createRoomPresenceLifecycle({
     isStealth: true,
     canTrack: () => true,
+    validateSessionAndAccess: async () => {
+      stealthValidations++;
+      return { status: 'valid' };
+    },
     startRealtimePresence: () => {
       stealthSubs++;
       return () => {};
@@ -873,14 +1241,40 @@ async function runTests() {
     eventTarget: stealthWindow,
   });
   stealthWindow.dispatch('pagehide');
-  stealthWindow.dispatch('pageshow', { persisted: true });
+  await stealthBf.handlePageShow({ persisted: true });
   assert(
-    stealthSubs === 2 && stealthHeartbeats === 0 && stealthLeaves === 0,
-    '2.30 Stealth BFCache restore re-observes roster without ever firing heartbeat or leave calls'
+    stealthValidations === 1 && stealthSubs === 2 && stealthHeartbeats === 0 && stealthLeaves === 0,
+    '3.17 Stealth BFCache restore validates session and re-observes roster without heartbeat or leave calls'
   );
   stealthBf.dispose();
 
-  // 2.14 SSR render check for /rooms including partial & connecting UI labels
+  // -------------------------------------------------------------------------
+  // PART 4: ACTIVE BADGE UI, DARK MODE, REDUCED MOTION & MOBILE SSR CHECKS
+  // -------------------------------------------------------------------------
+  console.log('\n--- Part 4: Active Badge UI Design, Accessibility & SSR Checks ---');
+
+  const roomDirectorySource = fs.readFileSync(path.resolve('src/pages/RoomDirectoryPage.tsx'), 'utf-8');
+  assert(
+    roomDirectorySource.includes('bg-emerald-50 text-emerald-800') &&
+      roomDirectorySource.includes('dark:bg-emerald-950/60 dark:text-emerald-200') &&
+      roomDirectorySource.includes('rounded-full') &&
+      roomDirectorySource.includes('font-bold tabular-nums') &&
+      roomDirectorySource.includes('motion-safe:animate-pulse motion-reduce:animate-none'),
+    '4.1 RoomDirectoryPage badge enforces bold pill typography, light/dark emerald contrast, and prefers-reduced-motion compliance'
+  );
+  assert(
+    roomDirectorySource.includes('flex flex-wrap items-center justify-between gap-2') &&
+      roomDirectorySource.includes('min-w-0 truncate') &&
+      roomDirectorySource.includes('whitespace-nowrap shrink-0'),
+    '4.2 RoomDirectoryPage card headers wrap cleanly without horizontal mobile overflow'
+  );
+  assert(
+    roomDirectorySource.includes('(Live Presence Partially Available)') &&
+      roomDirectorySource.includes('(আংশিক রিয়েল-টাইম উপস্থিতি সক্রিয়)'),
+    '4.3 RoomDirectoryPage preserves partial availability notice in EN and BN'
+  );
+
+  // SSR render check for /rooms
   const roomsHtml = renderToString(
     React.createElement(
       LanguageProvider,
@@ -896,12 +1290,13 @@ async function runTests() {
     roomsHtml.includes('Main Chatrooms') &&
       roomsHtml.includes('Regional Chatrooms') &&
       roomsHtml.includes('data-room-count-status=') &&
+      roomsHtml.includes('rounded-full') &&
       roomsHtml.includes('PublicChatPage') === false,
-    '2.31 RoomDirectoryPage renders Main & Regional room grids with count status badges'
+    '4.4 RoomDirectoryPage SSR renders Main & Regional room grids with rounded pill count badges'
   );
-  assert(typeof PublicChatPage === 'function', '2.32 PublicChatPage component exports cleanly');
+  assert(typeof PublicChatPage === 'function', '4.5 PublicChatPage component exports cleanly');
 
-  console.log(`\n🎉 ALL ${totalAssertions} STICKY HEADER & REAL-TIME PRESENCE ASSERTIONS PASSED!`);
+  console.log(`\n🎉 ALL ${totalAssertions} STICKY HEADER, BF-CACHE & REAL-TIME PRESENCE ASSERTIONS PASSED!`);
 }
 
 runTests().catch((err) => {
