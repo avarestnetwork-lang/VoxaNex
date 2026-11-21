@@ -23,6 +23,9 @@ import {
   isInternalHorizontalPlacement,
   getPlacementOrientation,
   getReservedDimensionTarget,
+  VERIFIED_AD_UNITS,
+  getVerifiedAdUnitSpec,
+  getVerifiedVerticalUnitForProvider,
 } from '../src/config/adsConfig';
 import { RouterProvider } from '../src/context/RouterContext';
 
@@ -313,8 +316,8 @@ async function runAdRenderingTests() {
     isLiveChatScreen: true,
   });
   assert(
-    juicyVerticalWide === JUICYADS_CONFIG.zones.banner300x262,
-    '8.10 JuicyAds vertical on wide rail (300px) selects 300x262 zone (1131765)'
+    juicyVerticalWide === null,
+    '8.10 JuicyAds vertical on wide rail (300px) rejects landscape 300x262 zone (1131765) and returns null'
   );
 
   // --- Task 9: Behavioral Creative Verification & DOM Integrity Assertions ---
@@ -1032,7 +1035,7 @@ async function runAdRenderingTests() {
     '12.3 Participant Bar (324px desktop lg/xl): Adsterra 320x50 fits cleanly without overflow'
   );
 
-  // 12.4 Right Vertical Sidebar uses banner300x250 only on >=300px rail (3xl 1600px+), rotates safely on 160px/240px rails
+  // 12.4 Vertical sidebars reject landscape 300x250, 300x262, unverified nativeWidget, and unverified generic zones
   assert(
     resolveEffectiveUnitId({
       provider: 'adsterra',
@@ -1040,31 +1043,31 @@ async function runAdRenderingTests() {
       slotId: 'public-chatroom-right',
       primaryAdUnitId: ADSTERRA_CONFIG.banner300x250,
       isVertical: true,
-      containerWidth: 160,
+      containerWidth: 300,
       isLiveChatScreen: true,
     }) === null &&
       resolveEffectiveUnitId({
         provider: 'adsterra',
-        position: 'right',
-        slotId: 'public-chatroom-right',
-        primaryAdUnitId: ADSTERRA_CONFIG.banner300x250,
-        isVertical: true,
-        containerWidth: 240,
-        isLiveChatScreen: true,
-      }) === null &&
-      resolveEffectiveUnitId({
-        provider: 'adsterra',
-        position: 'right',
-        slotId: 'public-chatroom-right',
-        primaryAdUnitId: ADSTERRA_CONFIG.banner300x250,
+        position: 'left',
+        slotId: 'public-chatroom-left',
+        primaryAdUnitId: ADSTERRA_CONFIG.nativeUnitId,
         isVertical: true,
         containerWidth: 300,
         isLiveChatScreen: true,
-      }) === ADSTERRA_CONFIG.banner300x250,
-    '12.4 Right vertical sidebar only serves Adsterra 300x250 on >= 300px rails and skips 160px/240px without clipping'
+      }) === null &&
+      resolveEffectiveUnitId({
+        provider: 'juicyads',
+        position: 'right',
+        slotId: 'public-chatroom-right',
+        primaryAdUnitId: JUICYADS_CONFIG.zones.banner300x262,
+        isVertical: true,
+        containerWidth: 300,
+        isLiveChatScreen: true,
+      }) === null,
+    '12.4 Vertical sidebars strictly reject landscape 300x250, 300x262, and unverified native unit IDs even on 300px rails'
   );
 
-  // 12.5 ExoClick serves 160px & 240px side rails without collision
+  // 12.5 Un-dimensioned generic zones (ExoClick 6087300, Monetag 12241585) do not inject into vertical sidebars
   assert(
     resolveEffectiveUnitId({
       provider: 'exoclick',
@@ -1073,8 +1076,16 @@ async function runAdRenderingTests() {
       isVertical: true,
       containerWidth: 160,
       isLiveChatScreen: true,
-    }) === EXOCLICK_CONFIG.zoneId,
-    '12.5 ExoClick supports 160px xl and 240px 2xl vertical side rails'
+    }) === null &&
+      resolveEffectiveUnitId({
+        provider: 'monetag',
+        position: 'left',
+        slotId: 'public-chatroom-left',
+        isVertical: true,
+        containerWidth: 300,
+        isLiveChatScreen: true,
+      }) === null,
+    '12.5 ExoClick and Monetag generic zones without verified vertical dimensions return null for vertical sidebars'
   );
 
   // --- Task 13: Monotonic Attempt Token, Queue Cancel & Duplicate Script Protection ---
@@ -1248,6 +1259,219 @@ async function runAdRenderingTests() {
       adPlacementBoxSource.includes('key="adsense-react-host"') &&
       adPlacementBoxSource.includes('key="imperative-ad-host"'),
     '15.4 AdPlacementBox strictly isolates imperative innerHTML/appendChild inside imperativeHostRef separate from React AdSense JSX'
+  );
+
+  // --- Task 16: Strict Vertical Sidebar Creative Enforcement ---
+  console.log('\n--- 16. Strict Vertical Sidebar Creative Enforcement & Orientation Guarantees ---');
+
+  const verticalValidationOpts = {
+    expectedOrientation: 'vertical' as const,
+    maxAllowedHeight: 540,
+    maxAllowedWidth: 300,
+  };
+  const horizontalValidationOpts = {
+    expectedOrientation: 'horizontal' as const,
+    maxAllowedHeight: 68,
+    maxAllowedWidth: 320,
+  };
+
+  // 16.1 Valid portrait creative (height > width, within 300x540 bounds) accepted for vertical placement
+  const validPortrait160x400 = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'img',
+        src: 'https://cdn.example.com/vertical-160x400.png',
+        offsetWidth: 160,
+        offsetHeight: 400,
+        naturalWidth: 160,
+        naturalHeight: 400,
+      }),
+    ],
+  });
+  assert(
+    validateCreative(validPortrait160x400, verticalValidationOpts).isConfirmedFilled === true &&
+      hasValidCreative(validPortrait160x400, verticalValidationOpts) === true,
+    '16.1 Portrait creative (160x400) with matching aspect ratio and within bounds is accepted in vertical placement'
+  );
+
+  // 16.2 Landscape creatives (300x250, 300x262) rejected in vertical placement
+  const landscape300x250 = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'img',
+        src: 'https://cdn.example.com/rect-300x250.png',
+        offsetWidth: 300,
+        offsetHeight: 250,
+        naturalWidth: 300,
+        naturalHeight: 250,
+      }),
+    ],
+  });
+  const landscape300x250Res = validateCreative(landscape300x250, verticalValidationOpts);
+  assert(
+    landscape300x250Res.status === 'unfilled' &&
+      landscape300x250Res.isConfirmedFilled === false &&
+      landscape300x250Res.reason.includes('Landscape creative'),
+    '16.2 Landscape 300x250 creative is strictly rejected inside vertical placement'
+  );
+
+  // 16.3 Square creatives (250x250) rejected in BOTH vertical AND horizontal placements
+  const square250x250 = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'img',
+        src: 'https://cdn.example.com/square-250x250.png',
+        offsetWidth: 250,
+        offsetHeight: 250,
+        naturalWidth: 250,
+        naturalHeight: 250,
+      }),
+    ],
+  });
+  const squareVerticalRes = validateCreative(square250x250, verticalValidationOpts);
+  const squareHorizontalRes = validateCreative(square250x250, {
+    expectedOrientation: 'horizontal',
+    maxAllowedHeight: 300,
+    maxAllowedWidth: 320,
+  });
+  assert(
+    squareVerticalRes.status === 'unfilled' &&
+      squareVerticalRes.reason.includes('Square creative') &&
+      squareHorizontalRes.status === 'unfilled' &&
+      squareHorizontalRes.reason.includes('Square creative'),
+    '16.3 Square creative (250x250) is strictly rejected in both vertical and horizontal placements'
+  );
+
+  // 16.4 Landscape creative (320x50) accepted for horizontal placement within bounds
+  assert(
+    hasValidCreative(valid320x50, horizontalValidationOpts) === true,
+    '16.4 Landscape 320x50 creative is accepted in horizontal placement within bounds'
+  );
+
+  // 16.5 Portrait creative rejected for horizontal placement
+  assert(
+    validateCreative(validPortrait160x400, horizontalValidationOpts).status === 'unfilled' &&
+      hasValidCreative(validPortrait160x400, horizontalValidationOpts) === false,
+    '16.5 Portrait 160x400 creative is rejected in horizontal placement'
+  );
+
+  // 16.6 Oversized height/width and distorted aspect ratio rejected in vertical placement
+  const oversizedPortrait160x600 = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'img',
+        src: 'https://cdn.example.com/skyscraper-160x600.png',
+        offsetWidth: 160,
+        offsetHeight: 600,
+        naturalWidth: 160,
+        naturalHeight: 600,
+      }),
+    ],
+  });
+  const stretchedLandscapeAsPortrait = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'img',
+        src: 'https://cdn.example.com/stretched-300x250.png',
+        offsetWidth: 160,
+        offsetHeight: 400,
+        naturalWidth: 300,
+        naturalHeight: 250,
+      }),
+    ],
+  });
+  const stretchedPortraitAspectMismatch = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'img',
+        src: 'https://cdn.example.com/distorted-160x200.png',
+        offsetWidth: 160,
+        offsetHeight: 500,
+        naturalWidth: 160,
+        naturalHeight: 200,
+      }),
+    ],
+  });
+  assert(
+    validateCreative(oversizedPortrait160x600, verticalValidationOpts).status === 'unfilled' &&
+      validateCreative(stretchedLandscapeAsPortrait, verticalValidationOpts).status === 'unfilled' &&
+      validateCreative(stretchedPortraitAspectMismatch, verticalValidationOpts).status === 'unfilled',
+    '16.6 Oversized (160x600 > 540px height), landscape-natural stretched portrait, and aspect-distorted creatives are rejected'
+  );
+
+  // 16.7 Unknown / zero dimensions CANNOT bypass orientation validation
+  const unknownInsVertical = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'ins',
+        attrs: { 'data-ad-status': 'filled' },
+        offsetWidth: 0,
+        offsetHeight: 0,
+      }),
+    ],
+  });
+  const unknownIframeVertical = createMockNode({
+    tag: 'div',
+    children: [
+      createMockNode({
+        tag: 'iframe',
+        src: 'https://a.magsrv.com/unknown-dims',
+        attrs: { 'data-ad-loaded': 'true' },
+        offsetWidth: 0,
+        offsetHeight: 0,
+      }),
+    ],
+  });
+  assert(
+    validateCreative(unknownInsVertical, verticalValidationOpts).status === 'unfilled' &&
+      validateCreative(unknownIframeVertical, verticalValidationOpts).status === 'unfilled' &&
+      validateCreative(unknownInsVertical, horizontalValidationOpts).status === 'unfilled',
+    '16.7 Unknown/zero dimensions cannot bypass vertical or horizontal orientation validation'
+  );
+
+  // 16.8 Provider format registry classifies 300x250 & 300x262 as horizontal and PublicChatPage sidebars do not pass them
+  const spec300x250 = getVerifiedAdUnitSpec(ADSTERRA_CONFIG.banner300x250, 'adsterra');
+  const spec300x262 = getVerifiedAdUnitSpec(JUICYADS_CONFIG.zones.banner300x262, 'juicyads');
+  assert(
+    spec300x250?.orientation === 'horizontal' &&
+      spec300x262?.orientation === 'horizontal' &&
+      VERIFIED_AD_UNITS.every((u) => (u.orientation === 'vertical' ? u.height > u.width : u.width >= u.height)) &&
+      getVerifiedVerticalUnitForProvider('adsterra', 300) === null &&
+      getVerifiedVerticalUnitForProvider('juicyads', 300) === null &&
+      !publicChatPageSource.includes('adUnitId={ADSTERRA_CONFIG.nativeUnitId}') &&
+      !publicChatPageSource.includes('adUnitId={ADSTERRA_CONFIG.banner300x250}'),
+    '16.8 Registry classifies 300x250 & 300x262 accurately as horizontal and PublicChatPage removes non-vertical unit IDs from sidebars'
+  );
+
+  // 16.9 & 16.10 Right and left reserved vertical containers remain intact and uncollapsed in SSR
+  const rightVerticalHtml = renderToString(
+    React.createElement(
+      RouterProvider,
+      null,
+      React.createElement(AdPlacementBox, {
+        slotId: 'public-chatroom-right',
+        position: 'right',
+        isVertical: true,
+        isLiveChatScreen: true,
+      })
+    )
+  );
+  assert(
+    leftVerticalHtml.includes('data-testid="ad-slot-public-chatroom-left"') &&
+      leftVerticalHtml.includes('data-ad-orientation="vertical"') &&
+      leftVerticalHtml.includes('min-h-[520px]') &&
+      rightVerticalHtml.includes('data-testid="ad-slot-public-chatroom-right"') &&
+      rightVerticalHtml.includes('data-ad-orientation="vertical"') &&
+      rightVerticalHtml.includes('min-h-[520px]') &&
+      statusInlineHtml.includes('data-ad-orientation="horizontal"'),
+    '16.9 Reserved vertical sidebar containers remain stable and uncollapsed when unfilled while internal placements stay horizontal'
   );
 
   console.log('\n================================================================');

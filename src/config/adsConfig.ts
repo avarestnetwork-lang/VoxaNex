@@ -148,6 +148,102 @@ export interface AdReservedDimensionTarget {
   allowPortraitCreative: boolean;
 }
 
+export interface VerifiedAdUnitSpec {
+  id: string;
+  provider: AdProvider;
+  width: number;
+  height: number;
+  orientation: AdPlacementOrientation;
+}
+
+/**
+ * Registry of configured provider units with verified fixed dimensions.
+ * - A unit is vertical ONLY when height > width.
+ * - 300x250 (Adsterra) and 300x262 (JuicyAds) have width > height, so they are strictly horizontal/landscape.
+ * - Dynamic widgets or un-dimensioned generic zones (Adsterra native, ExoClick 6087300, Monetag MultiTag)
+ *   have no statically verifiable vertical dimensions and are intentionally excluded from vertical verification.
+ */
+export const VERIFIED_AD_UNITS: readonly VerifiedAdUnitSpec[] = [
+  {
+    id: ADSTERRA_CONFIG.banner728x90,
+    provider: 'adsterra',
+    width: 728,
+    height: 90,
+    orientation: 'horizontal',
+  },
+  {
+    id: ADSTERRA_CONFIG.banner320x50,
+    provider: 'adsterra',
+    width: 320,
+    height: 50,
+    orientation: 'horizontal',
+  },
+  {
+    id: ADSTERRA_CONFIG.banner300x250,
+    provider: 'adsterra',
+    width: 300,
+    height: 250,
+    orientation: 'horizontal',
+  },
+  {
+    id: JUICYADS_CONFIG.zones.banner300x62,
+    provider: 'juicyads',
+    width: 300,
+    height: 62,
+    orientation: 'horizontal',
+  },
+  {
+    id: JUICYADS_CONFIG.zones.banner300x112,
+    provider: 'juicyads',
+    width: 300,
+    height: 112,
+    orientation: 'horizontal',
+  },
+  {
+    id: JUICYADS_CONFIG.zones.banner300x262,
+    provider: 'juicyads',
+    width: 300,
+    height: 262,
+    orientation: 'horizontal',
+  },
+  {
+    id: JUICYADS_CONFIG.zones.banner728x102,
+    provider: 'juicyads',
+    width: 728,
+    height: 102,
+    orientation: 'horizontal',
+  },
+];
+
+export const getVerifiedAdUnitSpec = (
+  unitId: string,
+  provider?: AdProvider
+): VerifiedAdUnitSpec | null => {
+  return (
+    VERIFIED_AD_UNITS.find(
+      (u) => u.id === unitId && (provider === undefined || u.provider === provider)
+    ) || null
+  );
+};
+
+export const getVerifiedVerticalUnitForProvider = (
+  provider: AdProvider,
+  maxContainerWidth: number | null,
+  maxContainerHeight: number = 540
+): VerifiedAdUnitSpec | null => {
+  const candidates = VERIFIED_AD_UNITS.filter(
+    (u) =>
+      u.provider === provider &&
+      u.orientation === 'vertical' &&
+      u.height > u.width &&
+      u.height <= maxContainerHeight &&
+      (maxContainerWidth === null || u.width <= maxContainerWidth)
+  );
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.width - a.width || b.height - a.height);
+  return candidates[0];
+};
+
 export const isInternalHorizontalPlacement = (slotId: string): boolean => {
   return slotId === 'public-chatroom-status-inline' || slotId === 'public-chatroom-message-inline';
 };
@@ -216,4 +312,5 @@ export const getReservedDimensionTarget = (
     allowPortraitCreative: false,
   };
 };
+
 

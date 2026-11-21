@@ -1236,7 +1236,6 @@ export const PublicChatPage: React.FC = () => {
         <div className="hidden xl:flex shrink-0 w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
           <AdPlacementBox
             slotId="public-chatroom-left"
-            adUnitId={ADSTERRA_CONFIG.nativeUnitId}
             isVertical={true}
             position="left"
           />
@@ -2138,7 +2137,6 @@ export const PublicChatPage: React.FC = () => {
       <div className="hidden xl:flex shrink-0 w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
         <AdPlacementBox
           slotId="public-chatroom-right"
-          adUnitId={ADSTERRA_CONFIG.banner300x250}
           isVertical={true}
           position="right"
         />

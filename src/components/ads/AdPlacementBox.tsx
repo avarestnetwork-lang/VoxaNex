@@ -10,6 +10,8 @@ import {
   getProviderRotation,
   getPlacementOrientation,
   getReservedDimensionTarget,
+  getVerifiedAdUnitSpec,
+  getVerifiedVerticalUnitForProvider,
   isAdSenseExcludedRoute,
   isInternalHorizontalPlacement,
 } from '../../config/adsConfig';
@@ -163,17 +165,62 @@ export function ensureHeadScriptOnce(
 function violatesCreativeBounds(
   width: number,
   height: number,
-  options?: CreativeValidationOptions
+  options?: CreativeValidationOptions,
+  intrinsic?: { width: number; height: number }
 ): string | null {
   if (!options) return null;
-  if (options.expectedOrientation === 'horizontal' && width > 0 && height > 0) {
-    if (height > width) {
-      return `Vertical/portrait creative (${width}x${height}) rejected in strictly horizontal placement`;
+
+  if (options.expectedOrientation === 'vertical') {
+    if (width <= 0 || height <= 0) {
+      return `Unknown or zero dimensions (${width}x${height}) rejected in strictly vertical placement`;
     }
-    if (options.maxAllowedHeight !== undefined && height > options.maxAllowedHeight) {
+    if (width >= height) {
+      const kind = width === height ? 'Square' : 'Landscape';
+      return `${kind} creative (${width}x${height}) rejected in strictly vertical placement`;
+    }
+    if (intrinsic) {
+      if (intrinsic.width <= 0 || intrinsic.height <= 0) {
+        return `Unknown intrinsic media dimensions (${intrinsic.width}x${intrinsic.height}) rejected in strictly vertical placement`;
+      }
+      if (intrinsic.width >= intrinsic.height) {
+        const kind = intrinsic.width === intrinsic.height ? 'Square' : 'Landscape';
+        return `${kind} intrinsic media (${intrinsic.width}x${intrinsic.height}) rejected in strictly vertical placement`;
+      }
+    }
+    if (options.maxAllowedHeight !== undefined && options.maxAllowedHeight > 0 && height > options.maxAllowedHeight + 4) {
+      return `Oversized creative height (${width}x${height} > max ${options.maxAllowedHeight}px) rejected in vertical placement`;
+    }
+  } else if (options.expectedOrientation === 'horizontal') {
+    if (width <= 0 || height <= 0) {
+      return `Unknown or zero dimensions (${width}x${height}) rejected in strictly horizontal placement`;
+    }
+    if (height >= width) {
+      const kind = width === height ? 'Square' : 'Vertical/portrait';
+      return `${kind} creative (${width}x${height}) rejected in strictly horizontal placement`;
+    }
+    if (intrinsic) {
+      if (intrinsic.width <= 0 || intrinsic.height <= 0) {
+        return `Unknown intrinsic media dimensions (${intrinsic.width}x${intrinsic.height}) rejected in strictly horizontal placement`;
+      }
+      if (intrinsic.height >= intrinsic.width) {
+        const kind = intrinsic.width === intrinsic.height ? 'Square' : 'Vertical/portrait';
+        return `${kind} intrinsic media (${intrinsic.width}x${intrinsic.height}) rejected in strictly horizontal placement`;
+      }
+    }
+    if (options.maxAllowedHeight !== undefined && options.maxAllowedHeight > 0 && height > options.maxAllowedHeight) {
       return `Oversized creative height (${width}x${height} > max ${options.maxAllowedHeight}px) rejected in horizontal placement`;
     }
   }
+
+  if (intrinsic && intrinsic.width > 0 && intrinsic.height > 0 && width > 0 && height > 0) {
+    const naturalRatio = intrinsic.width / intrinsic.height;
+    const renderedRatio = width / height;
+    const distortion = Math.max(naturalRatio / renderedRatio, renderedRatio / naturalRatio);
+    if (distortion > 1.15) {
+      return `Creative aspect ratio distortion (${intrinsic.width}x${intrinsic.height} rendered as ${width}x${height}) rejected`;
+    }
+  }
+
   if (options.maxAllowedWidth !== undefined && options.maxAllowedWidth > 0 && width > options.maxAllowedWidth + 4) {
     return `Oversized creative width (${width}x${height} > max ${options.maxAllowedWidth}px) rejected`;
   }
@@ -205,9 +252,9 @@ export const validateCreative = (
   if (insAdSense) {
     const statusAttr = insAdSense.getAttribute('data-ad-status');
     if (statusAttr === 'filled') {
-      const insW = (insAdSense as HTMLElement).offsetWidth || 0;
-      const insH = (insAdSense as HTMLElement).offsetHeight || 0;
-      const boundViolation = insW > 0 && insH > 0 ? violatesCreativeBounds(insW, insH, options) : null;
+      const insW = (insAdSense as HTMLElement).offsetWidth || (insAdSense as HTMLElement).clientWidth || 0;
+      const insH = (insAdSense as HTMLElement).offsetHeight || (insAdSense as HTMLElement).clientHeight || 0;
+      const boundViolation = violatesCreativeBounds(insW, insH, options);
       if (boundViolation) {
         return {
           status: 'unfilled',
@@ -264,7 +311,10 @@ export const validateCreative = (
     const hasRenderedDimensions = renderW > 0 && renderH > 0;
 
     if (isLoaded && hasRenderedDimensions) {
-      const boundViolation = violatesCreativeBounds(renderW, renderH, options);
+      const boundViolation = violatesCreativeBounds(renderW, renderH, options, {
+        width: img.naturalWidth || 0,
+        height: img.naturalHeight || 0,
+      });
       if (boundViolation) {
         rejectedOrientationReason = boundViolation;
         continue;
@@ -308,7 +358,10 @@ export const validateCreative = (
     const isReady = typeof video.readyState === 'number' ? video.readyState >= 2 : hasMediaDimensions;
 
     if (hasMediaDimensions && isReady) {
-      const boundViolation = violatesCreativeBounds(renderW, renderH, options);
+      const boundViolation = violatesCreativeBounds(renderW, renderH, options, {
+        width: video.videoWidth || 0,
+        height: video.videoHeight || 0,
+      });
       if (boundViolation) {
         rejectedOrientationReason = boundViolation;
         continue;
@@ -444,31 +497,52 @@ export const validateCreative = (
       if (body) {
         const innerImg = body.querySelector?.('img') as HTMLImageElement | null;
         const innerVideo = body.querySelector?.('video') as HTMLVideoElement | null;
-        const innerAdCreative = body.querySelector?.('[data-ad-status="filled"], [data-ad-creative="true"]');
+        const innerAdCreative = body.querySelector?.('[data-ad-status="filled"], [data-ad-creative="true"]') as HTMLElement | null;
         const innerLink = body.querySelector?.('a[href]') as HTMLAnchorElement | null;
 
+        const innerImgW = innerImg ? (innerImg.offsetWidth || innerImg.clientWidth || renderW) : 0;
+        const innerImgH = innerImg ? (innerImg.offsetHeight || innerImg.clientHeight || renderH) : 0;
         const hasValidInnerImg = Boolean(
           innerImg &&
           (innerImg.naturalWidth || 0) > 0 &&
           (innerImg.naturalHeight || 0) > 0 &&
           (innerImg.offsetWidth || 0) > 0 &&
           (innerImg.offsetHeight || 0) > 0 &&
-          innerImg.src && innerImg.src !== 'about:blank'
+          innerImg.src && innerImg.src !== 'about:blank' &&
+          !violatesCreativeBounds(innerImgW, innerImgH, options, {
+            width: innerImg.naturalWidth || 0,
+            height: innerImg.naturalHeight || 0,
+          })
         );
 
+        const innerVideoW = innerVideo ? (innerVideo.offsetWidth || innerVideo.clientWidth || renderW) : 0;
+        const innerVideoH = innerVideo ? (innerVideo.offsetHeight || innerVideo.clientHeight || renderH) : 0;
         const hasValidInnerVideo = Boolean(
           innerVideo &&
           (innerVideo.videoWidth || 0) > 0 &&
-          (typeof innerVideo.readyState === 'number' ? innerVideo.readyState >= 2 : true)
+          (typeof innerVideo.readyState === 'number' ? innerVideo.readyState >= 2 : true) &&
+          !violatesCreativeBounds(innerVideoW, innerVideoH, options, {
+            width: innerVideo.videoWidth || 0,
+            height: innerVideo.videoHeight || 0,
+          })
+        );
+
+        const hasValidInnerAdSignal = Boolean(
+          innerAdCreative &&
+          !violatesCreativeBounds(
+            innerAdCreative.offsetWidth || renderW,
+            innerAdCreative.offsetHeight || renderH,
+            options
+          )
         );
 
         const hasClickableBanner = Boolean(
           innerLink &&
           ((innerLink.offsetWidth || 0) > 0 && (innerLink.offsetHeight || 0) > 0) &&
-          (hasValidInnerImg || innerLink.querySelector?.('img, video, canvas'))
+          hasValidInnerImg
         );
 
-        if (hasValidInnerImg || hasValidInnerVideo || innerAdCreative || hasClickableBanner) {
+        if (hasValidInnerImg || hasValidInnerVideo || hasValidInnerAdSignal || hasClickableBanner) {
           return {
             status: 'confirmed_filled',
             isConfirmedFilled: true,
@@ -611,7 +685,29 @@ export function resolveEffectiveUnitId({
       slotId.includes('top') ||
       slotId.includes('bottom'));
 
-  // 4. Provider-Specific Unit Resolution
+  // 4. Strict Vertical Sidebar Enforcement
+  // Vertical sidebars must ONLY resolve provider formats with verified vertical (height > width) dimensions.
+  // Never substitute landscape (300x250, 300x262, 320x50, 728x90), square, native widget, or un-dimensioned zones.
+  if (isVerticalSlot) {
+    if (containerWidth !== null && containerWidth < 160) {
+      return null;
+    }
+    if (sanitizedPrimaryUnit) {
+      const verifiedSpec = getVerifiedAdUnitSpec(sanitizedPrimaryUnit, provider);
+      if (
+        verifiedSpec &&
+        verifiedSpec.orientation === 'vertical' &&
+        verifiedSpec.height > verifiedSpec.width &&
+        (containerWidth === null || verifiedSpec.width <= containerWidth)
+      ) {
+        return verifiedSpec.id;
+      }
+    }
+    const verifiedVertical = getVerifiedVerticalUnitForProvider(provider, containerWidth);
+    return verifiedVertical ? verifiedVertical.id : null;
+  }
+
+  // 5. Horizontal Provider-Specific Unit Resolution
   if (provider === 'adsterra') {
     if (isHorizontalBanner) {
       if (containerWidth !== null) {
@@ -636,31 +732,10 @@ export function resolveEffectiveUnitId({
       return sanitizedPrimaryUnit || ADSTERRA_CONFIG.banner728x90;
     }
 
-    if (isVerticalSlot) {
-      // Never render portrait/horizontal mismatch: banner300x250 requires >= 300px rail width
-      if (sanitizedPrimaryUnit === ADSTERRA_CONFIG.banner300x250 || slotId === 'public-chatroom-right') {
-        if (containerWidth !== null && containerWidth < 300) {
-          return null;
-        }
-        return ADSTERRA_CONFIG.banner300x250;
-      }
-      if (containerWidth !== null && containerWidth < 140) {
-        return null;
-      }
-      return sanitizedPrimaryUnit || ADSTERRA_CONFIG.nativeUnitId;
-    }
-
-    return sanitizedPrimaryUnit || null;
+    return null;
   }
 
   if (provider === 'juicyads') {
-    if (isVerticalSlot) {
-      if (containerWidth !== null && containerWidth < 300) {
-        return null;
-      }
-      return JUICYADS_CONFIG.zones.banner300x262; // 1131765
-    }
-
     // Horizontal JuicyAds
     if (containerWidth !== null && containerWidth < 300) {
       return null;
@@ -688,9 +763,6 @@ export function resolveEffectiveUnitId({
 
   if (provider === 'exoclick') {
     if (isHorizontalBanner && containerWidth !== null && containerWidth < 300) {
-      return null;
-    }
-    if (isVerticalSlot && containerWidth !== null && containerWidth < 140) {
       return null;
     }
     return EXOCLICK_CONFIG.zoneId; // 6087300
@@ -867,8 +939,11 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const validationOptions: CreativeValidationOptions = useMemo(
     () => ({
       expectedOrientation: reservedTarget.orientation,
-      maxAllowedHeight: reservedTarget.orientation === 'horizontal' ? reservedTarget.maxHeight : undefined,
-      maxAllowedWidth: containerWidth !== null ? Math.max(containerWidth, reservedTarget.minWidth) : reservedTarget.maxWidth,
+      maxAllowedHeight: reservedTarget.maxHeight,
+      maxAllowedWidth:
+        containerWidth !== null
+          ? Math.min(Math.max(containerWidth, reservedTarget.minWidth), reservedTarget.maxWidth)
+          : reservedTarget.maxWidth,
     }),
     [reservedTarget, containerWidth]
   );
