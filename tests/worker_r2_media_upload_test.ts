@@ -13,6 +13,8 @@
  */
 
 import worker from '../src/worker';
+import { databaseService } from '../src/services/databaseService';
+import { EXTERNAL_PROVIDERS_DOCUMENTATION } from '../src/server/mediaAndEmbedManager';
 import { validateMediaBinary, validateMediaFileMetadata, isSafeMediaUrl } from '../src/lib/mediaValidation';
 
 let testCount = 0;
@@ -35,8 +37,14 @@ function assert(condition: boolean, testName: string, detail?: string) {
 // ---------------------------------------------------------------------------
 class MockR2Bucket {
   store: Map<string, { body: Uint8Array; httpMetadata: any; customMetadata: any }> = new Map();
+  failNextPut = false;
 
   async put(key: string, value: any, options?: any) {
+    if (this.failNextPut) {
+      this.failNextPut = false;
+      throw new Error('Simulated R2 write failure');
+    }
+
     let bytes: Uint8Array;
     if (value instanceof Uint8Array) {
       bytes = value;
@@ -66,8 +74,11 @@ class MockR2Bucket {
     };
   }
 
-  async delete(key: string) {
-    this.store.delete(key);
+  async delete(key: string | string[]) {
+    const keys = Array.isArray(key) ? key : [key];
+    for (const k of keys) {
+      this.store.delete(k);
+    }
     return true;
   }
 }
@@ -131,6 +142,17 @@ const VALID_PNG_BYTES = new Uint8Array([
   0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
 ]);
 
+const VALID_JPEG_BYTES = new Uint8Array([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+  0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9
+]);
+
+const VALID_GIF_BYTES = new Uint8Array([
+  0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00,
+  0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00,
+  0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b
+]);
+
 const VALID_MP3_BYTES = new Uint8Array([
   0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20,
   0x54, 0x49, 0x54, 0x32, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00,
@@ -139,6 +161,7 @@ const VALID_MP3_BYTES = new Uint8Array([
 
 const EXECUTABLE_BYTES = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00]);
 const HTML_SCRIPT_BYTES = new TextEncoder().encode('<html><script>alert(1)</script></html>');
+const SVG_BYTES = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
 
 // ---------------------------------------------------------------------------
 // Test Runner
@@ -162,6 +185,9 @@ async function runSuite() {
     expires_at: string;
   }>();
   const mockConversations = new Map<string, Array<{ user_id: string | null; guest_id: string | null }>>();
+  const mockMediaUploads = new Map<string, any>();
+  const mockMessages: any[] = [];
+  let failNextMetadataInsert = false;
 
   // Populate initial state
   const memberAliceId = '11111111-1111-4111-8111-111111111111';
@@ -169,22 +195,28 @@ async function runSuite() {
   const guestCharlieId = '33333333-3333-4333-8333-333333333333';
   const guestDaveId = '44444444-4444-4444-8444-444444444444';
   const nonParticipantId = '99999999-9999-4999-8999-999999999999';
+  const rateLimitUserId = '88888888-8888-4888-8888-888888888888';
 
   mockMembers.set('jwt_alice', { id: memberAliceId, email: 'alice@chatlustora.com' });
   mockMembers.set('jwt_bob', { id: memberBobId, email: 'bob@chatlustora.com' });
   mockMembers.set('jwt_stranger', { id: nonParticipantId, email: 'stranger@chatlustora.com' });
+  mockMembers.set('jwt_ratelimit', { id: rateLimitUserId, email: 'ratelimit@chatlustora.com' });
 
   // Conversation with Alice (member) and Charlie (guest)
   const conversationId = '55555555-5555-4555-8555-555555555555';
-  mockConversations.set(conversationId, [
+  const deterministicAliceCharlieConvId = await databaseService.getDeterministicConvId(memberAliceId, guestCharlieId);
+  const aliceCharlieParticipants = [
     { user_id: memberAliceId, guest_id: null },
     { user_id: null, guest_id: guestCharlieId },
-  ]);
+  ];
+  mockConversations.set(conversationId, aliceCharlieParticipants);
+  mockConversations.set(deterministicAliceCharlieConvId, aliceCharlieParticipants);
 
   // Intercept globalThis.fetch for Supabase API calls and Backend Proxy
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
 
     // Backend proxy interceptor
     if (urlStr.startsWith(BACKEND_URL)) {
@@ -197,7 +229,11 @@ async function runSuite() {
 
     // Supabase member auth: /auth/v1/user
     if (urlStr.startsWith(`${SUPABASE_URL}/auth/v1/user`)) {
-      const authHeader = (init?.headers as any)?.['Authorization'] || (init?.headers as any)?.['authorization'] || '';
+      const headersObj: any = init?.headers || {};
+      const authHeader =
+        typeof headersObj.get === 'function'
+          ? headersObj.get('Authorization') || headersObj.get('authorization') || ''
+          : headersObj['Authorization'] || headersObj['authorization'] || '';
       const token = authHeader.replace('Bearer ', '').trim();
       const member = mockMembers.get(token);
       if (member) {
@@ -231,6 +267,115 @@ async function runSuite() {
       }
       const participants = mockConversations.get(convId) || [];
       return new Response(JSON.stringify(participants), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Supabase media_uploads metadata table
+    if (urlStr.includes('/rest/v1/media_uploads')) {
+      if (method === 'POST') {
+        if (failNextMetadataInsert) {
+          failNextMetadataInsert = false;
+          return new Response(JSON.stringify({ message: 'Simulated DB metadata insert error' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        const rawBody = typeof init?.body === 'string' ? init.body : '';
+        const payload = rawBody ? JSON.parse(rawBody) : {};
+        const row = {
+          ...payload,
+          created_at: new Date().toISOString(),
+        };
+        mockMediaUploads.set(row.id, row);
+        return new Response(JSON.stringify([row]), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      const url = new URL(urlStr);
+      const idParam = url.searchParams.get('id');
+      const targetId = idParam ? idParam.replace(/^eq\./, '') : '';
+      const existing = mockMediaUploads.get(targetId);
+      return new Response(JSON.stringify(existing ? [existing] : []), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Supabase profiles lookup
+    if (urlStr.includes('/rest/v1/profiles')) {
+      const url = new URL(urlStr);
+      const idParam = url.searchParams.get('id');
+      const targetId = idParam ? idParam.replace(/^eq\./, '') : '';
+      return new Response(
+        JSON.stringify([{ id: targetId, nickname: targetId === memberAliceId ? 'Alice' : 'Member', avatar_url: '👤' }]),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Supabase chat_rooms lookup
+    if (urlStr.includes('/rest/v1/chat_rooms')) {
+      const generalRoomUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      return new Response(JSON.stringify({ id: generalRoomUuid, slug: 'general' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Supabase conversations upsert
+    if (urlStr.includes('/rest/v1/conversations')) {
+      return new Response(JSON.stringify([{ id: deterministicAliceCharlieConvId }]), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Supabase upsert_message RPC
+    if (urlStr.includes('/rest/v1/rpc/upsert_message')) {
+      const rawBody = typeof init?.body === 'string' ? init.body : '';
+      const p = rawBody ? JSON.parse(rawBody) : {};
+      const row = {
+        id: p.p_id || crypto.randomUUID(),
+        room_id: p.p_room_id || null,
+        conversation_id: p.p_conversation_id || null,
+        sender_user_id: p.p_sender_user_id || null,
+        sender_guest_id: p.p_sender_guest_id || null,
+        sender_nickname: p.p_sender_nickname || 'User',
+        sender_avatar: p.p_sender_avatar || '👤',
+        content: p.p_content || '',
+        media_url: p.p_media_url || null,
+        media_type: p.p_media_type || null,
+        link_preview: p.p_link_preview || null,
+        client_nonce: p.p_client_nonce || null,
+        created_at: new Date().toISOString(),
+        is_system: false,
+        inserted: true,
+      };
+      mockMessages.push(row);
+      return new Response(JSON.stringify([row]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Supabase messages REST read
+    if (urlStr.includes('/rest/v1/messages')) {
+      const url = new URL(urlStr);
+      const roomParam = url.searchParams.get('room_id');
+      const convParam = url.searchParams.get('conversation_id');
+      let filtered = [...mockMessages];
+      if (roomParam) {
+        const rid = roomParam.replace(/^eq\./, '');
+        filtered = filtered.filter((m) => m.room_id === rid);
+      }
+      if (convParam) {
+        const cid = convParam.replace(/^eq\./, '');
+        filtered = filtered.filter((m) => m.conversation_id === cid);
+      }
+      return new Response(JSON.stringify(filtered), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -345,7 +490,33 @@ async function runSuite() {
       assert(res.status === 401, 'A4: Revoked guest session strictly rejected with HTTP 401');
     }
 
-    // A5: Valid member upload accepted (200)
+    // A4b: Expired guest session rejected with 401
+    {
+      const expiredGuestId = '77777777-7777-4777-8777-777777777778';
+      const expiredToken = await createSignedGuestToken(
+        { sid: expiredGuestId, nick: 'ExpiredGuest', exp: Date.now() - 60000 },
+        GUEST_SECRET
+      );
+      mockGuestSessions.set(expiredGuestId, {
+        id: expiredGuestId,
+        session_token_hash: await computeTokenHash(expiredToken),
+        is_revoked: false,
+        expires_at: new Date(Date.now() - 60000).toISOString(),
+      });
+
+      const req = new Request('https://chatlustora.com/api/media/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${expiredToken}`,
+          'Content-Type': 'multipart/form-data; boundary=----WebKitFormBoundaryXYZ',
+        },
+        body: 'dummy',
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 401, 'A4b: Expired guest session strictly rejected with HTTP 401');
+    }
+
+    // A5: Valid member PNG upload accepted (200) and metadata persisted
     let memberMediaId = '';
     {
       const formData = new FormData();
@@ -363,6 +534,11 @@ async function runSuite() {
       const data: any = await res.json();
       assert(data.success === true && data.media?.uploadId, 'A5.1: Valid upload response contains media asset and ID');
       memberMediaId = data.media.uploadId;
+      const persistedRow = mockMediaUploads.get(memberMediaId);
+      assert(
+        Boolean(persistedRow && persistedRow.uploader_id === memberAliceId && persistedRow.mime_type === 'image/png'),
+        'A5.2: Metadata persisted cleanly to Supabase public.media_uploads with verified uploader_id'
+      );
     }
 
     // A6: Valid guest upload accepted (200)
@@ -383,6 +559,42 @@ async function runSuite() {
       const data: any = await res.json();
       assert(data.success === true, 'A6.1: Guest media upload success');
       guestMediaId = data.media.uploadId;
+    }
+
+    // A7: Valid JPEG image upload accepted (200)
+    {
+      const formData = new FormData();
+      formData.append('file', new File([VALID_JPEG_BYTES], 'avatar.jpg', { type: 'image/jpeg' }));
+      formData.append('contextType', 'room');
+      formData.append('contextId', 'general');
+
+      const req = new Request('https://chatlustora.com/api/media/upload', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer jwt_bob' },
+        body: formData,
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 200, 'A7: Valid JPEG image upload accepted with HTTP 200');
+      const data: any = await res.json();
+      assert(data.media?.mediaType === 'image' && data.media?.mimeType === 'image/jpeg', 'A7.1: JPEG metadata correct');
+    }
+
+    // A8: Valid GIF upload accepted (200) and classified as mediaType 'gif'
+    {
+      const formData = new FormData();
+      formData.append('file', new File([VALID_GIF_BYTES], 'wave.gif', { type: 'image/gif' }));
+      formData.append('contextType', 'room');
+      formData.append('contextId', 'general');
+
+      const req = new Request('https://chatlustora.com/api/media/upload', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer jwt_bob' },
+        body: formData,
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 200, 'A8: Valid GIF upload accepted with HTTP 200');
+      const data: any = await res.json();
+      assert(data.media?.mediaType === 'gif' && data.media?.mimeType === 'image/gif', 'A8.1: GIF classified as image/gif');
     }
 
     // -------------------------------------------------------------------------
@@ -647,6 +859,47 @@ async function runSuite() {
       assert(res.status === 400, 'D3: Empty request body rejected with HTTP 400');
     }
 
+    // D3b: Empty 0-byte file in multipart FormData rejected with 400
+    {
+      const formData = new FormData();
+      formData.append('file', new File([new Uint8Array(0)], 'empty.png', { type: 'image/png' }));
+      formData.append('contextType', 'room');
+      formData.append('contextId', 'general');
+
+      const req = new Request('https://chatlustora.com/api/media/upload', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer jwt_bob' },
+        body: formData,
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'D3b: Empty 0-byte multipart file rejected with HTTP 400');
+    }
+
+    // D3c: Malformed multipart payload rejected cleanly with 400 (never 500)
+    {
+      const reqMissingBoundary = new Request('https://chatlustora.com/api/media/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer jwt_bob',
+          'Content-Type': 'multipart/form-data',
+        },
+        body: 'not-a-multipart-body',
+      });
+      const res1 = await worker.fetch(reqMissingBoundary, defaultEnv, {});
+      assert(res1.status === 400, 'D3c.1: Multipart missing boundary rejected with HTTP 400');
+
+      const reqCorruptBoundary = new Request('https://chatlustora.com/api/media/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer jwt_bob',
+          'Content-Type': 'multipart/form-data; boundary=----FakeBoundary123',
+        },
+        body: 'corrupted non-boundary content without terminating dashes',
+      });
+      const res2 = await worker.fetch(reqCorruptBoundary, defaultEnv, {});
+      assert(res2.status === 400, 'D3c.2: Corrupted multipart payload rejected cleanly with HTTP 400');
+    }
+
     // D4: Executable masquerading as image rejected with 400
     {
       const formData = new FormData();
@@ -661,6 +914,76 @@ async function runSuite() {
       });
       const res = await worker.fetch(req, defaultEnv, {});
       assert(res.status === 400, 'D4: Executable masquerading as PNG strictly rejected (400)');
+    }
+
+    // D4b: Disallowed MIME types & dangerous/double extensions (.exe, .svg, application/pdf) rejected with 400
+    {
+      const formPdf = new FormData();
+      formPdf.append('file', new File([new TextEncoder().encode('%PDF-1.4')], 'doc.pdf', { type: 'application/pdf' }));
+      const resPdf = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_bob' },
+          body: formPdf,
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(resPdf.status === 400, 'D4b.1: Disallowed MIME (application/pdf) rejected with HTTP 400');
+
+      const formSvg = new FormData();
+      formSvg.append('file', new File([SVG_BYTES], 'vector.svg', { type: 'image/svg+xml' }));
+      const resSvg = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_bob' },
+          body: formSvg,
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(resSvg.status === 400, 'D4b.2: SVG upload rejected with HTTP 400');
+
+      const formDoubleExt = new FormData();
+      formDoubleExt.append('file', new File([VALID_PNG_BYTES], 'payload.exe.png', { type: 'image/png' }));
+      const resDouble = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_bob' },
+          body: formDoubleExt,
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(resDouble.status === 400, 'D4b.3: Double extension executable (payload.exe.png) rejected with HTTP 400');
+    }
+
+    // D4c: MIME and extension mismatch rejected with 400
+    {
+      const formData = new FormData();
+      formData.append('file', new File([VALID_PNG_BYTES], 'mismatch.jpg', { type: 'image/png' }));
+      const req = new Request('https://chatlustora.com/api/media/upload', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer jwt_bob' },
+        body: formData,
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'D4c: MIME (image/png) vs extension (.jpg) mismatch rejected with HTTP 400');
+    }
+
+    // D4d: Oversized image (> 5 MB) rejected with 400
+    {
+      const oversizedPng = new Uint8Array(5 * 1024 * 1024 + 1024);
+      oversizedPng.set(VALID_PNG_BYTES, 0);
+      const formData = new FormData();
+      formData.append('file', new File([oversizedPng], 'huge.png', { type: 'image/png' }));
+      const req = new Request('https://chatlustora.com/api/media/upload', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer jwt_bob' },
+        body: formData,
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 400, 'D4d: Oversized image (>5 MB) rejected with HTTP 400');
     }
 
     // D5: HTML / script payload rejected with 400
@@ -679,7 +1002,7 @@ async function runSuite() {
       assert(res.status === 400, 'D5: HTML / script polyglot payload strictly rejected (400)');
     }
 
-    // D6: Missing CHAT_MEDIA R2 binding rejected with 503
+    // D6: Missing CHAT_MEDIA R2 binding rejected with 503 (upload & retrieval)
     {
       const formData = new FormData();
       formData.append('file', new File([VALID_PNG_BYTES], 'photo.png', { type: 'image/png' }));
@@ -693,10 +1016,21 @@ async function runSuite() {
         body: formData,
       });
       const res = await worker.fetch(req, envWithoutR2, {});
-      assert(res.status === 503, 'D6: Missing CHAT_MEDIA R2 binding rejected with HTTP 503');
+      assert(res.status === 503, 'D6: Missing CHAT_MEDIA R2 binding on upload rejected with HTTP 503');
+
+      const getRes = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${memberMediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        envWithoutR2,
+        {}
+      );
+      assert(getRes.status === 503, 'D6b: Missing CHAT_MEDIA R2 binding on retrieval rejected with HTTP 503');
     }
 
-    // D7: Valid MP3 audio clip accepted and assigned audio/mpeg MIME
+    // D7: Valid MP3 audio clip accepted and retrieved with audio/mpeg MIME
+    let mp3MediaId = '';
     {
       const formData = new FormData();
       formData.append('file', new File([VALID_MP3_BYTES], 'voice.mp3', { type: 'audio/mp3' }));
@@ -712,6 +1046,19 @@ async function runSuite() {
       assert(res.status === 200, 'D7: Valid MP3 audio clip upload accepted (200)');
       const data: any = await res.json();
       assert(data.media.mimeType === 'audio/mp3' || data.media.mimeType === 'audio/mpeg', 'D7.1: Canonical audio/mp3 MIME type assigned');
+      mp3MediaId = data.media.uploadId;
+
+      const getAudioRes = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${mp3MediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(getAudioRes.status === 200, 'D7.2: MP3 audio retrieval succeeds (200)');
+      assert(getAudioRes.headers.get('Content-Type') === 'audio/mpeg', 'D7.3: Audio served with audio/mpeg header');
+      assert(Boolean(getAudioRes.headers.get('Content-Disposition')?.includes('voice.mp3')), 'D7.4: Safe inline Content-Disposition header emitted');
     }
 
     // -------------------------------------------------------------------------
@@ -741,6 +1088,15 @@ async function runSuite() {
       assert(res.headers.get('X-Content-Type-Options') === 'nosniff', 'E2.2: X-Content-Type-Options is nosniff');
     }
 
+    // E2b: Unauthenticated GET /api/media/:id strictly rejected with 401
+    {
+      const req = new Request(`https://chatlustora.com/api/media/${memberMediaId}`, {
+        method: 'GET',
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 401, 'E2b: Unauthenticated media retrieval rejected with HTTP 401');
+    }
+
     // E3: Non-participant attempting to retrieve private media strictly denied (403)
     {
       const req = new Request(`https://chatlustora.com/api/media/${privateMediaId}`, {
@@ -761,6 +1117,17 @@ async function runSuite() {
       assert(res.status === 200, 'E4: Public media retrieval returns HTTP 200');
       assert(res.headers.get('Cache-Control') === 'public, max-age=86400', 'E4.1: Public cache header set');
       assert(res.headers.get('X-Content-Type-Options') === 'nosniff', 'E4.2: Nosniff set for public media');
+    }
+
+    // E4b: Adult room media served with private, no-store cache header
+    {
+      const req = new Request(`https://chatlustora.com/api/media/${adultMediaId}`, {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer jwt_alice' },
+      });
+      const res = await worker.fetch(req, defaultEnv, {});
+      assert(res.status === 200, 'E4b: Authorized adult room media retrieval returns HTTP 200');
+      assert(res.headers.get('Cache-Control') === 'private, no-store', 'E4b.1: Adult room media uses private, no-store');
     }
 
     // E5: Exact object key lookup verified
@@ -1037,6 +1404,24 @@ async function runSuite() {
       assert(res.headers.get('Cache-Control') === 'public, max-age=86400', 'E10.7a: Public cache header set for valid 1.2 room media');
     }
 
+    // E11: Flagged media (is_flagged: true) denied with 403 on retrieval
+    {
+      const flaggedRow = mockMediaUploads.get(guestMediaId);
+      assert(Boolean(flaggedRow), 'E11.0: Guest media record exists before moderation flag');
+      flaggedRow.is_flagged = true;
+      mockMediaUploads.set(guestMediaId, flaggedRow);
+
+      const res = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${guestMediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(res.status === 403, 'E11: Moderated/flagged media strictly blocked on retrieval (403)');
+    }
+
     // -------------------------------------------------------------------------
     // CATEGORY F: Routing Priority & Proxy Bypass
     // -------------------------------------------------------------------------
@@ -1144,15 +1529,218 @@ async function runSuite() {
       assert(res.status === 403, 'G3: Non-participant caller denied with HTTP 403 in validate endpoint');
     }
 
+    // -------------------------------------------------------------------------
+    // CATEGORY H: R2 Failure/Rollback, Chat/GIF/DM Regressions & Rate Limiting
+    // -------------------------------------------------------------------------
+    console.log('\n--- Category H: Failure Rollback, Chat/GIF/DM Regressions & Rate Limit ---');
+
+    // H1: Metadata DB persistence failure triggers R2 delete() rollback with ZERO orphans
+    {
+      const storeSizeBefore = mockR2.store.size;
+      const dbSizeBefore = mockMediaUploads.size;
+      failNextMetadataInsert = true;
+
+      const formData = new FormData();
+      formData.append('file', new File([VALID_PNG_BYTES], 'rollback_test.png', { type: 'image/png' }));
+      formData.append('contextType', 'room');
+      formData.append('contextId', 'general');
+
+      const res = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_bob' },
+          body: formData,
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(res.status === 502, 'H1: Metadata persistence failure returns HTTP 502');
+      assert(mockR2.store.size === storeSizeBefore, 'H1.1: R2 object rolled back (zero orphaned objects)');
+      assert(mockMediaUploads.size === dbSizeBefore, 'H1.2: No partial metadata row saved');
+    }
+
+    // H2: R2 put() write failure returns HTTP 502 and leaves no DB metadata
+    {
+      const dbSizeBefore = mockMediaUploads.size;
+      mockR2.failNextPut = true;
+
+      const formData = new FormData();
+      formData.append('file', new File([VALID_PNG_BYTES], 'r2_fail.png', { type: 'image/png' }));
+      formData.append('contextType', 'room');
+      formData.append('contextId', 'general');
+
+      const res = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_bob' },
+          body: formData,
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(res.status === 502, 'H2: R2 write failure returns HTTP 502');
+      assert(mockMediaUploads.size === dbSizeBefore, 'H2.1: No orphaned DB metadata row on R2 write failure');
+    }
+
+    const nativeChatEnv = {
+      ...defaultEnv,
+      BACKEND_URL: undefined,
+    };
+    const nonBlockingCtx = { waitUntil: (_p: Promise<any>) => {} };
+
+    // H3: Public chat text message regression + message history retrieval
+    {
+      const sendRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/chat/rooms/general/messages', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer jwt_alice',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            senderId: memberAliceId,
+            senderType: 'registered',
+            content: 'Hello from public room regression check',
+            clientNonce: 'nonce_text_1',
+          }),
+        }),
+        nativeChatEnv,
+        nonBlockingCtx
+      );
+      assert(sendRes.status === 200, 'H3: Public room text message send succeeds (200)');
+      const sendData: any = await sendRes.json();
+      assert(sendData.message?.content === 'Hello from public room regression check', 'H3.1: Public text content preserved');
+    }
+
+    // H4: External GIF message regression (must keep working without R2 upload)
+    {
+      const gifUrl = 'https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif';
+      const gifRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/chat/rooms/general/messages', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer jwt_alice',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            senderId: memberAliceId,
+            senderType: 'registered',
+            content: '',
+            mediaUrl: gifUrl,
+            mediaType: 'gif',
+            clientNonce: 'nonce_gif_1',
+          }),
+        }),
+        nativeChatEnv,
+        nonBlockingCtx
+      );
+      assert(gifRes.status === 200, 'H4: External GIF message in public chat succeeds (200)');
+
+      const histRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/chat/rooms/general/messages?limit=20', {
+          method: 'GET',
+        }),
+        nativeChatEnv,
+        nonBlockingCtx
+      );
+      assert(histRes.status === 200, 'H4.1: Public room history GET returns 200');
+      const histData: any = await histRes.json();
+      const gifMsg = (histData.messages || []).find((m: any) => m.clientNonce === 'nonce_gif_1');
+      assert(Boolean(gifMsg && gifMsg.mediaUrl === gifUrl && gifMsg.mediaType === 'gif'), 'H4.2: Public room history maps mediaUrl, mediaType, and clientNonce');
+    }
+
+    // H5: Private DM message with uploaded R2 media regression + unsafe URL rejection
+    {
+      const dmMediaUrl = `/api/media/${privateMediaId}`;
+      const dmRes = await worker.fetch(
+        new Request(`https://chatlustora.com/api/chat/conversations/${deterministicAliceCharlieConvId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer jwt_alice',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            senderId: memberAliceId,
+            senderType: 'registered',
+            recipientId: guestCharlieId,
+            content: 'Private R2 image attachment',
+            mediaUrl: dmMediaUrl,
+            mediaType: 'image',
+            clientNonce: 'nonce_dm_r2_1',
+          }),
+        }),
+        nativeChatEnv,
+        nonBlockingCtx
+      );
+      assert(dmRes.status === 200, 'H5: Private DM with uploaded R2 media succeeds (200)');
+      const dmData: any = await dmRes.json();
+      assert(dmData.message?.mediaUrl === dmMediaUrl, 'H5.1: Private DM returns /api/media/:id URL');
+
+      const badUrlRes = await worker.fetch(
+        new Request(`https://chatlustora.com/api/chat/conversations/${deterministicAliceCharlieConvId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer jwt_alice',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            senderId: memberAliceId,
+            senderType: 'registered',
+            recipientId: guestCharlieId,
+            content: 'XSS check',
+            mediaUrl: 'javascript:alert(1)',
+            mediaType: 'image',
+          }),
+        }),
+        nativeChatEnv,
+        nonBlockingCtx
+      );
+      assert(badUrlRes.status === 400, 'H5.2: Unsafe javascript: mediaUrl rejected in DM endpoint (400)');
+      assert(isSafeMediaUrl(dmMediaUrl) && !isSafeMediaUrl('javascript:alert(1)'), 'H5.3: Shared isSafeMediaUrl check aligns');
+    }
+
+    // H6: Provider docs check + Upload Rate Limit (HTTP 429 after 25 requests in window)
+    {
+      assert(
+        EXTERNAL_PROVIDERS_DOCUMENTATION.contentStorage.name.includes('Cloudflare R2'),
+        'H6.0: Provider docs reflect Cloudflare R2 storage'
+      );
+
+      let hit429 = false;
+      let retryAfterHeader = '';
+      for (let i = 0; i < 27; i++) {
+        const fd = new FormData();
+        fd.append('file', new File([VALID_PNG_BYTES], `rl_${i}.png`, { type: 'image/png' }));
+        const rlRes = await worker.fetch(
+          new Request('https://chatlustora.com/api/media/upload', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer jwt_ratelimit' },
+            body: fd,
+          }),
+          defaultEnv,
+          {}
+        );
+        if (rlRes.status === 429) {
+          hit429 = true;
+          retryAfterHeader = rlRes.headers.get('Retry-After') || '';
+          break;
+        }
+      }
+      assert(hit429, 'H6.1: Upload rate limit enforces HTTP 429 after 25 uploads within 60s');
+      assert(Number(retryAfterHeader) >= 1, 'H6.2: Rate limit response includes valid Retry-After header');
+    }
+
     console.log('\n================================================================');
-    console.log(` ALL ${passedCount} / ${testCount} PHASE 1.1 INTEGRATION TESTS PASSED SUCCESSFULLY!`);
+    console.log(` ALL ${passedCount} / ${testCount} R2 MEDIA & SECURITY TESTS PASSED SUCCESSFULLY!`);
     console.log('================================================================');
   } finally {
     globalThis.fetch = originalFetch;
   }
 }
 
-runSuite().catch((err) => {
-  console.error('Test suite failed:', err);
-  process.exit(1);
-});
+runSuite()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('Test suite failed:', err);
+    process.exit(1);
+  });

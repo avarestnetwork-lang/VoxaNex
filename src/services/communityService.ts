@@ -8,6 +8,7 @@ import {
   AdminPlatformSettings,
   SafetyReport,
 } from '../types';
+import { getAuthToken } from './messagingService';
 
 export interface ForumTopicsResponse {
   success: boolean;
@@ -422,7 +423,9 @@ export const communityService = {
     fileName: string;
     fileSize: number;
     mimeType: string;
-    uploaderId: string;
+    uploaderId?: string;
+    contextType?: 'room' | 'conversation';
+    contextId?: string;
   }): Promise<{
     valid: boolean;
     uploadId?: string;
@@ -433,9 +436,15 @@ export const communityService = {
     error?: string;
   }> {
     try {
+      const token = await getAuthToken({ allowPublicFallback: true });
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const res = await fetch('/api/media/upload/validate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(params),
       });
       return await res.json();
@@ -446,7 +455,15 @@ export const communityService = {
 
   async flagMedia(uploadId: string): Promise<boolean> {
     try {
-      const res = await fetch(`/api/media/${uploadId}/flag`, { method: 'POST' });
+      const token = await getAuthToken({ allowPublicFallback: true });
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch(`/api/media/${encodeURIComponent(uploadId)}/flag`, {
+        method: 'POST',
+        headers,
+      });
       return res.ok;
     } catch {
       return false;

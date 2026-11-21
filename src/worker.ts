@@ -2,7 +2,15 @@ import { databaseService } from './services/databaseService';
 import { getSupabaseClientFromEnv } from './lib/supabaseClient';
 import { ROOMS_CONFIG } from './config/voxanexConfig';
 import bcrypt from 'bcryptjs';
-import { validateMediaBinary, validateMediaFileMetadata, formatBytes } from './lib/mediaValidation';
+import {
+  validateMediaBinary,
+  validateMediaFileMetadata,
+  ALLOWED_MEDIA_SPECS,
+  normalizeMimeType,
+  sanitizeDisplayFileName,
+  isSafeMediaUrl,
+  isValidChatMediaType,
+} from './lib/mediaValidation';
 
 /**
  * ChatLustora Cloudflare Workers Edge Entrypoint
@@ -572,6 +580,87 @@ const roomTyping = new Map<string, Map<string, { nickname: string; expiresAt: nu
 const guestSessions = new Map<string, GuestSession>();
 const activeAccountDeletions = new Set<string>();
 const adminLoginAttempts = new Map<string, { attempts: number; windowStart: number }>();
+const uploadRateLimits = new Map<string, { count: number; windowStart: number }>();
+
+const UPLOAD_RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const UPLOAD_RATE_LIMIT_MAX_REQUESTS = 25;
+
+export interface R2ObjectPutOptions {
+  httpMetadata?: {
+    contentType?: string;
+    contentDisposition?: string;
+    cacheControl?: string;
+  };
+  customMetadata?: Record<string, string>;
+}
+
+export interface R2ObjectBody {
+  body: ReadableStream<Uint8Array> | Uint8Array | ArrayBuffer | string;
+  size?: number;
+  httpMetadata?: {
+    contentType?: string;
+    contentDisposition?: string;
+    cacheControl?: string;
+  };
+  customMetadata?: Record<string, string>;
+}
+
+export interface R2BucketBinding {
+  put(
+    key: string,
+    value: ReadableStream<Uint8Array> | ArrayBuffer | ArrayBufferView | string | Blob,
+    options?: R2ObjectPutOptions
+  ): Promise<unknown>;
+  get(key: string): Promise<R2ObjectBody | null>;
+  delete(keys: string | string[]): Promise<void | boolean>;
+}
+
+export interface WorkerEnv {
+  CHAT_MEDIA?: R2BucketBinding;
+  ASSETS?: { fetch: (request: Request) => Promise<Response> };
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
+  GUEST_SESSION_SECRET?: string;
+  BACKEND_URL?: string;
+  ENVIRONMENT?: string;
+  DEV?: boolean;
+  ADMIN_USER?: string;
+  ADMIN_PASS_HASH?: string;
+  JWT_SECRET?: string;
+  [key: string]: any;
+}
+
+function checkAndConsumeUploadRateLimit(rateKey: string): { allowed: boolean; retryAfterSec?: number } {
+  const now = Date.now();
+  if (uploadRateLimits.size > 500 || Math.random() < 0.05) {
+    for (const [k, entry] of uploadRateLimits.entries()) {
+      if (now - entry.windowStart >= UPLOAD_RATE_LIMIT_WINDOW_MS) {
+        uploadRateLimits.delete(k);
+      }
+    }
+  }
+
+  let record = uploadRateLimits.get(rateKey);
+  if (!record || now - record.windowStart >= UPLOAD_RATE_LIMIT_WINDOW_MS) {
+    uploadRateLimits.set(rateKey, { count: 1, windowStart: now });
+    return { allowed: true };
+  }
+
+  if (record.count >= UPLOAD_RATE_LIMIT_MAX_REQUESTS) {
+    const retryAfterSec = Math.max(1, Math.ceil((record.windowStart + UPLOAD_RATE_LIMIT_WINDOW_MS - now) / 1000));
+    return { allowed: false, retryAfterSec };
+  }
+
+  record.count += 1;
+  return { allowed: true };
+}
+
+function buildSafeContentDisposition(rawFileName: string, fallbackExt: string): string {
+  const cleaned = sanitizeDisplayFileName(rawFileName || `media.${fallbackExt}`)
+    .replace(/["\\;\r\n]/g, '_');
+  return `inline; filename="${cleaned}"`;
+}
 
 // Active SSE client streams per room & conversation (using ReadableStreamDefaultController for synchronous non-promise enqueuing)
 const roomStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
@@ -845,7 +934,7 @@ async function verifyConversationParticipant(
 }
 
 export default {
-  async fetch(request: Request, env: any, ctx: any): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv, ctx: any): Promise<Response> {
     const url = new URL(request.url);
     const supabaseClient = getSupabaseClientFromEnv(env);
     const guestSecretInfo = getGuestSecret(env);
@@ -1103,6 +1192,19 @@ export default {
         }, 503);
       }
 
+      const rateKey = `${authResult.isGuestCaller ? 'guest' : 'member'}:${authResult.verifiedUserId}`;
+      const rateCheck = checkAndConsumeUploadRateLimit(rateKey);
+      if (!rateCheck.allowed) {
+        return jsonResponse(
+          {
+            success: false,
+            error: 'Too many uploads. Please wait a moment before uploading again.',
+          },
+          429,
+          { 'Retry-After': String(rateCheck.retryAfterSec || 60) }
+        );
+      }
+
       const boundedResult = await readBoundedRequestBody(request, MAX_MEDIA_REQUEST_BODY_BYTES);
       if (!boundedResult.success) {
         return jsonResponse({ success: false, error: boundedResult.error }, boundedResult.status);
@@ -1110,49 +1212,82 @@ export default {
 
       try {
         let fileBytes: Uint8Array | null = null;
-        let fileName = 'attachment.bin';
+        let fileName = '';
         let fileSize = 0;
         let mimeType = 'application/octet-stream';
         let contextType = 'room';
         let contextId = 'general';
 
-        const contentTypeHeader = request.headers.get('content-type') || '';
+        const contentTypeHeader = (request.headers.get('content-type') || '').toLowerCase();
         if (contentTypeHeader.includes('multipart/form-data')) {
-          const syntheticResponse = new Response(boundedResult.bytes as unknown as BodyInit, {
-            headers: { 'Content-Type': contentTypeHeader },
-          });
-          const formData = await syntheticResponse.formData();
-          const fileField = formData.get('file');
-          if (fileField instanceof File) {
-            fileName = fileField.name;
-            fileSize = fileField.size;
-            mimeType = fileField.type || 'application/octet-stream';
-            const arrayBuf = await fileField.arrayBuffer();
-            fileBytes = new Uint8Array(arrayBuf);
+          if (!contentTypeHeader.includes('boundary=')) {
+            return jsonResponse({ success: false, error: 'Malformed multipart upload payload: missing boundary.' }, 400);
           }
-          contextType = (formData.get('contextType') as string) || 'room';
-          contextId = (formData.get('contextId') as string) || 'general';
+          let formData: FormData;
+          try {
+            const syntheticResponse = new Response(boundedResult.bytes as unknown as BodyInit, {
+              headers: { 'Content-Type': request.headers.get('content-type') || contentTypeHeader },
+            });
+            formData = await syntheticResponse.formData();
+          } catch {
+            return jsonResponse({ success: false, error: 'Malformed multipart form-data upload payload.' }, 400);
+          }
+
+          const fileField = formData.get('file');
+          if (!fileField || typeof fileField === 'string' || typeof (fileField as any).arrayBuffer !== 'function') {
+            return jsonResponse({ success: false, error: 'No valid file provided in multipart form data.' }, 400);
+          }
+
+          const uploadedFile = fileField as File;
+          fileName = uploadedFile.name || '';
+          fileSize = uploadedFile.size;
+          mimeType = uploadedFile.type || 'application/octet-stream';
+          const arrayBuf = await uploadedFile.arrayBuffer();
+          fileBytes = new Uint8Array(arrayBuf);
+
+          const rawContextType = formData.get('contextType');
+          const rawContextId = formData.get('contextId');
+          contextType = typeof rawContextType === 'string' ? rawContextType.trim() : 'room';
+          if (rawContextId === null) {
+            contextId = 'general';
+          } else if (typeof rawContextId === 'string') {
+            contextId = rawContextId.trim();
+          } else {
+            contextId = '';
+          }
         } else if (contentTypeHeader.includes('application/json')) {
-          const text = new TextDecoder().decode(boundedResult.bytes);
-          const body = JSON.parse(text);
-          fileName = body.fileName || 'attachment.bin';
-          mimeType = body.mimeType || 'application/octet-stream';
-          contextType = body.contextType || 'room';
-          contextId = body.contextId || 'general';
-          if (body.base64Data) {
-            const binStr = atob(body.base64Data);
-            fileBytes = new Uint8Array(binStr.length);
-            for (let i = 0; i < binStr.length; i++) {
-              fileBytes[i] = binStr.charCodeAt(i);
+          let body: any;
+          try {
+            const text = new TextDecoder().decode(boundedResult.bytes);
+            body = JSON.parse(text);
+          } catch {
+            return jsonResponse({ success: false, error: 'Malformed JSON upload payload.' }, 400);
+          }
+
+          fileName = typeof body?.fileName === 'string' ? body.fileName : '';
+          mimeType = typeof body?.mimeType === 'string' ? body.mimeType : 'application/octet-stream';
+          contextType = typeof body?.contextType === 'string' ? body.contextType.trim() : 'room';
+          contextId = body?.contextId === undefined ? 'general' : typeof body.contextId === 'string' ? body.contextId.trim() : '';
+
+          if (typeof body?.base64Data === 'string' && body.base64Data.length > 0) {
+            try {
+              const binStr = atob(body.base64Data);
+              fileBytes = new Uint8Array(binStr.length);
+              for (let i = 0; i < binStr.length; i++) {
+                fileBytes[i] = binStr.charCodeAt(i);
+              }
+              fileSize = fileBytes.byteLength;
+            } catch {
+              return jsonResponse({ success: false, error: 'Malformed base64 media payload.' }, 400);
             }
-            fileSize = fileBytes.byteLength;
           }
         } else {
           fileBytes = boundedResult.bytes;
-          fileName = url.searchParams.get('fileName') || request.headers.get('x-file-name') || 'attachment.bin';
+          fileName = url.searchParams.get('fileName') || request.headers.get('x-file-name') || '';
           mimeType = contentTypeHeader || 'application/octet-stream';
-          contextType = url.searchParams.get('contextType') || request.headers.get('x-context-type') || 'room';
-          contextId = url.searchParams.get('contextId') || request.headers.get('x-context-id') || 'general';
+          contextType = (url.searchParams.get('contextType') || request.headers.get('x-context-type') || 'room').trim();
+          const rawCtxId = url.searchParams.get('contextId') ?? request.headers.get('x-context-id');
+          contextId = rawCtxId === null ? 'general' : rawCtxId.trim();
         }
 
         if (contextType !== 'room' && contextType !== 'conversation') {
@@ -1197,8 +1332,19 @@ export default {
           return jsonResponse({ success: false, error: binValidation.error || 'Binary validation failed.' }, 400);
         }
 
-        const uploadId = `med_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+        // Require server-side Supabase credentials in production to store media metadata
+        if ((!baseSupabaseUrl || !supabaseServiceKey) && !guestSecretInfo.isDevFallback) {
+          return jsonResponse({
+            success: false,
+            error: 'Service Unavailable: Database bindings missing for media metadata persistence.',
+          }, 503);
+        }
+
+        const uploadId = `med_${crypto.randomUUID()}`;
         const objectKey = `media/objects/${uploadId}`;
+        const sanitizedFileName = binValidation.sanitizedOriginalName || `${uploadId}.${binValidation.extension}`;
+        const sanitizedUrl = `/api/media/${uploadId}`;
+        const contentDisposition = buildSafeContentDisposition(sanitizedFileName, binValidation.extension);
 
         const customMetadata = {
           mediaId: uploadId,
@@ -1208,26 +1354,83 @@ export default {
           ownerId: authResult.verifiedUserId,
           canonicalMime: binValidation.canonicalMime,
           extension: binValidation.extension,
-          originalFileName: binValidation.sanitizedOriginalName || fileName,
+          originalFileName: sanitizedFileName,
           fileSize: String(fileBytes.byteLength),
           uploadedAt: new Date().toISOString(),
           metadataVersion: '1.2',
         };
 
-        await env.CHAT_MEDIA.put(objectKey, fileBytes, {
-          httpMetadata: {
-            contentType: binValidation.canonicalMime,
-          },
-          customMetadata,
-        });
+        try {
+          await env.CHAT_MEDIA.put(objectKey, fileBytes, {
+            httpMetadata: {
+              contentType: binValidation.canonicalMime,
+              contentDisposition,
+            },
+            customMetadata,
+          });
+        } catch (r2Err: any) {
+          console.error('[Worker] R2 put failed:', r2Err);
+          return jsonResponse({
+            success: false,
+            error: 'Storage write failure while saving media to Cloudflare R2.',
+          }, 502);
+        }
 
-        const sanitizedUrl = `/api/media/${uploadId}`;
+        // Persist metadata in Supabase public.media_uploads; rollback R2 object on any failure
+        if (baseSupabaseUrl && supabaseServiceKey) {
+          let metadataPersisted = false;
+          try {
+            const dbRes = await fetch(`${baseSupabaseUrl}/rest/v1/media_uploads`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'apikey': supabaseServiceKey,
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+                'Prefer': 'return=representation',
+              },
+              body: JSON.stringify({
+                id: uploadId,
+                uploader_id: authResult.verifiedUserId,
+                file_name: sanitizedFileName,
+                file_size_bytes: fileBytes.byteLength,
+                mime_type: binValidation.canonicalMime,
+                media_url: sanitizedUrl,
+                is_flagged: false,
+              }),
+            });
+
+            if (dbRes.ok) {
+              const insertedRows: any = await dbRes.json().catch(() => null);
+              if (Array.isArray(insertedRows) && insertedRows.length === 1 && insertedRows[0]?.id === uploadId) {
+                metadataPersisted = true;
+              }
+            } else {
+              const errText = await dbRes.text().catch(() => '');
+              console.error(`[Worker] Supabase media_uploads insert failed HTTP ${dbRes.status}:`, errText);
+            }
+          } catch (dbErr) {
+            console.error('[Worker] Supabase media_uploads insert exception:', dbErr);
+          }
+
+          if (!metadataPersisted) {
+            try {
+              await env.CHAT_MEDIA.delete(objectKey);
+            } catch (cleanupErr) {
+              console.error('[Worker] Failed to clean up R2 object after metadata failure:', objectKey, cleanupErr);
+            }
+            return jsonResponse({
+              success: false,
+              error: 'Failed to persist media metadata; uploaded object was cleaned up.',
+            }, 502);
+          }
+        }
+
         const mediaAsset = {
           uploadId,
           url: sanitizedUrl,
           mediaType: binValidation.chatMediaType,
           mimeType: binValidation.canonicalMime,
-          fileName: `${uploadId}.${binValidation.extension}`,
+          fileName: sanitizedFileName,
           fileSize: fileBytes.byteLength,
         };
 
@@ -1237,15 +1440,14 @@ export default {
         }, 200);
       } catch (err: any) {
         console.error('[Worker] R2 Media Upload Error:', err);
-        return jsonResponse({ success: false, error: err?.message || 'Internal error uploading media to R2 storage.' }, 500);
+        return jsonResponse({ success: false, error: 'Internal error processing media upload.' }, 500);
       }
     }
 
     // GET /api/media/:id
-    const mediaGetMatch = url.pathname.match(/^\/api\/media\/([a-zA-Z0-9._-]+)$/);
+    const mediaGetMatch = url.pathname.match(/^\/api\/media\/([^/]+)$/);
     if (mediaGetMatch && request.method === 'GET') {
-      const mediaIdOrFileName = mediaGetMatch[1];
-      const cleanId = mediaIdOrFileName.split('.')[0];
+      const mediaIdOrFileName = safeDecodeURIComponent(mediaGetMatch[1]);
 
       if (!env?.CHAT_MEDIA) {
         return jsonResponse({ success: false, error: 'R2 storage binding CHAT_MEDIA is not configured.' }, 503);
@@ -1260,6 +1462,20 @@ export default {
       );
       if ('errorResponse' in authResult) {
         return authResult.errorResponse;
+      }
+
+      if (
+        !mediaIdOrFileName ||
+        mediaIdOrFileName.includes('..') ||
+        mediaIdOrFileName.startsWith('.') ||
+        !/^[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9]+)?$/.test(mediaIdOrFileName)
+      ) {
+        return jsonResponse({ success: false, error: 'Invalid media asset identifier.' }, 400);
+      }
+
+      const cleanId = mediaIdOrFileName.split('.')[0];
+      if (!cleanId || !/^[a-zA-Z0-9_-]{3,128}$/.test(cleanId)) {
+        return jsonResponse({ success: false, error: 'Invalid media asset identifier.' }, 400);
       }
 
       try {
@@ -1303,6 +1519,7 @@ export default {
         }
 
         // 4. Context-specific fail-closed authorization checks
+        const isAdultContext = contextType === 'room' && isAdultRoom(contextId);
         if (contextType === 'conversation') {
           // Require valid conversation UUID
           if (!UUID_REGEX.test(contextId)) {
@@ -1320,9 +1537,8 @@ export default {
           if (!participantCheck.authorized) {
             return participantCheck.errorResponse!;
           }
-        } else if (contextType === 'room') {
-          // Require non-empty room identifier and enforce adult room gate
-          if (isAdultRoom(contextId) && !isAuthorizedForAdultRoom(authResult)) {
+        } else if (isAdultContext) {
+          if (!isAuthorizedForAdultRoom(authResult)) {
             return jsonResponse({
               success: false,
               error: 'Age verification required to view media from adult rooms.',
@@ -1330,19 +1546,62 @@ export default {
           }
         }
 
-        // 5. Safe response construction (executed ONLY after all metadata and authorization checks pass)
-        const contentType = matchedObj.httpMetadata?.contentType || meta.canonicalMime || 'application/octet-stream';
+        // 5. Enforce moderation flag check if Supabase metadata record exists
+        if (baseSupabaseUrl && supabaseServiceKey) {
+          try {
+            const flagCheckUrl = `${baseSupabaseUrl}/rest/v1/media_uploads?id=eq.${encodeURIComponent(cleanId)}&select=id,is_flagged`;
+            const flagRes = await fetch(flagCheckUrl, {
+              headers: {
+                'apikey': supabaseServiceKey,
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+            });
+            if (flagRes.ok) {
+              const flagRows: any = await flagRes.json().catch(() => null);
+              if (Array.isArray(flagRows) && flagRows.length > 0 && flagRows[0]?.is_flagged === true) {
+                return jsonResponse({
+                  success: false,
+                  error: 'Forbidden: This media asset is unavailable due to moderation.',
+                }, 403);
+              }
+            }
+          } catch {
+            // Non-fatal fallback only when DB record is unavailable
+          }
+        }
+
+        // 6. Validate stored Content-Type against allowlist and emit safe security headers
+        const rawStoredContentType = matchedObj.httpMetadata?.contentType || meta.canonicalMime || '';
+        const normalizedStoredMime = normalizeMimeType(rawStoredContentType);
+        const allowedSpec = normalizedStoredMime ? ALLOWED_MEDIA_SPECS[normalizedStoredMime] : undefined;
+        if (!allowedSpec) {
+          return jsonResponse({
+            success: false,
+            error: 'Unsupported or unsafe media content type.',
+          }, 400);
+        }
+
+        const safeContentType =
+          allowedSpec.canonicalMime === 'audio/mp3' ? 'audio/mpeg' : allowedSpec.canonicalMime;
+        const safeDisposition = buildSafeContentDisposition(
+          typeof meta.originalFileName === 'string' && meta.originalFileName.trim()
+            ? meta.originalFileName
+            : `${cleanId}.${allowedSpec.allowedExts[0]}`,
+          allowedSpec.allowedExts[0]
+        );
+
         const headers = new Headers(CORS_HEADERS);
-        headers.set('Content-Type', contentType);
+        headers.set('Content-Type', safeContentType);
+        headers.set('Content-Disposition', safeDisposition);
         headers.set('X-Content-Type-Options', 'nosniff');
 
-        if (contextType === 'conversation') {
+        if (contextType === 'conversation' || isAdultContext) {
           headers.set('Cache-Control', 'private, no-store');
-        } else if (contextType === 'room') {
+        } else {
           headers.set('Cache-Control', 'public, max-age=86400');
         }
 
-        return new Response(matchedObj.body, {
+        return new Response(matchedObj.body as BodyInit, {
           status: 200,
           headers,
         });
@@ -1603,6 +1862,10 @@ export default {
                 senderNickname: m.sender_nickname,
                 senderAvatar: m.sender_avatar,
                 content: m.content,
+                mediaUrl: m.media_url,
+                mediaType: m.media_type,
+                linkPreview: m.link_preview,
+                clientNonce: m.client_nonce,
                 timestamp: m.created_at,
                 isSystem: m.is_system || false,
                 status: 'delivered',
@@ -1681,6 +1944,14 @@ export default {
 
           if (!content && !mediaUrl) {
             return jsonResponse({ success: false, error: 'Message content or media is required.' }, 400);
+          }
+
+          if (mediaUrl && !isSafeMediaUrl(mediaUrl)) {
+            return jsonResponse({ success: false, error: 'Invalid or unsafe media URL.' }, 400);
+          }
+
+          if (mediaType && !isValidChatMediaType(mediaType)) {
+            return jsonResponse({ success: false, error: 'Invalid mediaType.' }, 400);
           }
 
           // 4. Derive Identity from Verified Source (Zero-trust fallback)
@@ -2868,6 +3139,14 @@ async function authorizeConversationAccess(
 
           if (!content && !mediaUrl) {
             return jsonResponse({ success: false, error: 'Message content or media is required.' }, 400);
+          }
+
+          if (mediaUrl && !isSafeMediaUrl(mediaUrl)) {
+            return jsonResponse({ success: false, error: 'Invalid or unsafe media URL.' }, 400);
+          }
+
+          if (mediaType && !isValidChatMediaType(mediaType)) {
+            return jsonResponse({ success: false, error: 'Invalid mediaType.' }, 400);
           }
 
           // 4. Authorize conversation access strictly against database

@@ -237,11 +237,11 @@ export const EXTERNAL_PROVIDERS_DOCUMENTATION = {
       'Zero-knowledge media relay. Audio and video streams are end-to-end encrypted; server does not decode payloads.',
   },
   contentStorage: {
-    name: 'Ephemeral Local Buffer / Supabase Storage S3-Compatible',
-    credentialType: 'Signed Upload URL with MIME Enforcement',
-    cost: 'Configured per Supabase plan',
-    quota: '5MB images / 10MB audio clips',
+    name: 'Cloudflare R2 Private Media Storage (Bucket: chatlustora-media)',
+    credentialType: 'Cloudflare Worker Binding (CHAT_MEDIA) + Authenticated Worker Media Proxy (/api/media/*) + Supabase public.media_uploads metadata',
+    cost: 'Cloudflare R2 Storage & Class A/B Operations (Zero Egress via Worker)',
+    quota: '5MB images (JPEG, PNG, WebP, GIF) / 10MB audio clips (WebM, OGG, MP3, WAV)',
     termsSummary:
-      'Strict executable blacklist (.exe, .sh, .bat, .svg). Inactive guest files purged automatically after 24 hours.',
+      'Private bucket with public access disabled. Worker enforces session authentication, magic-byte binary verification, strict MIME allowlist, executable blacklist (.exe, .sh, .bat, .svg), per-context access control (DM participants / verified adult rooms), and moderation flag checks.',
   },
 };
