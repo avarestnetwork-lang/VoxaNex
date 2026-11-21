@@ -20,7 +20,7 @@ export const MonetagScript: React.FC = () => {
     return () => {
       const existing = document.getElementById(scriptId);
       if (existing) {
-        document.head.removeChild(existing);
+        existing.remove();
       }
     };
   }, []);

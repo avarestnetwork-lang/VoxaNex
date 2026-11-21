@@ -136,3 +136,84 @@ export const getAdsterraUnitForWidth = (width: number, position: string): string
   
   return null;
 };
+
+export type AdPlacementOrientation = 'horizontal' | 'vertical';
+
+export interface AdReservedDimensionTarget {
+  orientation: AdPlacementOrientation;
+  maxWidth: number;
+  maxHeight: number;
+  minWidth: number;
+  minHeight: number;
+  allowPortraitCreative: boolean;
+}
+
+export const isInternalHorizontalPlacement = (slotId: string): boolean => {
+  return slotId === 'public-chatroom-status-inline' || slotId === 'public-chatroom-message-inline';
+};
+
+export const getPlacementOrientation = (
+  slotId: string,
+  position?: string,
+  isVertical?: boolean
+): AdPlacementOrientation => {
+  if (isInternalHorizontalPlacement(slotId) || slotId === 'participant-box-horizontal') {
+    return 'horizontal';
+  }
+  if (position === 'left' || position === 'right' || isVertical) {
+    return 'vertical';
+  }
+  return 'horizontal';
+};
+
+export const getReservedDimensionTarget = (
+  slotId: string,
+  position?: string,
+  isVertical?: boolean
+): AdReservedDimensionTarget => {
+  const orientation = getPlacementOrientation(slotId, position, isVertical);
+
+  if (orientation === 'vertical') {
+    return {
+      orientation: 'vertical',
+      minWidth: 160,
+      maxWidth: 300,
+      minHeight: 520,
+      maxHeight: 540,
+      allowPortraitCreative: true,
+    };
+  }
+
+  if (slotId === 'participant-box-horizontal') {
+    return {
+      orientation: 'horizontal',
+      minWidth: 300,
+      maxWidth: 320,
+      minHeight: 112,
+      maxHeight: 120,
+      allowPortraitCreative: false,
+    };
+  }
+
+  if (isInternalHorizontalPlacement(slotId)) {
+    return {
+      orientation: 'horizontal',
+      minWidth: 300,
+      maxWidth: 320,
+      minHeight: 62,
+      maxHeight: 68,
+      allowPortraitCreative: false,
+    };
+  }
+
+  // Top, Bottom, Footer, Content-Gap main horizontal banners (target max 728x102)
+  return {
+    orientation: 'horizontal',
+    minWidth: 300,
+    maxWidth: 728,
+    minHeight: 62,
+    maxHeight: 102,
+    allowPortraitCreative: false,
+  };
+};
+

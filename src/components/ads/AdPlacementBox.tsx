@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from '../../context/RouterContext';
 import {
   ADSTERRA_CONFIG,
@@ -8,7 +8,10 @@ import {
   ADSENSE_CONFIG,
   AdProvider,
   getProviderRotation,
+  getPlacementOrientation,
+  getReservedDimensionTarget,
   isAdSenseExcludedRoute,
+  isInternalHorizontalPlacement,
 } from '../../config/adsConfig';
 
 export type AdSlotPosition = 'top' | 'bottom' | 'left' | 'right' | 'footer' | 'sidebar-horizontal' | 'content-gap';
@@ -22,6 +25,12 @@ export type CreativeValidationStatus =
   | 'creative_detected'
   | 'confirmed_filled'
   | 'unverifiable';
+
+export interface CreativeValidationOptions {
+  expectedOrientation?: 'horizontal' | 'vertical';
+  maxAllowedHeight?: number;
+  maxAllowedWidth?: number;
+}
 
 export interface CreativeValidationResult {
   status: CreativeValidationStatus;
@@ -46,21 +55,36 @@ export interface AdPlacementBoxProps {
   isLiveChatScreen?: boolean;
 }
 
-// Global queue for Adsterra to prevent atOptions collisions
+// Monotonic attempt validity guard to prevent stale async callbacks from modifying active slots
+export function isAttemptCurrent(
+  capturedAttemptId: number,
+  activeAttemptId: number,
+  isMounted: boolean
+): boolean {
+  return Boolean(isMounted) && capturedAttemptId === activeAttemptId;
+}
+
+// Global queue for Adsterra to prevent atOptions collisions across concurrent slots
 interface QueueItem {
   id: string;
+  attemptId: number;
+  isValid: () => boolean;
   load: () => Promise<void>;
 }
 let adsterraLoadQueue: QueueItem[] = [];
 let isAdsterraProcessing = false;
 
+export const cancelQueuedAdsterraTasksForSlot = (slotId: string) => {
+  adsterraLoadQueue = adsterraLoadQueue.filter((item) => item.id !== slotId);
+};
+
 const processAdsterraQueue = async () => {
   if (isAdsterraProcessing || adsterraLoadQueue.length === 0) return;
   isAdsterraProcessing = true;
-  
+
   while (adsterraLoadQueue.length > 0) {
     const item = adsterraLoadQueue.shift();
-    if (item) {
+    if (item && item.isValid()) {
       try {
         await item.load();
       } catch (err) {
@@ -68,15 +92,102 @@ const processAdsterraQueue = async () => {
       }
     }
   }
-  
+
   isAdsterraProcessing = false;
 };
+
+// Track single script injection per URL to prevent duplicate <script> tags
+export function ensureHeadScriptOnce(
+  src: string,
+  options?: {
+    attrs?: Record<string, string>;
+    onReady?: () => void;
+    onError?: () => void;
+    isStillValid?: () => boolean;
+  }
+): HTMLScriptElement | null {
+  if (typeof document === 'undefined' || !document.head) return null;
+
+  let existing = document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null;
+  if (existing && existing.getAttribute('data-ad-script-error') === 'true') {
+    existing.remove();
+    existing = null;
+  }
+
+  if (existing) {
+    if (existing.getAttribute('data-ad-script-loaded') === 'true') {
+      options?.onReady?.();
+    } else {
+      const handleLoad = () => {
+        existing?.setAttribute('data-ad-script-loaded', 'true');
+        if (!options?.isStillValid || options.isStillValid()) options?.onReady?.();
+      };
+      const handleErr = () => {
+        existing?.setAttribute('data-ad-script-error', 'true');
+        if (!options?.isStillValid || options.isStillValid()) options?.onError?.();
+      };
+      existing.addEventListener?.('load', handleLoad, { once: true });
+      existing.addEventListener?.('error', handleErr, { once: true });
+    }
+    return existing;
+  }
+
+  const script = document.createElement('script');
+  script.async = true;
+  script.src = src;
+  if (options?.attrs) {
+    for (const [k, v] of Object.entries(options.attrs)) {
+      script.setAttribute(k, v);
+    }
+  }
+  script.addEventListener?.(
+    'load',
+    () => {
+      script.setAttribute('data-ad-script-loaded', 'true');
+      if (!options?.isStillValid || options.isStillValid()) options?.onReady?.();
+    },
+    { once: true }
+  );
+  script.addEventListener?.(
+    'error',
+    () => {
+      script.setAttribute('data-ad-script-error', 'true');
+      if (!options?.isStillValid || options.isStillValid()) options?.onError?.();
+    },
+    { once: true }
+  );
+  document.head.appendChild(script);
+  return script;
+}
+
+function violatesCreativeBounds(
+  width: number,
+  height: number,
+  options?: CreativeValidationOptions
+): string | null {
+  if (!options) return null;
+  if (options.expectedOrientation === 'horizontal' && width > 0 && height > 0) {
+    if (height > width) {
+      return `Vertical/portrait creative (${width}x${height}) rejected in strictly horizontal placement`;
+    }
+    if (options.maxAllowedHeight !== undefined && height > options.maxAllowedHeight) {
+      return `Oversized creative height (${width}x${height} > max ${options.maxAllowedHeight}px) rejected in horizontal placement`;
+    }
+  }
+  if (options.maxAllowedWidth !== undefined && options.maxAllowedWidth > 0 && width > options.maxAllowedWidth + 4) {
+    return `Oversized creative width (${width}x${height} > max ${options.maxAllowedWidth}px) rejected`;
+  }
+  return null;
+}
 
 /**
  * Inspects a candidate container DOM element and performs strict, defensible creative validation.
  * Distinguishes confirmed filled, unverifiable, unfilled, empty, and script-only states.
  */
-export const validateCreative = (el: HTMLElement | null): CreativeValidationResult => {
+export const validateCreative = (
+  el: HTMLElement | null,
+  options?: CreativeValidationOptions
+): CreativeValidationResult => {
   if (!el) {
     return {
       status: 'empty',
@@ -94,6 +205,18 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
   if (insAdSense) {
     const statusAttr = insAdSense.getAttribute('data-ad-status');
     if (statusAttr === 'filled') {
+      const insW = (insAdSense as HTMLElement).offsetWidth || 0;
+      const insH = (insAdSense as HTMLElement).offsetHeight || 0;
+      const boundViolation = insW > 0 && insH > 0 ? violatesCreativeBounds(insW, insH, options) : null;
+      if (boundViolation) {
+        return {
+          status: 'unfilled',
+          isConfirmedFilled: false,
+          isUnverifiable: false,
+          creativeDetected: false,
+          reason: boundViolation,
+        };
+      }
       return {
         status: 'confirmed_filled',
         isConfirmedFilled: true,
@@ -114,6 +237,7 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
   }
 
   // 2. Scan ALL candidate elements in the container (supports multiple creatives where earlier candidate is tracking/pixel)
+  let rejectedOrientationReason: string | null = null;
 
   // 2A. Image Creatives (e.g., Native banner image inside anchor or direct img)
   const images = Array.from(el.querySelectorAll?.('img') || []) as HTMLImageElement[];
@@ -135,11 +259,16 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
     // Rule: offsetWidth / clientWidth alone does NOT qualify without successful image loading!
     // Positive naturalWidth and naturalHeight verify actual image decoding and loading.
     const isLoaded = (img.naturalWidth || 0) > 0 && (img.naturalHeight || 0) > 0;
-    const hasRenderedDimensions =
-      ((img.offsetWidth || 0) > 0 && (img.offsetHeight || 0) > 0) ||
-      ((img.clientWidth || 0) > 0 && (img.clientHeight || 0) > 0);
+    const renderW = img.offsetWidth || img.clientWidth || 0;
+    const renderH = img.offsetHeight || img.clientHeight || 0;
+    const hasRenderedDimensions = renderW > 0 && renderH > 0;
 
     if (isLoaded && hasRenderedDimensions) {
+      const boundViolation = violatesCreativeBounds(renderW, renderH, options);
+      if (boundViolation) {
+        rejectedOrientationReason = boundViolation;
+        continue;
+      }
       return {
         status: 'confirmed_filled',
         isConfirmedFilled: true,
@@ -163,9 +292,9 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
 
     if (isHidden) continue;
 
-    const hasRenderedDimensions =
-      ((video.offsetWidth || 0) > 0 && (video.offsetHeight || 0) > 0) ||
-      ((video.clientWidth || 0) > 0 && (video.clientHeight || 0) > 0);
+    const renderW = video.offsetWidth || video.clientWidth || 0;
+    const renderH = video.offsetHeight || video.clientHeight || 0;
+    const hasRenderedDimensions = renderW > 0 && renderH > 0;
 
     if (!hasRenderedDimensions) continue;
 
@@ -175,11 +304,15 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
     if (!hasValidSrc) continue;
 
     // Defensible check: Video must have actual media data (positive videoWidth/videoHeight and readyState >= 2)
-    // An empty video element with only CSS or HTML dimensions must not qualify as confirmed filled.
     const hasMediaDimensions = (video.videoWidth || 0) > 0 && (video.videoHeight || 0) > 0;
     const isReady = typeof video.readyState === 'number' ? video.readyState >= 2 : hasMediaDimensions;
 
     if (hasMediaDimensions && isReady) {
+      const boundViolation = violatesCreativeBounds(renderW, renderH, options);
+      if (boundViolation) {
+        rejectedOrientationReason = boundViolation;
+        continue;
+      }
       return {
         status: 'confirmed_filled',
         isConfirmedFilled: true,
@@ -188,9 +321,6 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
         reason: 'Video creative verified with active media data (positive videoWidth and readyState)',
       };
     }
-
-    // Video has rendered dimensions and src, but media data is not yet loaded/confirmed.
-    // Do NOT falsely confirm as filled.
   }
 
   // 2C. Embedded Media (<object>, <embed>)
@@ -204,9 +334,9 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
 
     if (isHidden) continue;
 
-    const hasRenderedDimensions =
-      ((media.offsetWidth || 0) > 0 && (media.offsetHeight || 0) > 0) ||
-      ((media.clientWidth || 0) > 0 && (media.clientHeight || 0) > 0);
+    const renderW = media.offsetWidth || media.clientWidth || 0;
+    const renderH = media.offsetHeight || media.clientHeight || 0;
+    const hasRenderedDimensions = renderW > 0 && renderH > 0;
 
     if (!hasRenderedDimensions) continue;
 
@@ -215,8 +345,12 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
     const hasValidSource = Boolean((data && data !== 'about:blank') || (src && src !== 'about:blank'));
     if (!hasValidSource) continue;
 
-    // Defensible check: Object and embed elements must NOT be classified as confirmed filled
-    // from dimensions alone. Classify conservatively as 'unverifiable' (creative detected with source and dimensions).
+    const boundViolation = violatesCreativeBounds(renderW, renderH, options);
+    if (boundViolation) {
+      rejectedOrientationReason = boundViolation;
+      continue;
+    }
+
     return {
       status: 'unverifiable',
       isConfirmedFilled: false,
@@ -240,16 +374,13 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
 
     if (isHidden) continue;
 
-    // If the iframe fired an error event, skip candidate
     if (iframe.getAttribute('data-ad-error') === 'true' || (iframe as any)._adError === true) {
       continue;
     }
 
-    // Rule: An iframe merely having a non-empty src or width/height attributes
-    // without actual rendered dimensions must NOT qualify!
-    const hasRenderedDimensions =
-      ((iframe.offsetWidth || 0) > 0 && (iframe.offsetHeight || 0) > 0) ||
-      ((iframe.clientWidth || 0) > 0 && (iframe.clientHeight || 0) > 0);
+    const renderW = iframe.offsetWidth || iframe.clientWidth || 0;
+    const renderH = iframe.offsetHeight || iframe.clientHeight || 0;
+    const hasRenderedDimensions = renderW > 0 && renderH > 0;
 
     if (!hasRenderedDimensions) continue;
 
@@ -261,6 +392,12 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
     );
 
     if (!hasValidSrc) continue;
+
+    const boundViolation = violatesCreativeBounds(renderW, renderH, options);
+    if (boundViolation) {
+      rejectedOrientationReason = boundViolation;
+      continue;
+    }
 
     // Attach lifecycle listeners if not already present
     if (!iframe.getAttribute('data-ad-loaded') && !iframe.getAttribute('data-ad-error')) {
@@ -287,7 +424,6 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
         sameOriginDoc = doc;
       }
     } catch {
-      // Cross-origin iframe: expected and handled safely
       isSameOrigin = false;
     }
 
@@ -299,8 +435,6 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
       Boolean(isSameOrigin && sameOriginDoc?.readyState === 'complete');
 
     if (!isLoaded) {
-      // Iframe has appeared in DOM with URL and dimensions, but is still loading.
-      // Do NOT classify as 'unverifiable' or 'unfilled' prematurely.
       hasPendingLoadingIframe = true;
       continue;
     }
@@ -308,8 +442,6 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
     if (isSameOrigin && sameOriginDoc) {
       const body = sameOriginDoc.body;
       if (body) {
-        // Task 3: Defensible creative-specific signal inside same-origin iframe
-        // Arbitrary text, loading placeholders, and empty wrappers must NOT automatically qualify as confirmed filled!
         const innerImg = body.querySelector?.('img') as HTMLImageElement | null;
         const innerVideo = body.querySelector?.('video') as HTMLVideoElement | null;
         const innerAdCreative = body.querySelector?.('[data-ad-status="filled"], [data-ad-creative="true"]');
@@ -346,14 +478,9 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
           };
         }
       }
-      // Blank or arbitrary placeholder same-origin iframe: skip to evaluate next candidate
       continue;
     }
 
-    // Cross-origin iframe:
-    // Completed observable load lifecycle, visible, valid external URL, positive rendered dimensions.
-    // Document contents cannot be inspected under cross-origin security restrictions.
-    // Must NOT be falsely reported as 'confirmed_filled'; explicitly returned as 'unverifiable'.
     return {
       status: 'unverifiable',
       isConfirmedFilled: false,
@@ -370,6 +497,16 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
       isUnverifiable: false,
       creativeDetected: true,
       reason: 'Iframe creative detected in DOM but observable load lifecycle is still pending',
+    };
+  }
+
+  if (rejectedOrientationReason) {
+    return {
+      status: 'unfilled',
+      isConfirmedFilled: false,
+      isUnverifiable: false,
+      creativeDetected: false,
+      reason: rejectedOrientationReason,
     };
   }
 
@@ -411,8 +548,11 @@ export const validateCreative = (el: HTMLElement | null): CreativeValidationResu
  * Backward-compatible helper. Returns true ONLY for confirmed filled creatives.
  * Unverifiable cross-origin iframes, broken images, and empty wrappers evaluate to false.
  */
-export const hasValidCreative = (el: HTMLElement | null): boolean => {
-  return validateCreative(el).isConfirmedFilled;
+export const hasValidCreative = (
+  el: HTMLElement | null,
+  options?: CreativeValidationOptions
+): boolean => {
+  return validateCreative(el, options).isConfirmedFilled;
 };
 
 export interface UnitResolutionParams {
@@ -453,10 +593,12 @@ export function resolveEffectiveUnitId({
       : undefined;
 
   const posStr = String(position || '');
+  const isInternalInline = isInternalHorizontalPlacement(slotId);
+  const isParticipantBar = slotId === 'participant-box-horizontal';
+  const isVerticalSlot = !isInternalInline && !isParticipantBar && (isVertical || posStr === 'left' || posStr === 'right');
+
   const isHorizontalBanner =
-    !isVertical &&
-    posStr !== 'left' &&
-    posStr !== 'right' &&
+    !isVerticalSlot &&
     (posStr === 'top' ||
       posStr === 'bottom' ||
       posStr === 'footer' ||
@@ -464,8 +606,8 @@ export function resolveEffectiveUnitId({
       posStr === 'sidebar-horizontal' ||
       posStr === 'status-inline' ||
       posStr === 'message-inline' ||
-      slotId.includes('status-inline') ||
-      slotId.includes('message-inline') ||
+      isInternalInline ||
+      isParticipantBar ||
       slotId.includes('top') ||
       slotId.includes('bottom'));
 
@@ -479,45 +621,40 @@ export function resolveEffectiveUnitId({
         }
         if (containerWidth < 728) {
           // Narrow viewport (mobile or tablet): always select 320x50
-          // Must NEVER select 728x90 here even if primaryAdUnitId was passed
           return ADSTERRA_CONFIG.banner320x50;
         }
-        // containerWidth >= 728:
-        // Inline / participant placements should remain compact (320x50) to avoid excessive vertical space
-        if (
-          posStr === 'sidebar-horizontal' ||
-          slotId.includes('inline') ||
-          slotId.includes('participant')
-        ) {
+        // Inline / participant placements remain strictly compact (320x50 landscape)
+        if (posStr === 'sidebar-horizontal' || isInternalInline || isParticipantBar || slotId.includes('inline') || slotId.includes('participant')) {
           return ADSTERRA_CONFIG.banner320x50;
         }
         return ADSTERRA_CONFIG.banner728x90;
       }
-      // If containerWidth is null (pre-measurement / SSR), fall back to primaryAdUnitId or sensible default
-      if (
-        posStr === 'sidebar-horizontal' ||
-        slotId.includes('inline') ||
-        slotId.includes('participant')
-      ) {
+
+      if (posStr === 'sidebar-horizontal' || isInternalInline || isParticipantBar || slotId.includes('inline') || slotId.includes('participant')) {
         return ADSTERRA_CONFIG.banner320x50;
       }
       return sanitizedPrimaryUnit || ADSTERRA_CONFIG.banner728x90;
     }
 
-    if (isVertical || posStr === 'left' || posStr === 'right') {
+    if (isVerticalSlot) {
+      // Never render portrait/horizontal mismatch: banner300x250 requires >= 300px rail width
+      if (sanitizedPrimaryUnit === ADSTERRA_CONFIG.banner300x250 || slotId === 'public-chatroom-right') {
+        if (containerWidth !== null && containerWidth < 300) {
+          return null;
+        }
+        return ADSTERRA_CONFIG.banner300x250;
+      }
+      if (containerWidth !== null && containerWidth < 140) {
+        return null;
+      }
       return sanitizedPrimaryUnit || ADSTERRA_CONFIG.nativeUnitId;
-    }
-
-    if (posStr === 'sidebar-horizontal') {
-      if (containerWidth !== null && containerWidth < 320) return null;
-      return ADSTERRA_CONFIG.banner320x50;
     }
 
     return sanitizedPrimaryUnit || null;
   }
 
   if (provider === 'juicyads') {
-    if (isVertical || posStr === 'left' || posStr === 'right') {
+    if (isVerticalSlot) {
       if (containerWidth !== null && containerWidth < 300) {
         return null;
       }
@@ -529,7 +666,17 @@ export function resolveEffectiveUnitId({
       return null;
     }
 
-    if (posStr === 'top' || posStr === 'bottom') {
+    // Participant Bar: dedicated 300x112 zone (fits 300x120 target cleanly on mobile & desktop)
+    if (isParticipantBar) {
+      return JUICYADS_CONFIG.zones.banner300x112; // 1131767
+    }
+
+    // Internal inline placements: ALWAYS compact horizontal 300x62
+    if (isInternalInline) {
+      return JUICYADS_CONFIG.zones.banner300x62; // 1131763
+    }
+
+    if (posStr === 'top' || posStr === 'bottom' || posStr === 'footer' || posStr === 'content-gap') {
       if (containerWidth !== null && containerWidth >= 728) {
         return JUICYADS_CONFIG.zones.banner728x102; // 1131766
       }
@@ -540,10 +687,19 @@ export function resolveEffectiveUnitId({
   }
 
   if (provider === 'exoclick') {
+    if (isHorizontalBanner && containerWidth !== null && containerWidth < 300) {
+      return null;
+    }
+    if (isVerticalSlot && containerWidth !== null && containerWidth < 140) {
+      return null;
+    }
     return EXOCLICK_CONFIG.zoneId; // 6087300
   }
 
   if (provider === 'monetag') {
+    if (isHorizontalBanner && containerWidth !== null && containerWidth < 300) {
+      return null;
+    }
     return MONETAG_CONFIG.zoneId; // 12241585
   }
 
@@ -607,9 +763,16 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 }) => {
   const { currentRoute } = useRouter();
 
-  // TASK 2: Non-Overridable AdSense Route Exclusion Policy
+  // Non-Overridable AdSense Route Exclusion Policy
   const isExcludedByRoute = isAdSenseExcludedRoute(currentRoute);
   const effectiveIsLiveChatScreen = isExcludedByRoute || Boolean(isLiveChatScreenProp);
+
+  // Reserved Dimension & Orientation Target
+  const orientation = getPlacementOrientation(slotId, position, isVertical);
+  const reservedTarget = useMemo(
+    () => getReservedDimensionTarget(slotId, position, isVertical),
+    [slotId, position, isVertical]
+  );
 
   // 1. Mandatory Stable Hook Declarations
   const [adStatus, setAdStatus] = useState<AdSlotStatus>('idle');
@@ -617,10 +780,18 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const [providerIndex, setProviderIndex] = useState(0);
 
   const adRef = useRef<HTMLDivElement | null>(null);
+  const imperativeHostRef = useRef<HTMLDivElement | null>(null);
   const isMountedRef = useRef(true);
+  const attemptIdRef = useRef(0);
   const observerRef = useRef<MutationObserver | null>(null);
   const lastReportedStatusRef = useRef<'filled' | 'unfilled' | 'error' | 'unverifiable' | null>(null);
   const activeTimersRef = useRef<Array<number | NodeJS.Timeout>>([]);
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
+
+  const ownedNativeScriptRef = useRef<HTMLScriptElement | null>(null);
+  const prevChatExclusionRef = useRef<boolean>(effectiveIsLiveChatScreen);
+  const settledUnitSignatureRef = useRef<string | null>(null);
 
   const clearAllActiveTimers = useCallback(() => {
     activeTimersRef.current.forEach((t) => {
@@ -637,24 +808,32 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     }
   }, []);
 
-  // Clean up timers and observers on route changes or provider changes
-  useEffect(() => {
-    disconnectObserver();
+  const cleanupSlotRuntime = useCallback(() => {
+    attemptIdRef.current += 1;
+    cancelQueuedAdsterraTasksForSlot(slotId);
     clearAllActiveTimers();
-  }, [currentRoute, providerIndex, disconnectObserver, clearAllActiveTimers]);
+    disconnectObserver();
+    if (ownedNativeScriptRef.current && ownedNativeScriptRef.current.parentNode) {
+      ownedNativeScriptRef.current.parentNode.removeChild(ownedNativeScriptRef.current);
+    }
+    ownedNativeScriptRef.current = null;
+  }, [slotId, clearAllActiveTimers, disconnectObserver]);
 
-  const rotation = getProviderRotation(position || '', effectiveIsLiveChatScreen);
-  const currentProvider = explicitProvider || rotation[providerIndex];
+  const rotationKey = effectiveIsLiveChatScreen ? 'chat' : 'public';
+  const rotation = useMemo(
+    () => getProviderRotation(position || '', effectiveIsLiveChatScreen),
+    [position, rotationKey]
+  );
+  const currentProvider = explicitProvider || rotation[providerIndex] || rotation[0];
 
-  // Resolve Unit ID Atomically based on current provider
   const getEffectiveUnitId = useCallback(
-    (p: AdProvider): string | null => {
+    (p: AdProvider, widthOverride?: number | null): string | null => {
       return resolveEffectiveUnitId({
         provider: p,
         position,
         slotId,
         isVertical,
-        containerWidth,
+        containerWidth: widthOverride !== undefined ? widthOverride : containerWidth,
         primaryAdUnitId,
         isLiveChatScreen: effectiveIsLiveChatScreen,
       });
@@ -664,26 +843,83 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
   const effectiveUnitId = getEffectiveUnitId(currentProvider);
 
-  const updateStatus = useCallback((status: 'filled' | 'unfilled' | 'error' | 'unverifiable') => {
-    if (!isMountedRef.current) return;
-
-    // Clear timers and observer upon reaching a conclusive/terminal status or transition
-    clearAllActiveTimers();
-    disconnectObserver();
-
-    const decision = computeProviderTransition(status, providerIndex, rotation, explicitProvider);
-
-    if (decision.shouldRotate) {
-      setProviderIndex(decision.nextIndex);
-      setAdStatus(decision.nextStatus);
-    } else {
-      setAdStatus(decision.nextStatus);
-      if (lastReportedStatusRef.current !== status) {
-        lastReportedStatusRef.current = status;
-        onStatusChange?.(status);
+  // Cleanly reset only if route-level AdSense exclusion status changes
+  useEffect(() => {
+    if (prevChatExclusionRef.current !== effectiveIsLiveChatScreen) {
+      prevChatExclusionRef.current = effectiveIsLiveChatScreen;
+      cleanupSlotRuntime();
+      settledUnitSignatureRef.current = null;
+      if (imperativeHostRef.current && !renderAd) {
+        imperativeHostRef.current.innerHTML = '';
       }
+      setProviderIndex(0);
+      setAdStatus('idle');
     }
-  }, [onStatusChange, explicitProvider, providerIndex, rotation, clearAllActiveTimers, disconnectObserver]);
+  }, [effectiveIsLiveChatScreen, cleanupSlotRuntime, renderAd]);
+
+  // Clean up on provider rotation change
+  useEffect(() => {
+    return () => {
+      cleanupSlotRuntime();
+    };
+  }, [providerIndex, cleanupSlotRuntime]);
+
+  const validationOptions: CreativeValidationOptions = useMemo(
+    () => ({
+      expectedOrientation: reservedTarget.orientation,
+      maxAllowedHeight: reservedTarget.orientation === 'horizontal' ? reservedTarget.maxHeight : undefined,
+      maxAllowedWidth: containerWidth !== null ? Math.max(containerWidth, reservedTarget.minWidth) : reservedTarget.maxWidth,
+    }),
+    [reservedTarget, containerWidth]
+  );
+
+  const updateStatus = useCallback(
+    (status: 'filled' | 'unfilled' | 'error' | 'unverifiable', capturedAttemptId?: number) => {
+      if (!isMountedRef.current) return;
+      if (capturedAttemptId !== undefined && capturedAttemptId !== attemptIdRef.current) {
+        return; // Stale async callback rejected safely
+      }
+
+      clearAllActiveTimers();
+      disconnectObserver();
+
+      const decision = computeProviderTransition(status, providerIndex, rotation, explicitProvider);
+
+      if (decision.shouldRotate) {
+        attemptIdRef.current += 1;
+        cancelQueuedAdsterraTasksForSlot(slotId);
+        if (imperativeHostRef.current && !renderAd) {
+          imperativeHostRef.current.innerHTML = '';
+        }
+        settledUnitSignatureRef.current = null;
+        setProviderIndex(decision.nextIndex);
+        setAdStatus(decision.nextStatus);
+      } else {
+        if (decision.nextStatus === 'filled' || decision.nextStatus === 'unverifiable') {
+          settledUnitSignatureRef.current = `${currentProvider}:${effectiveUnitId}:${rotationKey}`;
+        } else {
+          settledUnitSignatureRef.current = null;
+        }
+        setAdStatus(decision.nextStatus);
+        if (lastReportedStatusRef.current !== status) {
+          lastReportedStatusRef.current = status;
+          onStatusChangeRef.current?.(status);
+        }
+      }
+    },
+    [
+      explicitProvider,
+      providerIndex,
+      rotation,
+      slotId,
+      renderAd,
+      currentProvider,
+      effectiveUnitId,
+      rotationKey,
+      clearAllActiveTimers,
+      disconnectObserver,
+    ]
+  );
 
   // 2. Lifecycle & Measurement (with capture-phase iframe load & error tracking)
   useEffect(() => {
@@ -708,392 +944,512 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       container.addEventListener('load', handleCaptureLoad, true);
       container.addEventListener('error', handleCaptureError, true);
     }
-    
+
     const updateWidth = () => {
       if (adRef.current) {
         const w = adRef.current.offsetWidth;
-        setContainerWidth(prev => (prev === w ? prev : w));
+        // Never emit 0 width when container is hidden via display:none (e.g. responsive breakpoint)
+        if (w > 0) {
+          setContainerWidth((prev) => (prev === w ? prev : w));
+        }
       }
     };
-    
+
     updateWidth();
     const resizeObserver = new ResizeObserver(updateWidth);
     if (adRef.current) resizeObserver.observe(adRef.current);
-    
+
     return () => {
       isMountedRef.current = false;
       if (container) {
         container.removeEventListener('load', handleCaptureLoad, true);
         container.removeEventListener('error', handleCaptureError, true);
       }
-      clearAllActiveTimers();
-      disconnectObserver();
+      cleanupSlotRuntime();
       resizeObserver.disconnect();
     };
-  }, [clearAllActiveTimers, disconnectObserver]);
+  }, [cleanupSlotRuntime]);
+
+  // Re-evaluate if viewport width crossed a breakpoint threshold while unfilled or changed target unit
+  useEffect(() => {
+    if (containerWidth === null || renderAd) return;
+    if (adStatus === 'unfilled' || adStatus === 'error') {
+      const primaryEligible = getEffectiveUnitId(explicitProvider || rotation[0], containerWidth);
+      if (primaryEligible) {
+        settledUnitSignatureRef.current = null;
+        setProviderIndex(0);
+        setAdStatus('idle');
+      }
+    }
+  }, [containerWidth, adStatus, renderAd, explicitProvider, rotation, getEffectiveUnitId]);
 
   // 3. Orchestration Effect
   useEffect(() => {
     if (adStatus !== 'idle') return;
-    if (containerWidth === null) return;
+    if (containerWidth === null || containerWidth <= 0) return;
+
+    const signature = `${currentProvider}:${effectiveUnitId}:${rotationKey}`;
+    if (settledUnitSignatureRef.current === signature) {
+      return;
+    }
+
+    const attemptId = ++attemptIdRef.current;
 
     if (renderAd) {
       const content = renderAd();
-      updateStatus(content ? 'filled' : 'unfilled');
+      updateStatus(content ? 'filled' : 'unfilled', attemptId);
       return;
     }
 
     if (!effectiveUnitId) {
-      updateStatus('unfilled');
+      updateStatus('unfilled', attemptId);
       return;
     }
 
-    // Dimension & Width Constraints
+    // Strict Dimension & Width Constraints
     if (currentProvider === 'adsterra') {
       if (effectiveUnitId === ADSTERRA_CONFIG.banner320x50 && containerWidth < 320) {
-        updateStatus('unfilled');
+        updateStatus('unfilled', attemptId);
         return;
       }
       if (effectiveUnitId === ADSTERRA_CONFIG.banner728x90 && containerWidth < 728) {
-        updateStatus('unfilled');
+        updateStatus('unfilled', attemptId);
+        return;
+      }
+      if (effectiveUnitId === ADSTERRA_CONFIG.banner300x250 && containerWidth < 300) {
+        updateStatus('unfilled', attemptId);
         return;
       }
     }
 
     if (currentProvider === 'juicyads') {
       if (effectiveUnitId === JUICYADS_CONFIG.zones.banner728x102 && containerWidth < 728) {
-        updateStatus('unfilled');
+        updateStatus('unfilled', attemptId);
         return;
       }
-      if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x62 && containerWidth < 300) {
-        updateStatus('unfilled');
+      if (
+        (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x62 ||
+          effectiveUnitId === JUICYADS_CONFIG.zones.banner300x112 ||
+          effectiveUnitId === JUICYADS_CONFIG.zones.banner300x262) &&
+        containerWidth < 300
+      ) {
+        updateStatus('unfilled', attemptId);
         return;
       }
     }
 
     setAdStatus('loading');
 
+    const startPolling = (
+      getTargetEl: () => HTMLElement | null,
+      baseTimeoutTicks: number,
+      maxGraceTicks: number,
+      onComplete?: () => void
+    ) => {
+      let ticks = 0;
+      const timer = setInterval(() => {
+        if (!isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) {
+          clearInterval(timer);
+          onComplete?.();
+          return;
+        }
+        const target = getTargetEl();
+        const val = validateCreative(target, validationOptions);
+        if (val.isConfirmedFilled) {
+          clearInterval(timer);
+          updateStatus('filled', attemptId);
+          onComplete?.();
+          return;
+        }
+        if (val.isUnverifiable) {
+          clearInterval(timer);
+          updateStatus('unverifiable', attemptId);
+          onComplete?.();
+          return;
+        }
+        ticks++;
+        if (val.status === 'request_attempted') {
+          if (ticks >= maxGraceTicks) {
+            clearInterval(timer);
+            updateStatus('unfilled', attemptId);
+            onComplete?.();
+          }
+          return;
+        }
+        if (ticks >= baseTimeoutTicks) {
+          clearInterval(timer);
+          updateStatus('unfilled', attemptId);
+          onComplete?.();
+        }
+      }, 300);
+      activeTimersRef.current.push(timer);
+    };
+
     if (currentProvider === 'juicyads') {
       try {
-        if (!adRef.current) { updateStatus('error'); return; }
+        if (!imperativeHostRef.current) {
+          updateStatus('error', attemptId);
+          return;
+        }
 
         let width = 300;
         let height = 250;
-        if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x62) { width = 300; height = 62; }
-        else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner728x102) { width = 728; height = 102; }
-        else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x262) { width = 300; height = 262; }
-        else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x112) { width = 300; height = 112; }
+        if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x62) {
+          width = 300;
+          height = 62;
+        } else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner728x102) {
+          width = 728;
+          height = 102;
+        } else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x262) {
+          width = 300;
+          height = 262;
+        } else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x112) {
+          width = 300;
+          height = 112;
+        }
 
         const domId = `juicyads-ins-${effectiveUnitId}-${slotId}`;
-        adRef.current.innerHTML = `<ins id="${domId}" data-width="${width}" data-height="${height}"></ins>`;
+        imperativeHostRef.current.innerHTML = `<ins id="${domId}" data-width="${width}" data-height="${height}"></ins>`;
 
-        let script = document.querySelector(`script[src="${JUICYADS_CONFIG.scriptUrl}"]`) as HTMLScriptElement;
-        if (!script) {
-          script = document.createElement('script');
-          script.async = true;
-          script.src = JUICYADS_CONFIG.scriptUrl;
-          script.onerror = () => {
-            if (isMountedRef.current) updateStatus('error');
-          };
-          document.head.appendChild(script);
-        }
+        ensureHeadScriptOnce(JUICYADS_CONFIG.scriptUrl, {
+          isStillValid: () => isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current),
+          onError: () => updateStatus('error', attemptId),
+        });
 
         const win = window as any;
         win.adsbyjuicy = win.adsbyjuicy || [];
         win.adsbyjuicy.push({ adzone: effectiveUnitId, id: domId });
 
-        let attempts = 0;
-        const checkFillTimer = setInterval(() => {
-          if (!isMountedRef.current) {
-            clearInterval(checkFillTimer);
-            return;
-          }
-          const insEl = document.getElementById(domId);
-          const val = validateCreative(insEl);
-          if (val.isConfirmedFilled) {
-            clearInterval(checkFillTimer);
-            updateStatus('filled');
-          } else if (val.isUnverifiable) {
-            clearInterval(checkFillTimer);
-            updateStatus('unverifiable');
-          } else if (val.status === 'request_attempted') {
-            // Still in pre-load lifecycle phase: wait for load event or timeout
-          } else if (attempts >= 8) {
-            clearInterval(checkFillTimer);
-            updateStatus('unfilled');
-          }
-          attempts++;
-        }, 300);
-
-        activeTimersRef.current.push(checkFillTimer);
-
-      } catch (err) {
-        updateStatus('error');
+        startPolling(() => document.getElementById(domId), 12, 18);
+      } catch {
+        updateStatus('error', attemptId);
       }
     } else if (currentProvider === 'adsense') {
       if (effectiveIsLiveChatScreen) {
-        updateStatus('unfilled');
+        updateStatus('unfilled', attemptId);
         return;
       }
       try {
         const win = window as any;
         if (win.adsbygoogle) {
           win.adsbygoogle.push({});
-          
+
           if (adRef.current) {
             const obs = new MutationObserver(() => {
-              const ins = adRef.current?.querySelector('ins');
-              const val = validateCreative(ins as HTMLElement);
-              if (val.isConfirmedFilled) updateStatus('filled');
-              else if (val.status === 'unfilled') updateStatus('unfilled');
+              if (!isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) return;
+              const ins = adRef.current?.querySelector('ins') as HTMLElement | null;
+              const val = validateCreative(ins, validationOptions);
+              if (val.isConfirmedFilled) updateStatus('filled', attemptId);
+              else if (val.status === 'unfilled') updateStatus('unfilled', attemptId);
             });
             obs.observe(adRef.current, { attributes: true, subtree: true });
             observerRef.current = obs;
           }
 
           const adsenseTimeout = setTimeout(() => {
-            if (!isMountedRef.current) return;
-            const ins = adRef.current?.querySelector('ins');
-            const val = validateCreative(ins as HTMLElement);
+            if (!isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) return;
+            const ins = adRef.current?.querySelector('ins') as HTMLElement | null;
+            const val = validateCreative(ins, validationOptions);
             if (!val.isConfirmedFilled) {
-              updateStatus('unfilled');
+              updateStatus('unfilled', attemptId);
             }
-          }, 3000);
+          }, 4000);
           activeTimersRef.current.push(adsenseTimeout);
         } else {
           const unavailableTimeout = setTimeout(() => {
-            if (isMountedRef.current) {
-              updateStatus('unfilled');
+            if (isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) {
+              updateStatus('unfilled', attemptId);
             }
-          }, 1000);
+          }, 1200);
           activeTimersRef.current.push(unavailableTimeout);
         }
-      } catch (err) {
-        updateStatus('error');
+      } catch {
+        updateStatus('error', attemptId);
       }
     } else if (currentProvider === 'adsterra') {
       const isNative = effectiveUnitId === ADSTERRA_CONFIG.nativeUnitId;
-      
-      const loadTask = () => new Promise<void>((resolve) => {
-        if (!isMountedRef.current) { resolve(); return; }
 
-        if (isNative) {
-          const containerId = `container-${effectiveUnitId}-${slotId}`;
-          const existing = document.getElementById(containerId);
-          
-          if (existing && !adRef.current?.contains(existing)) {
-             updateStatus('unfilled');
-             resolve();
-             return;
+      const loadTask = () =>
+        new Promise<void>((resolve) => {
+          if (!isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) {
+            resolve();
+            return;
           }
 
-          if (adRef.current) {
-            adRef.current.innerHTML = `<div id="${containerId}"></div>`;
-          }
+          if (isNative) {
+            const containerId = `container-${effectiveUnitId}`;
+            const existing = document.getElementById(containerId);
 
-          const scriptSrc = `https://${ADSTERRA_CONFIG.nativeDomain}/${ADSTERRA_CONFIG.nativeUnitId}/invoke.js`;
-          const script = document.createElement('script');
-          script.async = true;
-          script.setAttribute('data-cfasync', 'false');
-          script.src = scriptSrc;
-          
-          script.onload = () => {
-            let attempts = 0;
-            const checkNativeFill = setInterval(() => {
-              if (!isMountedRef.current) { clearInterval(checkNativeFill); resolve(); return; }
-              const el = document.getElementById(containerId);
-              const val = validateCreative(el);
-              if (val.isConfirmedFilled) {
-                clearInterval(checkNativeFill);
-                updateStatus('filled');
+            // Prevent multiple slots from sharing the single-instance native DOM container ID
+            if (existing && !imperativeHostRef.current?.contains(existing)) {
+              updateStatus('unfilled', attemptId);
+              resolve();
+              return;
+            }
+
+            if (imperativeHostRef.current) {
+              imperativeHostRef.current.innerHTML = `<div id="${containerId}" class="w-full h-full flex flex-col items-center justify-center overflow-hidden"></div>`;
+            }
+
+            const scriptSrc = `https://${ADSTERRA_CONFIG.nativeDomain}/${ADSTERRA_CONFIG.nativeUnitId}/invoke.js`;
+            const existingNativeScript = document.querySelector(
+              `script[src="${scriptSrc}"]`
+            ) as HTMLScriptElement | null;
+            if (existingNativeScript) {
+              existingNativeScript.remove();
+            }
+
+            const script = document.createElement('script');
+            script.async = true;
+            script.setAttribute('data-cfasync', 'false');
+            script.setAttribute('data-ad-slot-script', slotId);
+            script.src = scriptSrc;
+            ownedNativeScriptRef.current = script;
+
+            script.onload = () => {
+              if (!isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) {
                 resolve();
-              } else if (val.isUnverifiable) {
-                clearInterval(checkNativeFill);
-                updateStatus('unverifiable');
-                resolve();
-              } else if (val.status === 'request_attempted') {
-                // Pre-load phase
-              } else if (attempts >= 5) {
-                clearInterval(checkNativeFill);
-                updateStatus('unfilled');
-                resolve();
+                return;
               }
-              attempts++;
-            }, 300);
-            activeTimersRef.current.push(checkNativeFill);
-          };
-          script.onerror = () => { updateStatus('error'); resolve(); };
-          document.head.appendChild(script);
-        } else {
-          // Banner
-          let h = 250, w = 300;
-          if (effectiveUnitId === ADSTERRA_CONFIG.banner320x50) { h = 50; w = 320; }
-          else if (effectiveUnitId === ADSTERRA_CONFIG.banner728x90) { h = 90; w = 728; }
-
-          (window as any).atOptions = {
-            'key': effectiveUnitId,
-            'format': 'iframe',
-            'height': h,
-            'width': w,
-            'params': {}
-          };
-
-          const scriptSrc = `https://${ADSTERRA_CONFIG.bannerDomain}/${effectiveUnitId}/invoke.js`;
-          const script = document.createElement('script');
-          script.type = 'text/javascript';
-          script.src = scriptSrc;
-          
-          script.onload = () => {
-            const bannerTimer = setTimeout(() => {
-              if (!isMountedRef.current) { resolve(); return; }
-              const val = validateCreative(adRef.current);
-              if (val.isConfirmedFilled) {
-                updateStatus('filled');
-              } else if (val.isUnverifiable) {
-                updateStatus('unverifiable');
-              } else {
-                updateStatus('unfilled');
+              let attempts = 0;
+              const checkNativeFill = setInterval(() => {
+                if (!isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) {
+                  clearInterval(checkNativeFill);
+                  resolve();
+                  return;
+                }
+                const el = document.getElementById(containerId);
+                const val = validateCreative(el, validationOptions);
+                if (val.isConfirmedFilled) {
+                  clearInterval(checkNativeFill);
+                  updateStatus('filled', attemptId);
+                  resolve();
+                  return;
+                }
+                if (val.isUnverifiable) {
+                  clearInterval(checkNativeFill);
+                  updateStatus('unverifiable', attemptId);
+                  resolve();
+                  return;
+                }
+                attempts++;
+                if (val.status === 'request_attempted') {
+                  if (attempts >= 15) {
+                    clearInterval(checkNativeFill);
+                    updateStatus('unfilled', attemptId);
+                    resolve();
+                  }
+                  return;
+                }
+                if (attempts >= 5 && val.status === 'empty') {
+                  clearInterval(checkNativeFill);
+                  updateStatus('unfilled', attemptId);
+                  resolve();
+                  return;
+                }
+                if (attempts >= 12) {
+                  clearInterval(checkNativeFill);
+                  updateStatus('unfilled', attemptId);
+                  resolve();
+                }
+              }, 300);
+              activeTimersRef.current.push(checkNativeFill);
+            };
+            script.onerror = () => {
+              if (isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) {
+                updateStatus('error', attemptId);
               }
               resolve();
-            }, 500);
-            activeTimersRef.current.push(bannerTimer);
-          };
-          script.onerror = () => { updateStatus('error'); resolve(); };
+            };
+            document.head.appendChild(script);
+          } else {
+            // Adsterra Iframe Banner (320x50, 728x90, 300x250)
+            let h = 250;
+            let w = 300;
+            if (effectiveUnitId === ADSTERRA_CONFIG.banner320x50) {
+              h = 50;
+              w = 320;
+            } else if (effectiveUnitId === ADSTERRA_CONFIG.banner728x90) {
+              h = 90;
+              w = 728;
+            }
 
-          if (adRef.current) adRef.current.appendChild(script);
-          else resolve();
-        }
+            if (!imperativeHostRef.current) {
+              resolve();
+              return;
+            }
+
+            imperativeHostRef.current.innerHTML = '';
+
+            (window as any).atOptions = {
+              key: effectiveUnitId,
+              format: 'iframe',
+              height: h,
+              width: w,
+              params: {},
+            };
+
+            const scriptSrc = `https://${ADSTERRA_CONFIG.bannerDomain}/${effectiveUnitId}/invoke.js`;
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
+            script.src = scriptSrc;
+
+            script.onload = () => {
+              if (!isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) {
+                resolve();
+                return;
+              }
+              // Poll robustly after script onload so pending cross-origin iframes (request_attempted) can complete loading
+              startPolling(() => imperativeHostRef.current, 12, 18, resolve);
+            };
+            script.onerror = () => {
+              if (isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current)) {
+                updateStatus('error', attemptId);
+              }
+              resolve();
+            };
+
+            imperativeHostRef.current.appendChild(script);
+          }
+        });
+
+      cancelQueuedAdsterraTasksForSlot(slotId);
+      adsterraLoadQueue.push({
+        id: slotId,
+        attemptId,
+        isValid: () => isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current),
+        load: loadTask,
       });
-
-      adsterraLoadQueue.push({ id: slotId, load: loadTask });
       processAdsterraQueue();
     } else if (currentProvider === 'exoclick') {
       try {
-        if (!adRef.current) { updateStatus('error'); return; }
-        const domId = `exoclick-ins-${EXOCLICK_CONFIG.zoneId}-${slotId}`;
-        adRef.current.innerHTML = `<ins id="${domId}" class="${EXOCLICK_CONFIG.elementClass}" data-zoneid="${EXOCLICK_CONFIG.zoneId}" data-keywords="chat,bangla,desi,dating,social,friendship,community,online,international,south-asia,bangladesh,india,usa,united-states,uk,united-kingdom,canada,australia,new-zealand,ireland,germany,france,netherlands,sweden,norway,denmark,switzerland"></ins>`;
-
-        let script = document.querySelector(`script[src="${EXOCLICK_CONFIG.scriptUrl}"]`) as HTMLScriptElement;
-        if (!script) {
-          script = document.createElement('script');
-          script.async = true;
-          script.src = EXOCLICK_CONFIG.scriptUrl;
-          script.onerror = () => { if (isMountedRef.current) updateStatus('error'); };
-          document.head.appendChild(script);
+        if (!imperativeHostRef.current) {
+          updateStatus('error', attemptId);
+          return;
         }
+        const domId = `exoclick-ins-${EXOCLICK_CONFIG.zoneId}-${slotId}`;
+        imperativeHostRef.current.innerHTML = `<ins id="${domId}" class="${EXOCLICK_CONFIG.elementClass}" data-zoneid="${EXOCLICK_CONFIG.zoneId}" data-keywords="chat,bangla,desi,dating,social,friendship,community,online,international,south-asia,bangladesh,india,usa,united-states,uk,united-kingdom,canada,australia,new-zealand,ireland,germany,france,netherlands,sweden,norway,denmark,switzerland"></ins>`;
+
+        ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl, {
+          isStillValid: () => isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current),
+          onError: () => updateStatus('error', attemptId),
+        });
 
         const win = window as any;
         win.AdProvider = win.AdProvider || [];
         if (typeof win.AdProvider.push === 'function') {
-          win.AdProvider.push({ "serve": {} });
+          win.AdProvider.push({ serve: {} });
         }
 
-        let attempts = 0;
-        const checkTimer = setInterval(() => {
-          if (!isMountedRef.current) { clearInterval(checkTimer); return; }
-          const el = document.getElementById(domId);
-          const val = validateCreative(el);
-          if (val.isConfirmedFilled) {
-            clearInterval(checkTimer);
-            updateStatus('filled');
-          } else if (val.isUnverifiable) {
-            clearInterval(checkTimer);
-            updateStatus('unverifiable');
-          } else if (val.status === 'request_attempted') {
-            // Pre-load phase
-          } else if (attempts >= 10) {
-            clearInterval(checkTimer);
-            updateStatus('unfilled');
-          }
-          attempts++;
-        }, 300);
-        activeTimersRef.current.push(checkTimer);
+        startPolling(() => document.getElementById(domId), 12, 18);
       } catch {
-        updateStatus('error');
+        updateStatus('error', attemptId);
       }
     } else if (currentProvider === 'monetag') {
       try {
-        if (!adRef.current) { updateStatus('error'); return; }
-        const domId = `monetag-wrap-${MONETAG_CONFIG.zoneId}-${slotId}`;
-        adRef.current.innerHTML = `<div id="${domId}"></div>`;
-
-        let script = document.querySelector(`script[src="${MONETAG_CONFIG.scriptUrl}"]`) as HTMLScriptElement;
-        if (!script) {
-          script = document.createElement('script');
-          script.async = true;
-          script.src = MONETAG_CONFIG.scriptUrl;
-          script.setAttribute('data-zone', MONETAG_CONFIG.zoneId);
-          script.onerror = () => { if (isMountedRef.current) updateStatus('error'); };
-          document.head.appendChild(script);
+        if (!imperativeHostRef.current) {
+          updateStatus('error', attemptId);
+          return;
         }
+        const domId = `monetag-wrap-${MONETAG_CONFIG.zoneId}-${slotId}`;
+        imperativeHostRef.current.innerHTML = `<div id="${domId}" class="w-full h-full flex items-center justify-center overflow-hidden"></div>`;
 
-        let attempts = 0;
-        const monetagTimer = setInterval(() => {
-          if (!isMountedRef.current) {
-            clearInterval(monetagTimer);
-            return;
-          }
-          const wrapEl = document.getElementById(domId);
-          const val = validateCreative(wrapEl);
-          if (val.isConfirmedFilled) {
-            clearInterval(monetagTimer);
-            updateStatus('filled');
-          } else if (val.isUnverifiable) {
-            clearInterval(monetagTimer);
-            updateStatus('unverifiable');
-          } else if (val.status === 'request_attempted') {
-            // Pre-load phase
-          } else if (attempts >= 10) {
-            clearInterval(monetagTimer);
-            updateStatus('unfilled');
-          }
-          attempts++;
-        }, 300);
-        activeTimersRef.current.push(monetagTimer);
+        ensureHeadScriptOnce(MONETAG_CONFIG.scriptUrl, {
+          attrs: { 'data-zone': MONETAG_CONFIG.zoneId, 'data-cfasync': 'false' },
+          isStillValid: () => isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current),
+          onError: () => updateStatus('error', attemptId),
+        });
+
+        startPolling(() => document.getElementById(domId), 10, 15);
       } catch {
-        updateStatus('error');
+        updateStatus('error', attemptId);
       }
     } else {
-      updateStatus('unfilled');
+      updateStatus('unfilled', attemptId);
     }
-  }, [currentProvider, effectiveUnitId, renderAd, updateStatus, position, slotId, containerWidth, adStatus, effectiveIsLiveChatScreen]);
+  }, [
+    currentProvider,
+    effectiveUnitId,
+    renderAd,
+    updateStatus,
+    position,
+    slotId,
+    containerWidth,
+    adStatus,
+    effectiveIsLiveChatScreen,
+    rotationKey,
+    validationOptions,
+  ]);
 
-  // 4. Layout & Visibility rendering
-  if (adStatus === 'unfilled' || adStatus === 'error' || (!effectiveUnitId && !renderAd)) return null;
+  // 4. Isolated, Reserved Container Rendering (NEVER disappear on slow response, rotation, or unfilled)
+  let posClasses =
+    'w-full max-w-[320px] md:max-w-[728px] min-h-[62px] h-[62px] md:min-h-[102px] md:h-[102px] max-h-[62px] md:max-h-[102px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0 transition-colors duration-200';
 
-  let posClasses = 'w-full flex justify-center overflow-hidden transition-all duration-300';
-  if (position === 'top') posClasses += ' mb-2.5 shrink-0';
-  else if (position === 'bottom' || position === 'footer') posClasses += ' mt-1 shrink-0';
-  else if (position === 'left' || position === 'right') {
-    posClasses = 'hidden xl:flex shrink-0 w-[140px] xl:w-[160px] 2xl:w-[240px] 3xl:w-[300px] max-w-[320px] justify-center overflow-hidden';
-  } else if (position === 'sidebar-horizontal') {
-    posClasses = 'w-full my-2 flex justify-center overflow-hidden';
+  if (orientation === 'vertical') {
+    posClasses =
+      'hidden xl:flex shrink-0 w-[160px] 2xl:w-[240px] 3xl:w-[300px] max-w-[300px] min-h-[520px] h-[520px] xl:h-[540px] max-h-full items-center justify-center overflow-hidden [contain:layout_style]';
+  } else if (slotId === 'participant-box-horizontal') {
+    posClasses =
+      'w-full max-w-[300px] lg:max-w-[320px] min-h-[112px] h-[112px] max-h-[120px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
+  } else if (isInternalHorizontalPlacement(slotId) || position === 'sidebar-horizontal') {
+    posClasses =
+      'w-full max-w-[320px] min-h-[62px] h-[62px] max-h-[68px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
+  } else if (position === 'top') {
+    posClasses += ' mb-2.5';
+  } else if (position === 'bottom' || position === 'footer') {
+    posClasses += ' mt-1';
   } else if (position === 'content-gap') {
-    posClasses = 'w-full my-8 flex justify-center overflow-hidden';
-  } else if (isVertical) {
-    posClasses = 'hidden xl:flex shrink-0 w-[140px] xl:w-[160px] 2xl:w-[240px] 3xl:w-[300px] max-w-[320px] justify-center overflow-hidden';
+    posClasses += ' my-8';
   }
 
   const containerProps = {
     'data-testid': `ad-slot-${slotId}`,
+    'data-ad-status': adStatus,
+    'data-ad-orientation': orientation,
+    'data-ad-provider': currentProvider,
     className: `${posClasses} ${className}`.trim(),
     ref: adRef,
   };
 
-  if (renderAd) return <div {...containerProps}>{renderAd()}</div>;
-  if (currentProvider === 'adsterra' || currentProvider === 'juicyads' || currentProvider === 'exoclick' || currentProvider === 'monetag') {
-    return <div {...containerProps} />;
+  const showAdSenseIns =
+    !renderAd &&
+    currentProvider === 'adsense' &&
+    !effectiveIsLiveChatScreen &&
+    Boolean(effectiveUnitId) &&
+    adStatus !== 'unfilled' &&
+    adStatus !== 'error';
+
+  if (renderAd) {
+    return <div {...containerProps}>{renderAd()}</div>;
+  }
+
+  if (showAdSenseIns) {
+    return (
+      <div {...containerProps}>
+        <div
+          key="adsense-react-host"
+          className="w-full h-full flex items-center justify-center overflow-hidden"
+        >
+          <ins
+            className="adsbygoogle block overflow-hidden max-w-full max-h-full"
+            data-ad-client={ADSENSE_CONFIG.publisherId}
+            data-ad-slot={effectiveUnitId}
+            data-ad-format={orientation === 'vertical' ? 'vertical' : 'horizontal'}
+            data-full-width-responsive="true"
+          />
+        </div>
+      </div>
+    );
   }
 
   return (
     <div {...containerProps}>
-      <ins
-        className="adsbygoogle block overflow-hidden max-w-full"
-        data-ad-client={ADSENSE_CONFIG.publisherId}
-        data-ad-slot={effectiveUnitId}
-        data-ad-format={isVertical || position === 'left' || position === 'right' ? 'vertical' : 'horizontal'}
-        data-full-width-responsive="true"
+      <div
+        key="imperative-ad-host"
+        ref={imperativeHostRef}
+        className="w-full h-full flex items-center justify-center overflow-hidden"
       />
     </div>
   );
 };
+

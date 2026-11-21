@@ -1222,7 +1222,7 @@ export const PublicChatPage: React.FC = () => {
       />
 
       {/* Ad 1 — Header Horizontal Ad (Immediately below header, equal vertical spacing) */}
-      <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 my-2 shrink-0 flex justify-center">
+      <div className="w-full max-w-7xl mx-auto px-1 sm:px-4 lg:px-6 my-2 shrink-0 flex justify-center">
         <AdPlacementBox
           slotId="public-chatroom-top"
           adUnitId={ADSTERRA_CONFIG.banner728x90}
@@ -1233,7 +1233,7 @@ export const PublicChatPage: React.FC = () => {
       {/* Main Responsive Desktop Workspace containing Side Ads + Central Chatroom Container */}
       <div className="w-full max-w-[1720px] 2xl:max-w-[1920px] 3xl:max-w-[2160px] mx-auto px-2 sm:px-4 xl:px-6 mb-4 h-[calc(100vh-5.5rem)] min-h-[580px] flex gap-2.5 xl:gap-3.5 2xl:gap-5 items-stretch overflow-hidden">
         {/* Ad 2 — Left Vertical Ad (Visible on desktop xl+ outside chatroom left border) */}
-        <div className="hidden xl:flex shrink-0 w-[140px] xl:w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
+        <div className="hidden xl:flex shrink-0 w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
           <AdPlacementBox
             slotId="public-chatroom-left"
             adUnitId={ADSTERRA_CONFIG.nativeUnitId}
@@ -1439,8 +1439,11 @@ export const PublicChatPage: React.FC = () => {
               <span className="text-slate-500 hidden md:inline shrink-0">Asia/Dhaka</span>
             </div>
 
-            {/* Placement A — Status-strip advertisement */}
-            <div className="px-3 py-1 bg-[#0a0f1d] border-b border-slate-800/80 shrink-0 flex justify-center">
+            {/* Placement A — Status-strip horizontal advertisement (strictly landscape) */}
+            <div
+              aria-label="Sponsored advertisement"
+              className="px-1 sm:px-3 py-1 bg-[#0a0f1d] border-b border-slate-800/80 shrink-0 flex justify-center overflow-hidden"
+            >
               <AdPlacementBox
                 slotId="public-chatroom-status-inline"
                 adUnitId={ADSTERRA_CONFIG.banner320x50}
@@ -1467,7 +1470,7 @@ export const PublicChatPage: React.FC = () => {
             <div
               ref={messagesContainerRef}
               onScroll={handleScrollMessages}
-              className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-1.5"
+              className="flex-1 overflow-y-auto px-2 py-3 sm:p-4 space-y-1.5"
             >
               {(() => {
                 const totalChatMsgs = messages.filter((m) => !m.isSystem).length;
@@ -1616,7 +1619,15 @@ export const PublicChatPage: React.FC = () => {
                         </div>
                       </div>
                       {showMessageInlineAd && (
-                        <div key={`${msg.id}-inline-ad`} className="my-2 px-1">
+                        <div
+                          key={`${msg.id}-inline-ad`}
+                          data-testid="public-chatroom-message-inline-container"
+                          aria-label="Sponsored advertisement"
+                          className="my-2 py-1.5 px-0 rounded-xl border border-slate-800/70 bg-[#080d19]/90 flex flex-col items-center gap-1 select-none overflow-hidden"
+                        >
+                          <span className="text-[9px] uppercase tracking-widest text-slate-500 font-mono leading-none">
+                            Sponsored
+                          </span>
                           <AdPlacementBox
                             slotId="public-chatroom-message-inline"
                             adUnitId={ADSTERRA_CONFIG.banner320x50}
@@ -2124,21 +2135,20 @@ export const PublicChatPage: React.FC = () => {
     </div>
 
       {/* Ad 3 — Right Vertical Ad (Visible on desktop xl+ outside chatroom right border) */}
-      <div className="hidden xl:flex shrink-0 w-[140px] xl:w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
+      <div className="hidden xl:flex shrink-0 w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
         <AdPlacementBox
           slotId="public-chatroom-right"
-          adUnitId={ADSTERRA_CONFIG.nativeUnitId}
+          adUnitId={ADSTERRA_CONFIG.banner300x250}
           isVertical={true}
           position="right"
         />
       </div>
     </div>
 
-      {/* Ad 5 — Bottom Horizontal Ad (Below chatroom border, visible gap, zero space when unfilled) */}
-      <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mb-6 shrink-0 flex justify-center">
+      {/* Ad 5 — Bottom Horizontal Ad (Below chatroom border, stable reserved space) */}
+      <div className="w-full max-w-7xl mx-auto px-1 sm:px-4 lg:px-6 mb-6 shrink-0 flex justify-center">
         <AdPlacementBox
           slotId="public-chatroom-bottom"
-          provider="adsterra"
           adUnitId={ADSTERRA_CONFIG.banner728x90}
           position="bottom"
         />

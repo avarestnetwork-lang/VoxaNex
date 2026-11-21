@@ -1,0 +1,803 @@
+# AI Studio Work Prompt 1 — Phase 1: ChatLustora Complete Ad Stability, Horizontal Internal Ads, Responsive Vertical Sidebars, Strict Layout Protection & Revenue Optimization
+
+## 1. PROJECT CONTEXT
+
+Project: ChatLustora  
+Website: https://chatlustora.com  
+Live Cam: https://cam.chatlustora.com
+
+Existing Stack:
+- React 19
+- Vite
+- TypeScript
+- Cloudflare Workers
+- Supabase
+- GitHub
+
+ChatLustora is an existing operational 18+ Bangla/Desi-oriented chat and social platform.
+
+**CRITICAL:** The existing website, guest access, chatrooms, authentication, messaging, participant list and other operational features are working.
+
+Your task is to improve the existing advertising system using the smallest safe changes possible.
+
+Do not rebuild, regenerate, replace or restructure the existing application.
+
+Preserve all existing working functionality.
+
+## 2. REFERENCE IMAGE REQUIREMENTS
+
+Use the two previously supplied reference images as visual guidance:
+
+1. `Neon Chatroom with Ads and Avatars(3).png`
+2. `ChatLustora Modern Chatroom UI(2).png`
+
+Study both images and inspect the actual existing ChatLustora layout.
+
+Pay attention to:
+
+- Top horizontal banner.
+- Left vertical sidebar advertisement.
+- Right vertical sidebar advertisement.
+- Participant Bar horizontal advertisement.
+- Two horizontal advertisements inside the chatroom.
+- Bottom horizontal banner.
+- Main Chat column proportions.
+- Participant Bar dimensions.
+- Message list, message bubbles and input positioning.
+- Overall spacing, alignment and visual balance.
+
+The reference images are visual guidance, not permission to redesign the existing interface.
+
+## 3. PHASE 1 OBJECTIVES
+
+Complete only the following advertising work:
+
+1. Permanently improve ad loading stability.
+2. Prevent advertisements from disappearing after refresh or re-render.
+3. Preserve all seven existing placement IDs.
+4. Support flexible provider-compatible creative dimensions.
+5. Improve left and right vertical sidebar advertisements.
+6. Make both internal chatroom advertisements strictly horizontal.
+7. Improve Participant Bar and top/bottom banner rendering.
+8. Allow only a minimal Main Chat width adjustment if necessary.
+9. Enforce strict ad isolation and chat layout protection.
+10. Integrate the exact user-supplied TrafficStars ads.txt entry.
+11. Improve provider compatibility and evidence-based revenue optimization.
+12. Complete regression testing and security review.
+
+Do not begin other roadmap modules.
+
+## 4. MANDATORY SOURCE INSPECTION
+
+Before editing:
+
+- Inspect the actual complete project structure.
+- Identify all existing ad components and provider integrations.
+- Inspect all seven placement IDs.
+- Inspect ad loading, validation, rotation, timeout and cleanup logic.
+- Inspect actual chatroom layout, CSS, grid/flex structure and responsive behavior.
+- Identify the exact positions and parent components of both internal ads.
+- Inspect Main Chat and sidebar dimensions.
+- Inspect Participant Bar structure.
+- Inspect ads.txt and its delivery mechanism.
+- Inspect package.json, build configuration and Worker routing.
+- Inspect relevant existing tests.
+
+Identify the actual cause of ad instability.
+
+Do not assume historical bug reports are still present without inspecting current source.
+
+Do not create duplicate ad systems or unnecessary abstractions.
+
+## 5. PRESERVE ALL SEVEN EXISTING AD PLACEMENT IDs
+
+Preserve these exact identifiers:
+
+| Placement ID | Purpose |
+|---|---|
+| `public-chatroom-top` | Top horizontal banner |
+| `public-chatroom-left` | Left vertical sidebar |
+| `public-chatroom-right` | Right vertical sidebar |
+| `participant-box-horizontal` | Participant Bar horizontal ad |
+| `public-chatroom-bottom` | Bottom horizontal banner |
+| `public-chatroom-status-inline` | Internal horizontal status ad |
+| `public-chatroom-message-inline` | Internal horizontal message ad |
+
+Do not rename, remove or duplicate these placement IDs unless the existing architecture technically requires a separate documented provider zone.
+
+Preserve their existing responsibilities.
+
+## 6. PERMANENT AD STABILITY
+
+Implement a reliable production-ready ad lifecycle.
+
+Requirements:
+
+- Reserve ad space before requesting a creative.
+- Prevent reserved slots from disappearing because of slow provider responses.
+- Keep reserved dimensions stable for unfilled or failed ads.
+- Prevent stale asynchronous callbacks from previous providers or rotations from modifying current slots.
+- Prevent duplicate script injection.
+- Prevent multiple provider instances from competing for one placement.
+- Handle provider timeouts, network errors, script failures and unfilled responses safely.
+- Clean up scripts, listeners, timers and observers correctly.
+- Prevent unnecessary reloads caused by React re-renders.
+- Handle mounting, unmounting and remounting safely.
+- Preserve stable dimensions during provider rotation.
+- Avoid unnecessary reloads during navigation.
+- Ensure refresh does not create duplicate ads.
+
+Use existing provider integration mechanisms wherever possible.
+
+Never create fake banners, creatives, impressions, clicks or revenue events.
+
+If no real eligible ad is available, retain the reserved slot without fabricated content.
+
+## 7. FLEXIBLE RESPONSIVE AD DIMENSIONS
+
+Do not restrict ad compatibility to a few hardcoded dimensions.
+
+Inspect actual provider zone configurations and officially supported creative dimensions.
+
+Select only provider-supported creatives that fit the actual available container.
+
+### A. Participant Bar Advertisement
+
+Maximum reserved target:
+
+**300px width × 120px height**
+
+Support compatible provider-approved dimensions such as:
+
+- 300×50
+- 300×100
+- 300×112
+- 300×120
+- Other officially supported compatible dimensions.
+
+320×50 may be used only when actual available width safely permits it.
+
+Keep Participant Bar dimensions stable during loading and rotation.
+
+### B. Main Chat Horizontal Banner
+
+Maximum reserved target:
+
+**728px width × 102px height**
+
+Support compatible provider-approved dimensions such as:
+
+- 728×90
+- 728×100
+- 728×102
+- Other officially supported compatible dimensions.
+
+Never distort a creative to fit.
+
+### C. General Dimension Rules
+
+- Determine available width and height from the actual container.
+- Verify official provider-supported sizes.
+- Preserve creative aspect ratio.
+- Never stretch, crop or clip creatives.
+- Do not infer supported sizes from aspect ratio alone.
+- Use actual viewport constraints for responsive selection.
+- Do not force desktop creatives into mobile layouts.
+- Keep reserved space stable before and after loading.
+- If no compatible creative exists, keep the slot reserved and unfilled.
+
+## 8. LEFT AND RIGHT VERTICAL SIDEBAR ADVERTISEMENTS
+
+Both sidebar advertisements must display clearly and vertically, following the supplied reference images.
+
+Requirements:
+
+- Preserve existing left/right sidebar positions.
+- Provide suitable reserved vertical ad containers.
+- Display supported vertical creatives without distortion.
+- Maintain proper alignment and spacing.
+- Prevent overlap, clipping and overflow.
+- Prevent containers from unexpectedly expanding or collapsing.
+- Select creative sizes based on actual available space.
+
+### Minimal Main Chat Width Adjustment
+
+You are explicitly permitted to reduce the Main Chat column width slightly if genuinely necessary to create suitable space for vertical sidebar ads.
+
+However:
+
+- Keep the reduction minimal.
+- Maintain comfortable message-reading width.
+- Do not make Main Chat cramped.
+- Do not unnecessarily enlarge sidebars.
+- Do not redesign the overall chatroom.
+- Do not arbitrarily change responsive breakpoints.
+- Do not alter Participant Bar geometry.
+
+Inspect the actual grid/flex structure, CSS and viewport constraints before deciding.
+
+Do not guess dimensions.
+
+If a vertical creative cannot fit safely, choose a smaller compatible creative instead of damaging the existing layout.
+
+## 9. CRITICAL — BOTH INTERNAL CHATROOM ADS MUST BE HORIZONTAL
+
+This is a strict, non-negotiable visual requirement.
+
+The two existing internal chatroom placements are:
+
+1. `public-chatroom-status-inline`
+2. `public-chatroom-message-inline`
+
+**Both advertisements MUST display in HORIZONTAL / LANDSCAPE orientation.**
+
+### A. Strict Horizontal Orientation
+
+- Status Inline Ad must be horizontal.
+- Message Inline Ad must be horizontal.
+- Do not display either internal ad as a vertical or portrait advertisement.
+- Do not rotate, stack or transform a vertical creative to simulate a horizontal ad.
+- Do not use a tall portrait creative in either internal placement.
+- Select only provider-supported landscape creatives that fit the actual available horizontal container.
+- Preserve the creative's original aspect ratio.
+- Do not stretch, crop or distort the creative.
+
+### B. Horizontal Container Behavior
+
+Inspect each placement's actual parent component and available dimensions.
+
+Both internal placements must use suitable horizontal reserved containers.
+
+The containers must:
+
+- Fit naturally within the existing chatroom width.
+- Maintain horizontal alignment.
+- Keep consistent spacing from surrounding chat elements.
+- Avoid unnecessary height expansion.
+- Reserve their dimensions before ad loading.
+- Remain stable during provider rotation and failure.
+- Support responsive landscape creatives on smaller screens.
+
+Use actual available container width to select compatible horizontal dimensions.
+
+Do not assume that both placements must use identical creative dimensions if their available space differs.
+
+### C. Status Inline Horizontal Ad
+
+The status advertisement must:
+
+- Remain in its existing intended status/inline position.
+- Display horizontally.
+- Align properly with surrounding status elements.
+- Have a stable reserved horizontal container.
+- Avoid overlapping status or participant information.
+- Never push or reposition surrounding components.
+
+### D. Message Inline Horizontal Ad
+
+The message advertisement must:
+
+- Remain in its existing intended message-area position.
+- Display horizontally.
+- Maintain visual separation from normal chat messages.
+- Preserve message readability.
+- Avoid overlap with message bubbles, timestamps and user information.
+- Preserve message-list scrolling behavior.
+- Remain stable when new messages arrive.
+- Work correctly with manual scrolling and auto-scroll.
+
+The advertisement must never look like a real user message or create confusion about message ownership.
+
+### E. Mobile Behavior
+
+On mobile:
+
+- Keep both internal ads horizontal.
+- Select a smaller provider-supported landscape creative when necessary.
+- Fit the creative within the available container width.
+- Preserve its aspect ratio.
+- Do not force vertical/portrait ads into these placements.
+- Do not introduce horizontal page scrolling.
+- Do not change existing mobile navigation or chat layout.
+
+If no suitable horizontal creative is available, retain the stable reserved slot without displaying a vertical creative.
+
+### F. Absolute Rule
+
+**Both internal chatroom ads must always be horizontal. Vertical sidebar advertisements must remain separate from these two internal horizontal placements.**
+
+Do not mix their placement roles or creative orientations.
+
+## 10. STRICT CHAT LAYOUT PROTECTION
+
+After the minimum necessary Main Chat width adjustment, establish a strict boundary between ad rendering and the operational chat interface.
+
+### A. Allowed Changes
+
+Only:
+
+1. Minimal Main Chat width adjustment when necessary.
+2. Ad-specific reserved container dimensions.
+3. Ad-specific internal styling.
+4. Safe responsive creative selection.
+5. Ad lifecycle improvements.
+6. Small ad-specific spacing adjustments inside approved ad areas.
+
+### B. Protected Components
+
+Preserve the existing:
+
+- Overall chatroom structure and positioning.
+- Header and navigation.
+- Participant Bar width and positioning.
+- Participant list and ordering.
+- Avatar dimensions and spacing.
+- Chatroom height.
+- Message-list dimensions.
+- Message scrolling behavior.
+- Message bubbles and typography.
+- Message spacing and timestamps.
+- Chat input box.
+- Toolbar and action buttons.
+- Mobile navigation.
+- Responsive breakpoints.
+- Guest entry and guest chat.
+- Registered-member functionality.
+- Public and private messaging.
+- Authentication and session behavior.
+
+Do not redesign, regenerate or restructure these components.
+
+### C. Ad Isolation
+
+Render all advertisements inside their own isolated reserved containers.
+
+Where technically safe, use CSS containment, explicit dimensions, maximum width/height and overflow protection.
+
+Third-party scripts, iframes and creatives must never:
+
+- Resize protected parent components.
+- Push protected elements out of position.
+- Expand Main Chat unexpectedly.
+- Change Participant Bar dimensions.
+- Cover messages or controls.
+- Cause horizontal overflow.
+- Introduce unexpected page scrolling.
+- Change responsive breakpoints.
+- Modify unrelated component styles.
+
+Reserve ad space before loading to prevent cumulative layout shift.
+
+If an ad cannot fit, do not expand its container or distort the creative.
+
+**The chat layout always takes priority over advertisement rendering.**
+
+## 11. PRESERVE EXISTING SIDEBAR GEOMETRY
+
+Previously observed sidebar widths:
+
+- `lg:w-[340px]`
+- `xl:w-[344px]`
+
+Verify these values in the actual current source.
+
+Preserve existing sidebar geometry wherever possible.
+
+Do not arbitrarily enlarge or redesign the sidebars.
+
+If a vertical creative cannot fit, select a smaller compatible creative.
+
+Only the explicitly approved minimal Main Chat width adjustment is permitted as an overall layout change.
+
+## 12. ALL SEVEN PLACEMENTS MUST WORK TOGETHER
+
+Verify:
+
+1. Top horizontal banner.
+2. Left vertical sidebar advertisement.
+3. Right vertical sidebar advertisement.
+4. Participant Bar horizontal advertisement.
+5. Bottom horizontal banner.
+6. Internal status horizontal advertisement.
+7. Internal message horizontal advertisement.
+
+Use both reference images to assess visual balance.
+
+Each placement must operate independently.
+
+One provider's failure must not cause other placements to disappear or change dimensions.
+
+Prevent duplicate creatives, conflicting scripts and shared-state errors.
+
+## 13. PROVIDER COMPATIBILITY AND ELIGIBILITY
+
+Inspect all existing configured providers, potentially including:
+
+- Google AdSense.
+- TrafficStars.
+- JuicyAds.
+- ExoClick.
+- HilltopAds.
+- Adsterra.
+- Other providers already configured.
+
+For every provider:
+
+- Inspect actual integration and zone configuration.
+- Verify official supported dimensions.
+- Check content eligibility and provider policies.
+- Verify approval requirements for each ChatLustora section.
+- Check whether `cam.chatlustora.com` requires separate approval from the main domain.
+- Do not assume approval for Dating, Shop, Personal Classified Ads, Blog, Forum, video or Live Cam.
+
+Do not insert tags into unapproved sections.
+
+Do not invent provider APIs, zone IDs, credentials or approval status.
+
+Preserve working integrations.
+
+## 14. EVIDENCE-BASED REVENUE OPTIMIZATION
+
+Use actual provider-reported metrics:
+
+- eCPM.
+- Fill rate.
+- GEO/country.
+- Ad format.
+- Placement.
+- Device category.
+- Verified impressions.
+- Actual revenue.
+- Provider deductions and payout conditions.
+
+Use minimum sample thresholds before comparing performance.
+
+Do not invent statistics or declare a highest-paying provider without comparable real data.
+
+Do not fabricate impressions, clicks, CTR, eCPM or revenue.
+
+Do not add paid services or incur costs without explicit approval.
+
+## 15. TRAFFICSTARS ads.txt INTEGRATION
+
+Inspect the existing ads.txt file and delivery mechanism.
+
+The user reports that the live AdSense entry currently is:
+
+`google.com, pub-7862321512207088, DIRECT, f08c47fec0942fa0`
+
+TrafficStars supplied this exact entry:
+
+`tsyndicate.com 354866`
+
+Add the exact TrafficStars line once, preserving the AdSense entry and all other existing entries.
+
+Expected minimum content:
+
+`google.com, pub-7862321512207088, DIRECT, f08c47fec0942fa0`
+
+`tsyndicate.com 354866`
+
+### Mandatory User Instruction
+
+Use exactly:
+
+`tsyndicate.com 354866`
+
+Do not:
+
+- Convert it to comma-separated syntax.
+- Append `DIRECT`.
+- Append `RESELLER`.
+- Append a certification ID.
+- Invent additional seller IDs.
+- Remove other existing entries.
+- Replace the entire file unnecessarily.
+
+Preserve the existing public delivery mechanism.
+
+Verify local content and available local serving/build behavior.
+
+Do not claim the production URL changed unless an explicitly approved deployment has occurred and the live URL has been independently verified.
+
+If a standards or validator concern exists, report it separately without silently rewriting the supplied line.
+
+## 16. SECURITY AND PRIVACY REVIEW
+
+Inspect for:
+
+- Unsafe third-party script execution.
+- Unsafe iframe behavior.
+- Unsafe DOM manipulation.
+- Cross-site scripting risks.
+- Unnecessary external permissions.
+- Unsafe postMessage handling, if used.
+- Unnecessary user data collection or exposure.
+- Leaked API keys or credentials.
+- Ads interfering with authentication or chat sessions.
+- Unnecessary external network requests.
+
+Never expose Supabase service-role keys, Cloudflare secrets, session secrets or private provider credentials.
+
+Never put private credentials in frontend code or public `VITE_` variables.
+
+Do not weaken existing authentication or Supabase RLS.
+
+Do not modify unrelated database schemas, policies, DNS or environment variables.
+
+## 17. MANDATORY TESTING
+
+Use the existing test framework and add targeted regression tests where appropriate.
+
+Do not replace meaningful production lifecycle tests with simulation-only tests.
+
+### A. Ad Lifecycle Tests
+
+Test:
+
+- Initial load.
+- Refresh.
+- Component remount.
+- Slow provider response.
+- Provider timeout.
+- Provider error.
+- Unfilled response.
+- Provider rotation.
+- Stale callback rejection.
+- Duplicate script prevention.
+- Safe cleanup.
+- Stable reserved space.
+
+### B. Creative Dimension Tests
+
+Test all officially supported dimensions.
+
+Verify:
+
+- Correct fit.
+- Preserved aspect ratio.
+- No stretching.
+- No cropping.
+- No clipping.
+- No overflow.
+- Correct responsive fallback.
+- Stable reserved dimensions.
+
+### C. Sidebar Tests
+
+Test both vertical sidebar ads independently and simultaneously.
+
+Verify:
+
+- Correct vertical presentation.
+- No distortion.
+- No overlap.
+- No unexpected width changes.
+- Minimal Main Chat width adjustment.
+- Desktop, laptop, tablet and mobile behavior.
+
+### D. Internal Horizontal Ad Tests
+
+Test both:
+
+- `public-chatroom-status-inline`
+- `public-chatroom-message-inline`
+
+Verify:
+
+- Both always render in horizontal/landscape orientation.
+- Neither renders vertical/portrait creatives.
+- Landscape creative dimensions fit actual available width.
+- Aspect ratio remains intact.
+- Both containers remain stable during loading and rotation.
+- Neither expands chatroom height unexpectedly.
+- Neither overlaps surrounding chat elements.
+- Both remain horizontal on mobile using compatible smaller creatives.
+- Unfilled slots remain reserved without layout collapse.
+
+Test:
+
+1. Initial load.
+2. Refresh.
+3. Slow provider response.
+4. Timeout.
+5. Unfilled response.
+6. Provider rotation.
+7. Creative dimension changes.
+8. New messages arriving.
+9. Manual message-list scrolling.
+10. Auto-scroll.
+11. Mobile layout.
+12. Desktop layout.
+
+### E. Participant Bar and Banner Tests
+
+Verify:
+
+- Participant Bar horizontal ad.
+- Top horizontal banner.
+- Bottom horizontal banner.
+- Compatible creative dimensions.
+- Refresh and provider rotation.
+- Stable reserved dimensions.
+
+### F. Strict Layout Regression Tests
+
+Compare before and after at desktop, laptop, tablet and mobile viewports.
+
+Verify:
+
+- Both sidebars display vertical ads properly.
+- Both internal chatroom ads display horizontally.
+- Main Chat width changes only minimally.
+- Participant Bar dimensions remain unchanged.
+- Avatar dimensions remain unchanged.
+- Message-list dimensions and scrolling remain stable.
+- Chatroom height remains stable.
+- Input box and toolbar positions remain unchanged.
+- No overlap.
+- No horizontal overflow.
+- No unexpected page scrolling.
+- No cumulative layout shift.
+- No unrelated responsive changes.
+
+Use measurable before/after evidence or screenshots where available.
+
+### G. Existing Application Regression
+
+Verify:
+
+- Guest entry and guest access.
+- Registered-member access.
+- Public chat.
+- Private chat.
+- Message sending and receiving.
+- Participant list and presence.
+- Existing navigation.
+- Existing session behavior.
+- Responsive behavior.
+
+Do not claim a test passed without actual output or definitive evidence.
+
+## 18. IMPLEMENTATION RULES
+
+- Complete exactly this phase.
+- Inspect before editing.
+- Use the Smallest Safe Change.
+- Preserve existing architecture.
+- Preserve operational features.
+- Do not rewrite unrelated files.
+- Do not introduce unnecessary dependencies.
+- Do not create duplicate placement IDs.
+- Do not create fake advertising content.
+- Do not weaken security.
+- Do not use placeholders or incomplete implementations.
+- Fully implement every file you modify.
+- Preserve existing coding conventions.
+- Keep changes scoped and reviewable.
+
+If a requirement cannot be implemented safely, report the technical constraint instead of forcing an unsafe change.
+
+## 19. BUILD AND VERIFICATION
+
+Run all checks supported by the actual project:
+
+- TypeScript validation.
+- Existing automated tests.
+- New targeted regression tests.
+- Production build.
+- Relevant lint checks.
+- Ad lifecycle tests.
+- Responsive layout tests.
+- Worker/build checks where applicable.
+
+Inspect actual command output.
+
+Report passed, failed and skipped tests, warnings, errors and environmental limitations.
+
+Do not claim deployment or production verification based only on a local build.
+
+## 20. PRODUCTION CHANGE RESTRICTIONS
+
+You may inspect and make the requested scoped source changes in the working project.
+
+You are NOT authorized to:
+
+- Push to GitHub.
+- Deploy to Cloudflare production.
+- Change production secrets.
+- Change production environment variables.
+- Modify DNS.
+- Modify Supabase schemas.
+- Modify Supabase RLS policies.
+- Make destructive changes.
+- Purchase paid services.
+- Enable paid services that incur charges.
+
+Stop before any such action and request explicit approval.
+
+If deployment is later approved, provide exact required Cloudflare commands and verification steps based on the actual project configuration.
+
+Never expose secret values.
+
+Do not invent environment variables or secret names.
+
+## 21. REQUIRED FINAL EVIDENCE REPORT
+
+After implementation, provide:
+
+1. Root cause of ad instability.
+2. Exact files inspected.
+3. Exact files modified.
+4. Changes made in each modified file.
+5. All seven placement IDs preserved.
+6. Provider compatibility findings.
+7. Officially verified creative dimensions.
+8. Participant Bar before/after dimensions.
+9. Main Chat width before/after with evidence.
+10. Left vertical sidebar verification.
+11. Right vertical sidebar verification.
+12. Internal status horizontal ad verification.
+13. Internal message horizontal ad verification.
+14. Evidence that neither internal ad displays vertically.
+15. Top and bottom banner verification.
+16. Strict layout protection results.
+17. Reference image comparison findings.
+18. ads.txt before/after content and delivery verification.
+19. Security review findings.
+20. Test commands and actual outputs.
+21. TypeScript validation results.
+22. Production build results.
+23. Remaining issues and limitations.
+24. Provider approval requirements still outstanding.
+
+Classify each result:
+
+- VERIFIED
+- PARTIALLY VERIFIED
+- NOT VERIFIED
+- BLOCKED
+
+Provide screenshots or measurable before/after evidence where available.
+
+Distinguish local testing from live production verification.
+
+## 22. FINAL STOP CONDITION
+
+Complete only Phase 1.
+
+Do not start Dating, Shop, Forum, Live Cam or other roadmap modules.
+
+Do not push to GitHub.
+
+Do not deploy to Cloudflare production.
+
+Do not change production settings.
+
+After the complete evidence-based report, STOP and wait for the user's manual verification and explicit confirmation.
+
+### FINAL NON-NEGOTIABLE PRIORITIES
+
+All seven existing advertising placements must work together:
+
+1. Top horizontal banner.
+2. Left vertical sidebar advertisement.
+3. Right vertical sidebar advertisement.
+4. Participant Bar horizontal advertisement.
+5. Bottom horizontal banner.
+6. Internal status horizontal advertisement.
+7. Internal message horizontal advertisement.
+
+**STRICT ORIENTATION RULE:**
+- Left and right sidebar ads = VERTICAL.
+- Both internal chatroom ads = HORIZONTAL.
+- Participant Bar ad = HORIZONTAL.
+- Top and bottom banners = HORIZONTAL.
+
+The Main Chat column may be reduced slightly only when necessary to accommodate vertical sidebar advertisements.
+
+All ads must render inside isolated, stable containers.
+
+**Advertising scripts, iframes and creatives must never disrupt the existing ChatLustora chat layout, Participant Bar, message list, chat input, toolbar, chatroom height, scrolling, navigation or working chat functionality.**
+
+Preserving the operational chat experience always takes priority over forcing an advertisement to render.
