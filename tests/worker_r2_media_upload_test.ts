@@ -188,6 +188,9 @@ async function runSuite() {
   const mockMediaUploads = new Map<string, any>();
   const mockMessages: any[] = [];
   let failNextMetadataInsert = false;
+  let simulateModerationHttpError = false;
+  let simulateModerationNetworkError = false;
+  let simulateModerationMalformedRow = false;
 
   // Populate initial state
   const memberAliceId = '11111111-1111-4111-8111-111111111111';
@@ -218,12 +221,16 @@ async function runSuite() {
     const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
 
-    // Backend proxy interceptor
+    // Backend proxy interceptor (deliberately emits wildcard/credentials CORS upstream to test Worker stripping)
     if (urlStr.startsWith(BACKEND_URL)) {
       const url = new URL(urlStr);
       return new Response(JSON.stringify({ proxied: true, path: url.pathname }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Credentials': 'true',
+        },
       });
     }
 
@@ -295,9 +302,29 @@ async function runSuite() {
         });
       }
 
+      if (simulateModerationNetworkError) {
+        simulateModerationNetworkError = false;
+        throw new Error('Simulated Supabase network failure');
+      }
+      if (simulateModerationHttpError) {
+        simulateModerationHttpError = false;
+        return new Response(JSON.stringify({ message: 'Simulated DB read error' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       const url = new URL(urlStr);
       const idParam = url.searchParams.get('id');
       const targetId = idParam ? idParam.replace(/^eq\./, '') : '';
+      if (simulateModerationMalformedRow) {
+        simulateModerationMalformedRow = false;
+        return new Response(JSON.stringify([{ id: targetId, is_flagged: 'invalid_non_bool' }]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       const existing = mockMediaUploads.get(targetId);
       return new Response(JSON.stringify(existing ? [existing] : []), {
         status: 200,
@@ -1394,6 +1421,10 @@ async function runSuite() {
           metadataVersion: '1.2',
         },
       });
+      mockMediaUploads.set('med_valid_meta_version', {
+        id: 'med_valid_meta_version',
+        is_flagged: false,
+      });
 
       const req = new Request('https://chatlustora.com/api/media/med_valid_meta_version', {
         method: 'GET',
@@ -1728,6 +1759,426 @@ async function runSuite() {
       }
       assert(hit429, 'H6.1: Upload rate limit enforces HTTP 429 after 25 uploads within 60s');
       assert(Number(retryAfterHeader) >= 1, 'H6.2: Rate limit response includes valid Retry-After header');
+    }
+
+    // -------------------------------------------------------------------------
+    // CATEGORY I: Production-Grade CORS Policy Enforcement
+    // -------------------------------------------------------------------------
+    console.log('\n--- Category I: Production-Grade CORS Policy Enforcement ---');
+
+    // I1: Trusted production origin allowed with exact origin & Vary: Origin
+    {
+      const res = await worker.fetch(
+        new Request('https://chatlustora.com/api/health', {
+          method: 'GET',
+          headers: { 'Origin': 'https://chatlustora.com' },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(res.status === 200, 'I1: Trusted production origin succeeds on /api/health');
+      assert(res.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'I1.1: Emits exact trusted origin (no *)');
+      assert((res.headers.get('Vary') || '').includes('Origin'), 'I1.2: Includes Vary: Origin');
+      assert(res.headers.get('Access-Control-Allow-Credentials') === null, 'I1.3: Does not enable Access-Control-Allow-Credentials');
+    }
+
+    // I2: Untrusted, subdomain, lookalike, HTTP-downgrade, and null origins rejected (never reflected or wildcarded)
+    {
+      const untrustedOrigins = [
+        'https://evil.com',
+        'https://evil.chatlustora.com',
+        'https://chatlustora.com.evil.com',
+        'https://notchatlustora.com',
+        'http://chatlustora.com',
+        'null',
+        'https://chatlustora.com/',
+      ];
+      for (const badOrigin of untrustedOrigins) {
+        const res = await worker.fetch(
+          new Request('https://chatlustora.com/api/health', {
+            method: 'GET',
+            headers: { 'Origin': badOrigin },
+          }),
+          nativeChatEnv,
+          {}
+        );
+        assert(res.headers.get('Access-Control-Allow-Origin') === null, `I2 (${badOrigin}): No Access-Control-Allow-Origin emitted`);
+        assert((res.headers.get('Vary') || '').includes('Origin'), `I2a (${badOrigin}): Vary: Origin emitted`);
+      }
+    }
+
+    // I3: OPTIONS preflight trusted (204) vs untrusted (403) vs disallowed method (405)
+    {
+      const okPreflight = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'OPTIONS',
+          headers: {
+            'Origin': 'https://chatlustora.com',
+            'Access-Control-Request-Method': 'POST',
+            'Access-Control-Request-Headers': 'Authorization, Content-Type, X-Guest-Token',
+          },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(okPreflight.status === 204, 'I3.1: Trusted OPTIONS preflight returns 204');
+      assert(okPreflight.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'I3.2: Preflight returns exact origin');
+      assert(okPreflight.headers.get('Access-Control-Allow-Methods') === 'GET, POST, OPTIONS', 'I3.3: Native route preflight restricts methods to GET, POST, OPTIONS');
+      const allowHdrs = okPreflight.headers.get('Access-Control-Allow-Headers') || '';
+      assert(
+        allowHdrs.includes('Authorization') &&
+        allowHdrs.includes('X-Guest-Token') &&
+        allowHdrs.includes('X-Context-Type') &&
+        allowHdrs.includes('X-Context-Id') &&
+        allowHdrs.includes('X-File-Name'),
+        'I3.4: Preflight allows verified upload/auth headers'
+      );
+      assert((okPreflight.headers.get('Vary') || '').includes('Origin'), 'I3.5: Preflight includes Vary: Origin');
+      assert(okPreflight.headers.get('Access-Control-Allow-Credentials') === null, 'I3.6: Preflight omits Allow-Credentials');
+
+      const badPreflight = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'OPTIONS',
+          headers: {
+            'Origin': 'https://evil.chatlustora.com',
+            'Access-Control-Request-Method': 'POST',
+          },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(badPreflight.status === 403, 'I3.7: Untrusted OPTIONS preflight denied with 403');
+      assert(badPreflight.headers.get('Access-Control-Allow-Origin') === null, 'I3.8: Denied preflight emits no ACAO');
+      assert((badPreflight.headers.get('Vary') || '').includes('Origin'), 'I3.9: Denied preflight emits Vary: Origin');
+
+      const missingOriginPreflight = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'OPTIONS',
+          headers: { 'Access-Control-Request-Method': 'POST' },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(missingOriginPreflight.status === 403, 'I3.10: Preflight without Origin header denied with 403');
+
+      const disallowedMethodPreflight = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'OPTIONS',
+          headers: {
+            'Origin': 'https://chatlustora.com',
+            'Access-Control-Request-Method': 'DELETE',
+          },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(disallowedMethodPreflight.status === 405, 'I3.11: Disallowed preflight method DELETE on native route returns 405');
+      assert((disallowedMethodPreflight.headers.get('Vary') || '').includes('Origin'), 'I3.12: Disallowed preflight method emits Vary: Origin');
+    }
+
+    // I4: Localhost origins rejected in prod/staging, allowed ONLY in development
+    {
+      const prodLocalRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/health', {
+          method: 'GET',
+          headers: { 'Origin': 'http://localhost:3000' },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(prodLocalRes.headers.get('Access-Control-Allow-Origin') === null, 'I4.1: http://localhost:3000 rejected in production');
+
+      const stagingLocalRes = await worker.fetch(
+        new Request('https://voxanex-staging.workers.dev/api/health', {
+          method: 'GET',
+          headers: { 'Origin': 'http://localhost:3000' },
+        }),
+        { ...nativeChatEnv, ENVIRONMENT: 'staging' },
+        {}
+      );
+      assert(stagingLocalRes.headers.get('Access-Control-Allow-Origin') === null, 'I4.2: http://localhost:3000 rejected in staging');
+
+      const devLocalRes = await worker.fetch(
+        new Request('http://localhost:8787/api/health', {
+          method: 'GET',
+          headers: { 'Origin': 'http://localhost:3000' },
+        }),
+        { ...nativeChatEnv, ENVIRONMENT: 'development' },
+        {}
+      );
+      assert(devLocalRes.headers.get('Access-Control-Allow-Origin') === 'http://localhost:3000', 'I4.3: http://localhost:3000 allowed in recognized dev mode');
+    }
+
+    // I5: Optional ALLOWED_ORIGINS env override rejects wildcards/HTTP in prod, allows exact HTTPS origins
+    {
+      const envWithOverride = {
+        ...nativeChatEnv,
+        ALLOWED_ORIGINS: 'https://staging.chatlustora.com, *, http://insecure.example.com, https://evil.com/path',
+      };
+      const allowedOverrideRes = await worker.fetch(
+        new Request('https://staging.chatlustora.com/api/health', {
+          method: 'GET',
+          headers: { 'Origin': 'https://staging.chatlustora.com' },
+        }),
+        envWithOverride,
+        {}
+      );
+      assert(allowedOverrideRes.headers.get('Access-Control-Allow-Origin') === 'https://staging.chatlustora.com', 'I5.1: Valid HTTPS ALLOWED_ORIGINS entry allowed');
+
+      const rejectedHttpOverride = await worker.fetch(
+        new Request('https://chatlustora.com/api/health', {
+          method: 'GET',
+          headers: { 'Origin': 'http://insecure.example.com' },
+        }),
+        envWithOverride,
+        {}
+      );
+      assert(rejectedHttpOverride.headers.get('Access-Control-Allow-Origin') === null, 'I5.2: Non-HTTPS ALLOWED_ORIGINS entry ignored in prod');
+    }
+
+    // I6: Consistent CORS across R2 media download, SSE stream, proxied BACKEND_URL (stripping upstream *), and same-origin
+    {
+      const mediaCorsRes = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${memberMediaId}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': 'Bearer jwt_alice',
+            'Origin': 'https://chatlustora.com',
+          },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(mediaCorsRes.status === 200, 'I6.1: Media download succeeds for trusted origin');
+      assert(mediaCorsRes.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'I6.2: Media download uses exact trusted origin');
+      assert((mediaCorsRes.headers.get('Vary') || '').includes('Origin'), 'I6.3: Media download includes Vary: Origin');
+
+      // SSE stream check
+      const sseRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/chat/rooms/general/events', {
+          method: 'GET',
+          headers: {
+            'Authorization': 'Bearer jwt_alice',
+            'Origin': 'https://chatlustora.com',
+          },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(sseRes.status === 200, 'I6.4: Room SSE stream connects with HTTP 200');
+      assert(sseRes.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'I6.5: SSE stream emits exact trusted origin (no *)');
+      assert((sseRes.headers.get('Vary') || '').includes('Origin'), 'I6.6: SSE stream emits Vary: Origin');
+      assert((sseRes.headers.get('Content-Type') || '').includes('text/event-stream'), 'I6.7: SSE Content-Type preserved');
+      if (sseRes.body) {
+        const reader = sseRes.body.getReader();
+        const firstChunk = await reader.read();
+        const decodedChunk = new TextDecoder().decode(firstChunk.value || new Uint8Array());
+        assert(decodedChunk.includes('event: connected'), 'I6.8: SSE stream emits connected event chunk cleanly');
+        await reader.cancel();
+      }
+
+      // Proxied BACKEND_URL response must strip upstream '*' and 'Allow-Credentials: true'
+      const proxyTrustedRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/some/external/service', {
+          method: 'GET',
+          headers: { 'Origin': 'https://chatlustora.com' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(proxyTrustedRes.status === 200, 'I6.9: Proxied response succeeds');
+      assert(proxyTrustedRes.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'I6.10: Proxied response overrides upstream * with exact trusted origin');
+      assert(proxyTrustedRes.headers.get('Access-Control-Allow-Credentials') === null, 'I6.11: Proxied response strips upstream Allow-Credentials');
+      assert((proxyTrustedRes.headers.get('Vary') || '').includes('Origin'), 'I6.12: Proxied response emits Vary: Origin');
+
+      const proxyUntrustedRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/some/external/service', {
+          method: 'GET',
+          headers: { 'Origin': 'https://evil.com' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(proxyUntrustedRes.headers.get('Access-Control-Allow-Origin') === null, 'I6.13: Proxied response strips upstream * and emits no ACAO for untrusted origin');
+
+      const proxyNonNativePreflight = await worker.fetch(
+        new Request('https://chatlustora.com/api/admin/rooms/123', {
+          method: 'OPTIONS',
+          headers: {
+            'Origin': 'https://chatlustora.com',
+            'Access-Control-Request-Method': 'DELETE',
+          },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(proxyNonNativePreflight.status === 204, 'I6.14: Proxied non-native route preflight permits DELETE when BACKEND_URL configured');
+
+      // Same-origin / no-Origin request
+      const sameOriginRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/health', { method: 'GET' }),
+        nativeChatEnv,
+        {}
+      );
+      assert(sameOriginRes.status === 200, 'I6.15: Request without Origin header succeeds cleanly');
+      assert(sameOriginRes.headers.get('Access-Control-Allow-Origin') === null, 'I6.16: Request without Origin never emits Access-Control-Allow-Origin: *');
+      assert((sameOriginRes.headers.get('Vary') || '').includes('Origin'), 'I6.17: Request without Origin emits Vary: Origin');
+    }
+
+    // -------------------------------------------------------------------------
+    // CATEGORY J: Fail-Closed Media Moderation & Security/Regression Checks
+    // -------------------------------------------------------------------------
+    console.log('\n--- Category J: Fail-Closed Media Moderation & Regressions ---');
+
+    // J1: R2 object exists, metadata record missing in Supabase -> fail closed 404
+    {
+      const orphanId = 'med_orphan_no_db_row';
+      await mockR2.put(`media/objects/${orphanId}`, VALID_PNG_BYTES, {
+        httpMetadata: { contentType: 'image/png' },
+        customMetadata: {
+          mediaId: orphanId,
+          contextType: 'room',
+          contextId: 'general',
+          metadataVersion: '1.2',
+        },
+      });
+      const res = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${orphanId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(res.status === 404, 'J1: Media missing public.media_uploads metadata fails closed with HTTP 404');
+      assert(res.headers.get('Cache-Control') === 'private, no-store', 'J1.1: Error response enforces Cache-Control: private, no-store');
+      const bodyText = await res.text();
+      assert(!bodyText.includes('media/objects/'), 'J1.2: Error response never leaks R2 object key');
+    }
+
+    // J2: DB HTTP 500 error during moderation lookup -> fail closed 502
+    {
+      simulateModerationHttpError = true;
+      const res = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${memberMediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(res.status === 502, 'J2: Moderation lookup DB HTTP 500 fails closed with HTTP 502');
+      assert(res.headers.get('Cache-Control') === 'private, no-store', 'J2.1: DB error response enforces private, no-store');
+    }
+
+    // J3: DB network exception during moderation lookup -> fail closed 503
+    {
+      simulateModerationNetworkError = true;
+      const res = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${memberMediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(res.status === 503, 'J3: Moderation lookup network failure fails closed with HTTP 503');
+      assert(res.headers.get('Cache-Control') === 'private, no-store', 'J3.1: Network failure response enforces private, no-store');
+    }
+
+    // J4: Non-boolean/ambiguous is_flagged value -> fail closed 502
+    {
+      simulateModerationMalformedRow = true;
+      const res = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${memberMediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(res.status === 502, 'J4: Malformed non-boolean is_flagged record fails closed with HTTP 502');
+    }
+
+    // J5: Missing Supabase credentials in production -> fail closed 503 on GET /api/media/:id
+    {
+      // Keep mockMembers token verification working? No, if SUPABASE_URL missing in prod, authenticateRequest fails closed 503 first;
+      // verify specifically with guest token + missing SUPABASE_SERVICE_ROLE_KEY or missing SUPABASE_URL in prod:
+      const prodMissingServiceKeyEnv = {
+        CHAT_MEDIA: mockR2,
+        GUEST_SESSION_SECRET: GUEST_SECRET,
+        SUPABASE_URL,
+        SUPABASE_ANON_KEY: 'anon_only',
+        // SUPABASE_SERVICE_ROLE_KEY omitted in production
+      };
+      const res = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${memberMediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        prodMissingServiceKeyEnv,
+        {}
+      );
+      assert(res.status === 503, 'J5: Missing SUPABASE_SERVICE_ROLE_KEY in production fails closed with HTTP 503 on media retrieval');
+      assert(res.headers.get('Cache-Control') === 'private, no-store', 'J5.1: Production missing-DB error uses private, no-store');
+    }
+
+    // J6: Dev fallback isolation — dev still fails closed if DB creds ARE configured, only skips DB when unconfigured in dev
+    {
+      simulateModerationHttpError = true;
+      const devWithDbRes = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${memberMediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        { ...defaultEnv, ENVIRONMENT: 'development' },
+        {}
+      );
+      assert(devWithDbRes.status === 502, 'J6: Dev mode still fails closed on moderation DB failure when DB creds are configured');
+    }
+
+    // J7: Flagged media returns 403 with private no-store and no R2 key leakage
+    {
+      const res = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${guestMediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(res.status === 403, 'J7: Flagged media returns 403');
+      assert(res.headers.get('Cache-Control') === 'private, no-store', 'J7.1: Flagged media error enforces Cache-Control: private, no-store');
+      assert(res.headers.get('X-Content-Type-Options') === 'nosniff', 'J7.2: Flagged media error emits X-Content-Type-Options: nosniff');
+      const errJson = await res.text();
+      assert(!errJson.includes('media/objects/'), 'J7.3: Flagged media error does not expose R2 key');
+    }
+
+    // J8: Admin & private DM regression checks with new CORS policy
+    {
+      const adminMeRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/admin/me', {
+          method: 'GET',
+          headers: { 'Origin': 'https://chatlustora.com' },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(adminMeRes.status === 401, 'J8.1: Unauthenticated /api/admin/me still returns 401');
+      assert(adminMeRes.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'J8.2: Admin route applies exact CORS policy');
+
+      const dmParticipantMediaRes = await worker.fetch(
+        new Request(`https://chatlustora.com/api/media/${privateMediaId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice', 'Origin': 'https://chatlustora.com' },
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(dmParticipantMediaRes.status === 200, 'J8.3: Authorized participant private DM media retrieval still succeeds');
+      assert(dmParticipantMediaRes.headers.get('Cache-Control') === 'private, no-store', 'J8.4: Private DM media keeps Cache-Control: private, no-store');
+      assert(dmParticipantMediaRes.headers.get('X-Content-Type-Options') === 'nosniff', 'J8.5: Private DM media keeps nosniff');
+      assert(dmParticipantMediaRes.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'J8.6: Private DM media emits exact origin');
     }
 
     console.log('\n================================================================');

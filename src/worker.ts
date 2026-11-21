@@ -580,6 +580,9 @@ const roomTyping = new Map<string, Map<string, { nickname: string; expiresAt: nu
 const guestSessions = new Map<string, GuestSession>();
 const activeAccountDeletions = new Set<string>();
 const adminLoginAttempts = new Map<string, { attempts: number; windowStart: number }>();
+// NOTE: Per-isolate upload rate limit tracking (25 uploads / 60s per user/guest).
+// Not synchronized across Cloudflare edge isolates; supplement with Cloudflare WAF /
+// Rate Limiting rules if global coordination across pops/isolates is required.
 const uploadRateLimits = new Map<string, { count: number; windowStart: number }>();
 
 const UPLOAD_RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
@@ -623,6 +626,7 @@ export interface WorkerEnv {
   SUPABASE_SERVICE_ROLE_KEY?: string;
   GUEST_SESSION_SECRET?: string;
   BACKEND_URL?: string;
+  ALLOWED_ORIGINS?: string;
   ENVIRONMENT?: string;
   DEV?: boolean;
   ADMIN_USER?: string;
@@ -670,18 +674,250 @@ const userDMStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8A
 const conversationTyping = new Map<string, Map<string, { nickname: string; expiresAt: number }>>();
 const conversationReadState = new Map<string, Map<string, { readUntilId: string; readAt: string }>>();
 
-const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
-};
+const DEFAULT_PRODUCTION_CORS_ORIGIN = 'https://chatlustora.com';
+const DEV_ALLOWED_CORS_ORIGINS = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:8787',
+  'http://127.0.0.1:8787',
+] as const;
+
+const NATIVE_CORS_METHODS = ['GET', 'POST', 'OPTIONS'] as const;
+const PROXIED_CORS_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const;
+const NATIVE_CORS_HEADERS = [
+  'Content-Type',
+  'Authorization',
+  'Accept',
+  'X-Guest-Token',
+  'X-Context-Type',
+  'X-Context-Id',
+  'X-File-Name',
+  'X-Requested-With',
+] as const;
+const PROXIED_CORS_HEADERS = [
+  ...NATIVE_CORS_HEADERS,
+  'X-User-Role',
+  'X-User-Id',
+] as const;
+
+function isRecognizedDevMode(env?: WorkerEnv): boolean {
+  return env?.ENVIRONMENT === 'development' || env?.DEV === true;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const cleanHost = hostname.toLowerCase();
+  return cleanHost === 'localhost' || cleanHost === '127.0.0.1' || cleanHost === '[::1]';
+}
+
+function parseExactOrigin(rawOrigin: string, allowHttpLoopback: boolean): string | null {
+  if (!rawOrigin || typeof rawOrigin !== 'string') return null;
+  if (rawOrigin !== rawOrigin.trim()) return null;
+  const lower = rawOrigin.toLowerCase();
+  if (lower === 'null' || rawOrigin.includes('*')) return null;
+
+  try {
+    const parsed = new URL(rawOrigin);
+    if (parsed.username || parsed.password) return null;
+    if (parsed.origin !== rawOrigin) return null;
+    if (parsed.protocol === 'https:') {
+      return parsed.origin;
+    }
+    if (allowHttpLoopback && parsed.protocol === 'http:' && isLoopbackHost(parsed.hostname)) {
+      return parsed.origin;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function buildAllowedCorsOrigins(env?: WorkerEnv): Set<string> {
+  const isDev = isRecognizedDevMode(env);
+  const origins = new Set<string>([DEFAULT_PRODUCTION_CORS_ORIGIN]);
+
+  if (isDev) {
+    for (const devOrigin of DEV_ALLOWED_CORS_ORIGINS) {
+      origins.add(devOrigin);
+    }
+  }
+
+  if (typeof env?.ALLOWED_ORIGINS === 'string' && env.ALLOWED_ORIGINS.trim().length > 0) {
+    for (const candidate of env.ALLOWED_ORIGINS.split(',')) {
+      const parsed = parseExactOrigin(candidate.trim(), isDev);
+      if (parsed) {
+        origins.add(parsed);
+      }
+    }
+  }
+
+  return origins;
+}
+
+function isWorkerNativeEndpoint(pathname: string): boolean {
+  if (
+    pathname === '/api/health' ||
+    pathname === '/api/admin/login' ||
+    pathname === '/api/admin/me' ||
+    pathname === '/api/admin/logout' ||
+    pathname === '/api/media/upload' ||
+    pathname === '/api/media/upload/validate' ||
+    pathname === '/api/chat/conversations'
+  ) {
+    return true;
+  }
+  if (/^\/api\/media\/[^/]+$/.test(pathname)) return true;
+  if (/^\/api\/guest\/(session|validate|revoke)$/.test(pathname)) return true;
+  if (/^\/api\/auth\/(delete-account|data-export|profile\/update)$/.test(pathname)) return true;
+  if (/^\/api\/chat\/user\/[^/]+\/events\/?$/.test(pathname)) return true;
+  if (/^\/api\/chat\/rooms\/[^/]+\/(events\/?|messages|presence|typing)$/.test(pathname)) return true;
+  if (/^\/api\/chat\/conversations\/[^/]+\/(events\/?|messages|typing|read)$/.test(pathname)) return true;
+  return false;
+}
+
+interface ResolvedCorsPolicy {
+  hasOriginHeader: boolean;
+  allowedOrigin: string | null;
+  allowedMethods: readonly string[];
+  allowedHeaders: readonly string[];
+}
+
+function resolveCorsPolicy(
+  request: Request,
+  env: WorkerEnv | undefined,
+  pathname: string
+): ResolvedCorsPolicy {
+  const isDev = isRecognizedDevMode(env);
+  const rawOrigin = request.headers.get('Origin');
+  const allowedSet = buildAllowedCorsOrigins(env);
+
+  let allowedOrigin: string | null = null;
+  if (rawOrigin !== null) {
+    const parsedOrigin = parseExactOrigin(rawOrigin, isDev);
+    if (parsedOrigin && allowedSet.has(parsedOrigin)) {
+      allowedOrigin = parsedOrigin;
+    }
+  }
+
+  const isProxiedNonNative = Boolean(env?.BACKEND_URL) && pathname.startsWith('/api/') && !isWorkerNativeEndpoint(pathname);
+  return {
+    hasOriginHeader: rawOrigin !== null,
+    allowedOrigin,
+    allowedMethods: isProxiedNonNative ? PROXIED_CORS_METHODS : NATIVE_CORS_METHODS,
+    allowedHeaders: isProxiedNonNative ? PROXIED_CORS_HEADERS : NATIVE_CORS_HEADERS,
+  };
+}
+
+function mergeVaryOrigin(headers: Headers): void {
+  const existing = headers.get('Vary');
+  if (!existing || !existing.trim()) {
+    headers.set('Vary', 'Origin');
+    return;
+  }
+  const tokens = existing
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (tokens.some((part) => part.toLowerCase() === 'origin' || part === '*')) {
+    return;
+  }
+  headers.set('Vary', [...tokens, 'Origin'].join(', '));
+}
+
+function stripCorsHeaders(headers: Headers): void {
+  headers.delete('Access-Control-Allow-Origin');
+  headers.delete('Access-Control-Allow-Methods');
+  headers.delete('Access-Control-Allow-Headers');
+  headers.delete('Access-Control-Allow-Credentials');
+  headers.delete('Access-Control-Expose-Headers');
+  headers.delete('Access-Control-Max-Age');
+}
+
+function handleCorsPreflight(
+  request: Request,
+  pathname: string,
+  env: WorkerEnv | undefined
+): Response {
+  const policy = resolveCorsPolicy(request, env, pathname);
+  const headers = new Headers();
+  mergeVaryOrigin(headers);
+
+  if (!policy.hasOriginHeader || !policy.allowedOrigin) {
+    headers.set('Content-Type', 'application/json; charset=utf-8');
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Forbidden: Cross-origin request from untrusted origin denied.',
+      }),
+      { status: 403, headers }
+    );
+  }
+
+  const reqMethod = request.headers.get('Access-Control-Request-Method');
+  if (reqMethod) {
+    const normalizedReqMethod = reqMethod.trim().toUpperCase();
+    if (!policy.allowedMethods.includes(normalizedReqMethod)) {
+      headers.set('Content-Type', 'application/json; charset=utf-8');
+      headers.set('Allow', policy.allowedMethods.join(', '));
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Method Not Allowed for CORS preflight.',
+        }),
+        { status: 405, headers }
+      );
+    }
+  }
+
+  headers.set('Access-Control-Allow-Origin', policy.allowedOrigin);
+  headers.set('Access-Control-Allow-Methods', policy.allowedMethods.join(', '));
+  headers.set('Access-Control-Allow-Headers', policy.allowedHeaders.join(', '));
+  headers.set('Access-Control-Max-Age', '86400');
+
+  return new Response(null, { status: 204, headers });
+}
+
+function applyCorsToApiResponse(
+  response: Response,
+  request: Request,
+  env: WorkerEnv | undefined,
+  pathname: string
+): Response {
+  const headers = new Headers(response.headers);
+  stripCorsHeaders(headers);
+  mergeVaryOrigin(headers);
+
+  const policy = resolveCorsPolicy(request, env, pathname);
+  if (policy.allowedOrigin) {
+    headers.set('Access-Control-Allow-Origin', policy.allowedOrigin);
+    headers.set('Access-Control-Allow-Methods', policy.allowedMethods.join(', '));
+    headers.set('Access-Control-Allow-Headers', policy.allowedHeaders.join(', '));
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function mediaErrorResponse(error: string, status: number): Response {
+  return jsonResponse(
+    { success: false, error },
+    status,
+    {
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    }
+  );
+}
 
 function jsonResponse(data: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      ...CORS_HEADERS,
       ...extraHeaders,
     },
   });
@@ -936,6 +1172,32 @@ async function verifyConversationParticipant(
 export default {
   async fetch(request: Request, env: WorkerEnv, ctx: any): Promise<Response> {
     const url = new URL(request.url);
+
+    // Handle CORS preflight strictly (exact origin allowlist, method check, Vary: Origin)
+    if (request.method === 'OPTIONS') {
+      return handleCorsPreflight(request, url.pathname, env);
+    }
+
+    if (url.pathname.startsWith('/api/')) {
+      const apiResponse = await handleApiFetch(request, url, env, ctx);
+      return applyCorsToApiResponse(apiResponse, request, env, url.pathname);
+    }
+
+    // Static Assets fallback (Vite SPA)
+    if (env?.ASSETS) {
+      const assetRes = await env.ASSETS.fetch(request);
+      if (assetRes.status === 404 && request.method === 'GET') {
+        const indexUrl = new URL('/', request.url);
+        return env.ASSETS.fetch(new Request(indexUrl, request));
+      }
+      return assetRes;
+    }
+
+    return new Response('Not Found', { status: 404 });
+  },
+};
+
+async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: any): Promise<Response> {
     const supabaseClient = getSupabaseClientFromEnv(env);
     const guestSecretInfo = getGuestSecret(env);
 
@@ -943,14 +1205,6 @@ export default {
     const baseSupabaseUrl = env?.SUPABASE_URL || '';
     const supabaseAnonKey = env?.SUPABASE_ANON_KEY || '';
     const supabaseServiceKey = env?.SUPABASE_SERVICE_ROLE_KEY || '';
-
-    // Handle CORS preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: CORS_HEADERS,
-      });
-    }
 
     // -------------------------------------------------------------------------
     // 0. ADULT ROOM SECURITY GATE (Enforced regardless of BACKEND_URL proxy)
@@ -1450,7 +1704,7 @@ export default {
       const mediaIdOrFileName = safeDecodeURIComponent(mediaGetMatch[1]);
 
       if (!env?.CHAT_MEDIA) {
-        return jsonResponse({ success: false, error: 'R2 storage binding CHAT_MEDIA is not configured.' }, 503);
+        return mediaErrorResponse('R2 storage binding CHAT_MEDIA is not configured.', 503);
       }
 
       const authResult = await authenticateRequest(
@@ -1461,7 +1715,14 @@ export default {
         supabaseClient
       );
       if ('errorResponse' in authResult) {
-        return authResult.errorResponse;
+        const errHeaders = new Headers(authResult.errorResponse.headers);
+        errHeaders.set('Cache-Control', 'private, no-store');
+        errHeaders.set('X-Content-Type-Options', 'nosniff');
+        return new Response(authResult.errorResponse.body, {
+          status: authResult.errorResponse.status,
+          statusText: authResult.errorResponse.statusText,
+          headers: errHeaders,
+        });
       }
 
       if (
@@ -1470,12 +1731,12 @@ export default {
         mediaIdOrFileName.startsWith('.') ||
         !/^[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9]+)?$/.test(mediaIdOrFileName)
       ) {
-        return jsonResponse({ success: false, error: 'Invalid media asset identifier.' }, 400);
+        return mediaErrorResponse('Invalid media asset identifier.', 400);
       }
 
       const cleanId = mediaIdOrFileName.split('.')[0];
       if (!cleanId || !/^[a-zA-Z0-9_-]{3,128}$/.test(cleanId)) {
-        return jsonResponse({ success: false, error: 'Invalid media asset identifier.' }, 400);
+        return mediaErrorResponse('Invalid media asset identifier.', 400);
       }
 
       try {
@@ -1483,7 +1744,7 @@ export default {
         const matchedObj = await env.CHAT_MEDIA.get(objectKey);
 
         if (!matchedObj || !matchedObj.body) {
-          return jsonResponse({ success: false, error: 'Media object not found.' }, 404);
+          return mediaErrorResponse('Media object not found.', 404);
         }
 
         const meta = matchedObj.customMetadata || {};
@@ -1491,20 +1752,14 @@ export default {
         // 1. Strict metadata validation: accept only exact context types
         const rawContextType = typeof meta.contextType === 'string' ? meta.contextType.trim() : '';
         if (rawContextType !== 'room' && rawContextType !== 'conversation') {
-          return jsonResponse({
-            success: false,
-            error: 'Malformed or unsupported media context type.',
-          }, 400);
+          return mediaErrorResponse('Malformed or unsupported media context type.', 400);
         }
         const contextType = rawContextType as 'room' | 'conversation';
 
         // 2. Reject missing, empty, or malformed contextId
         const contextId = typeof meta.contextId === 'string' ? meta.contextId.trim() : '';
         if (!contextId) {
-          return jsonResponse({
-            success: false,
-            error: 'Missing or empty media context identifier.',
-          }, 400);
+          return mediaErrorResponse('Missing or empty media context identifier.', 400);
         }
 
         // 3. Mandatory metadata version enforcement (storage contract requires exactly '1.2')
@@ -1512,10 +1767,7 @@ export default {
           typeof meta.metadataVersion !== 'string' ||
           meta.metadataVersion.trim() !== '1.2'
         ) {
-          return jsonResponse({
-            success: false,
-            error: 'Malformed, missing, or unsupported media metadata version.',
-          }, 400);
+          return mediaErrorResponse('Malformed, missing, or unsupported media metadata version.', 400);
         }
 
         // 4. Context-specific fail-closed authorization checks
@@ -1523,10 +1775,7 @@ export default {
         if (contextType === 'conversation') {
           // Require valid conversation UUID
           if (!UUID_REGEX.test(contextId)) {
-            return jsonResponse({
-              success: false,
-              error: 'Invalid conversation identifier format.',
-            }, 400);
+            return mediaErrorResponse('Invalid conversation identifier format.', 400);
           }
 
           const participantCheck = await verifyConversationParticipant(
@@ -1535,38 +1784,75 @@ export default {
             { supabaseUrl: baseSupabaseUrl, supabaseServiceKey }
           );
           if (!participantCheck.authorized) {
-            return participantCheck.errorResponse!;
+            const errRes = participantCheck.errorResponse!;
+            const errHeaders = new Headers(errRes.headers);
+            errHeaders.set('Cache-Control', 'private, no-store');
+            errHeaders.set('X-Content-Type-Options', 'nosniff');
+            return new Response(errRes.body, {
+              status: errRes.status,
+              statusText: errRes.statusText,
+              headers: errHeaders,
+            });
           }
         } else if (isAdultContext) {
           if (!isAuthorizedForAdultRoom(authResult)) {
-            return jsonResponse({
-              success: false,
-              error: 'Age verification required to view media from adult rooms.',
-            }, 403);
+            return mediaErrorResponse('Age verification required to view media from adult rooms.', 403);
           }
         }
 
-        // 5. Enforce moderation flag check if Supabase metadata record exists
-        if (baseSupabaseUrl && supabaseServiceKey) {
+        // 5. Fail-closed moderation verification against public.media_uploads
+        if (!baseSupabaseUrl || !supabaseServiceKey) {
+          if (!guestSecretInfo.isDevFallback) {
+            return mediaErrorResponse(
+              'Service Unavailable: Database configuration required to verify media moderation status.',
+              503
+            );
+          }
+        } else {
+          let flagRes: Response;
           try {
             const flagCheckUrl = `${baseSupabaseUrl}/rest/v1/media_uploads?id=eq.${encodeURIComponent(cleanId)}&select=id,is_flagged`;
-            const flagRes = await fetch(flagCheckUrl, {
+            flagRes = await fetch(flagCheckUrl, {
               headers: {
                 'apikey': supabaseServiceKey,
                 'Authorization': `Bearer ${supabaseServiceKey}`,
               },
             });
-            if (flagRes.ok) {
-              const flagRows: any = await flagRes.json().catch(() => null);
-              if (Array.isArray(flagRows) && flagRows.length > 0 && flagRows[0]?.is_flagged === true) {
-                return jsonResponse({
-                  success: false,
-                  error: 'Forbidden: This media asset is unavailable due to moderation.',
-                }, 403);
-              }
-            }
-          } catch {
-            // Non-fatal fallback only when DB record is unavailable
+          } catch (err) {
+            console.error('[Worker] Media moderation lookup network exception:', err);
+            return mediaErrorResponse('Service Unavailable: Unable to verify media moderation status.', 503);
+          }
+
+          if (!flagRes.ok) {
+            console.error(`[Worker] Media moderation lookup failed HTTP ${flagRes.status}`);
+            return mediaErrorResponse('Bad Gateway: Failed to verify media moderation status.', 502);
+          }
+
+          const flagRows: any = await flagRes.json().catch(() => null);
+          if (!Array.isArray(flagRows)) {
+            return mediaErrorResponse('Bad Gateway: Invalid media moderation metadata response.', 502);
+          }
+
+          if (flagRows.length === 0) {
+            return mediaErrorResponse('Media metadata record not found.', 404);
+          }
+
+          if (flagRows.length !== 1) {
+            return mediaErrorResponse('Bad Gateway: Ambiguous media moderation metadata.', 502);
+          }
+
+          const moderationRow = flagRows[0];
+          if (
+            !moderationRow ||
+            typeof moderationRow !== 'object' ||
+            moderationRow.id !== cleanId ||
+            typeof moderationRow.is_flagged !== 'boolean'
+          ) {
+            return mediaErrorResponse('Bad Gateway: Malformed media moderation record.', 502);
+          }
+
+          if (moderationRow.is_flagged === true) {
+            return mediaErrorResponse('Forbidden: This media asset is unavailable due to moderation.', 403);
           }
         }
 
@@ -1575,10 +1861,7 @@ export default {
         const normalizedStoredMime = normalizeMimeType(rawStoredContentType);
         const allowedSpec = normalizedStoredMime ? ALLOWED_MEDIA_SPECS[normalizedStoredMime] : undefined;
         if (!allowedSpec) {
-          return jsonResponse({
-            success: false,
-            error: 'Unsupported or unsafe media content type.',
-          }, 400);
+          return mediaErrorResponse('Unsupported or unsafe media content type.', 400);
         }
 
         const safeContentType =
@@ -1590,7 +1873,7 @@ export default {
           allowedSpec.allowedExts[0]
         );
 
-        const headers = new Headers(CORS_HEADERS);
+        const headers = new Headers();
         headers.set('Content-Type', safeContentType);
         headers.set('Content-Disposition', safeDisposition);
         headers.set('X-Content-Type-Options', 'nosniff');
@@ -1607,7 +1890,7 @@ export default {
         });
       } catch (err: any) {
         console.error('[Worker] R2 Media Retrieval Error:', err);
-        return jsonResponse({ success: false, error: 'Error retrieving media object.' }, 500);
+        return mediaErrorResponse('Error retrieving media object.', 500);
       }
     }
 
@@ -1623,7 +1906,6 @@ export default {
         });
         const proxyRes = await fetch(proxyReq);
         const headers = new Headers(proxyRes.headers);
-        Object.entries(CORS_HEADERS).forEach(([k, v]) => headers.set(k, v));
         return new Response(proxyRes.body, {
           status: proxyRes.status,
           statusText: proxyRes.statusText,
@@ -1717,7 +1999,6 @@ export default {
           'Cache-Control': 'no-cache, no-transform',
           'Connection': 'keep-alive',
           'X-Accel-Buffering': 'no',
-          ...CORS_HEADERS,
         },
       });
     }
@@ -1795,7 +2076,6 @@ export default {
           'Cache-Control': 'no-cache, no-transform',
           'Connection': 'keep-alive',
           'X-Accel-Buffering': 'no',
-          ...CORS_HEADERS,
         },
       });
     }
@@ -2968,7 +3248,6 @@ async function authorizeConversationAccess(
           'Cache-Control': 'no-cache, no-transform',
           'Connection': 'keep-alive',
           'X-Accel-Buffering': 'no',
-          ...CORS_HEADERS,
         },
       });
     }
@@ -4119,26 +4398,9 @@ async function authorizeConversationAccess(
     // -------------------------------------------------------------------------
     // 7. DEFAULT API FALLBACK FOR UNHANDLED /api/* ROUTES
     // -------------------------------------------------------------------------
-    if (url.pathname.startsWith('/api/')) {
-      return jsonResponse({
-        success: false,
-        error: 'Not Found: The requested API endpoint is not implemented on this worker instance.',
-        path: url.pathname,
-      }, 404);
-    }
-
-    // -------------------------------------------------------------------------
-    // 7. STATIC ASSETS FALLBACK (Vite SPA)
-    // -------------------------------------------------------------------------
-    if (env?.ASSETS) {
-      const assetRes = await env.ASSETS.fetch(request);
-      if (assetRes.status === 404 && request.method === 'GET' && !url.pathname.startsWith('/api/')) {
-        const indexUrl = new URL('/', request.url);
-        return env.ASSETS.fetch(new Request(indexUrl, request));
-      }
-      return assetRes;
-    }
-
-    return new Response('Not Found', { status: 404 });
-  },
-};
+    return jsonResponse({
+      success: false,
+      error: 'Not Found: The requested API endpoint is not implemented on this worker instance.',
+      path: url.pathname,
+    }, 404);
+}
