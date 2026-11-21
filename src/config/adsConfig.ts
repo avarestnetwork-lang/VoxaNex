@@ -16,6 +16,13 @@ export const EXOCLICK_CONFIG = {
   scriptUrl: 'https://a.magsrv.com/ad-provider.js',
   elementClass: 'eas6a97888e2',
   verificationFile: '28befc4532cb8837aa59edffca607a5a.html',
+  integrationType: 'async' as const,
+  // ExoClick native Ad Refresh supports 30, 60, 90, 120s (max 10 session rotations) on async zones
+  // ONLY when enabled & authorized for the zone in ExoClick's publisher dashboard.
+  nativeRefreshAuthorized: false,
+  supportedNativeRefreshIntervalsSec: [30, 60, 90, 120] as const,
+  chosenNativeRefreshIntervalSec: 120,
+  maxSessionRotations: 10,
   enabled: true,
 };
 
@@ -42,6 +49,161 @@ export const ADSENSE_CONFIG = {
   publisherId: 'ca-pub-7862321512207088',
   adSlot: '1929701241',
   enabled: true, // Enabled for non-chat pages ONLY; strictly excluded from live-chat routes
+};
+
+export const TRAFFICSTARS_CONFIG = {
+  // Public ads.txt authorizes publisher ID 354866, but no MasterSpot zone ID or script is configured/authorized.
+  adsTxtPublisherId: '354866',
+  masterSpotZoneId: null as string | null,
+  masterSpotRefreshAuthorized: false,
+  supportedMasterSpotRefreshIntervalsSec: [30, 60, 90, 120] as const,
+  chosenMasterSpotRefreshIntervalSec: 120,
+  enabled: false,
+};
+
+export type RefreshCapableProvider = AdProvider | 'trafficstars';
+
+export interface ProviderRefreshPolicy {
+  provider: RefreshCapableProvider;
+  enabled: boolean;
+  supportsNativeRefresh: boolean;
+  accountAuthorized: boolean;
+  supportedIntervalsSec: readonly number[];
+  chosenIntervalSec: number | null;
+  maxSessionRotations: number | null;
+  requiresVisibility: boolean;
+  usesCustomJsTimer: false;
+  mechanism: 'provider_native_async' | 'none';
+  reason: string;
+}
+
+export const getProviderRefreshPolicy = (
+  provider: RefreshCapableProvider,
+  options?: { accountAuthorizedOverride?: boolean; zoneIdOverride?: string | null }
+): ProviderRefreshPolicy => {
+  if (provider === 'exoclick') {
+    const authorized =
+      options?.accountAuthorizedOverride !== undefined
+        ? options.accountAuthorizedOverride
+        : Boolean(EXOCLICK_CONFIG.enabled && EXOCLICK_CONFIG.nativeRefreshAuthorized);
+    return {
+      provider: 'exoclick',
+      enabled: EXOCLICK_CONFIG.enabled,
+      supportsNativeRefresh: true,
+      accountAuthorized: authorized,
+      supportedIntervalsSec: EXOCLICK_CONFIG.supportedNativeRefreshIntervalsSec,
+      chosenIntervalSec: authorized ? EXOCLICK_CONFIG.chosenNativeRefreshIntervalSec : null,
+      maxSessionRotations: EXOCLICK_CONFIG.maxSessionRotations,
+      requiresVisibility: true,
+      usesCustomJsTimer: false,
+      mechanism: authorized ? 'provider_native_async' : 'none',
+      reason: authorized
+        ? 'ExoClick native async Ad Refresh authorized at longest 120s interval with 10 rotations/session cap'
+        : 'ExoClick native Ad Refresh supports 30/60/90/120s (max 10/session), but dashboard authorization for zone 6087300 is unverified; disabled',
+    };
+  }
+
+  if (provider === 'trafficstars') {
+    const hasZone = Boolean(
+      options?.zoneIdOverride !== undefined
+        ? options.zoneIdOverride
+        : TRAFFICSTARS_CONFIG.masterSpotZoneId
+    );
+    const authorized =
+      options?.accountAuthorizedOverride !== undefined
+        ? options.accountAuthorizedOverride && hasZone
+        : Boolean(
+            TRAFFICSTARS_CONFIG.enabled &&
+              hasZone &&
+              TRAFFICSTARS_CONFIG.masterSpotRefreshAuthorized
+          );
+    return {
+      provider: 'trafficstars',
+      enabled: TRAFFICSTARS_CONFIG.enabled,
+      supportsNativeRefresh: true,
+      accountAuthorized: authorized,
+      supportedIntervalsSec: TRAFFICSTARS_CONFIG.supportedMasterSpotRefreshIntervalsSec,
+      chosenIntervalSec: authorized ? TRAFFICSTARS_CONFIG.chosenMasterSpotRefreshIntervalSec : null,
+      maxSessionRotations: null,
+      requiresVisibility: true,
+      usesCustomJsTimer: false,
+      mechanism: authorized ? 'provider_native_async' : 'none',
+      reason: authorized
+        ? 'TrafficStars MasterSpot built-in refresh authorized at longest 120s interval'
+        : 'TrafficStars MasterSpot zone & account authorization unverified (ads.txt tsyndicate.com 354866 only); custom JS refresh prohibited',
+    };
+  }
+
+  if (provider === 'adsterra') {
+    return {
+      provider: 'adsterra',
+      enabled: ADSTERRA_CONFIG.enabled,
+      supportsNativeRefresh: false,
+      accountAuthorized: false,
+      supportedIntervalsSec: [],
+      chosenIntervalSec: null,
+      maxSessionRotations: null,
+      requiresVisibility: true,
+      usesCustomJsTimer: false,
+      mechanism: 'none',
+      reason: 'Adsterra standard tags rely on natural page navigation and prohibit code-altering auto-refresh timers',
+    };
+  }
+
+  if (provider === 'juicyads') {
+    return {
+      provider: 'juicyads',
+      enabled: JUICYADS_CONFIG.enabled,
+      supportsNativeRefresh: false,
+      accountAuthorized: false,
+      supportedIntervalsSec: [],
+      chosenIntervalSec: null,
+      maxSessionRotations: null,
+      requiresVisibility: true,
+      usesCustomJsTimer: false,
+      mechanism: 'none',
+      reason: 'JuicyAds jads.js zones have no verified publisher auto-refresh setting; fallback only on genuine error/unfilled',
+    };
+  }
+
+  if (provider === 'monetag') {
+    return {
+      provider: 'monetag',
+      enabled: MONETAG_CONFIG.enabled,
+      supportsNativeRefresh: false,
+      accountAuthorized: false,
+      supportedIntervalsSec: [],
+      chosenIntervalSec: null,
+      maxSessionRotations: null,
+      requiresVisibility: true,
+      usesCustomJsTimer: false,
+      mechanism: 'none',
+      reason: 'Monetag technical requirements prohibit aggressive refreshes and DOM replacement; keep creative stable',
+    };
+  }
+
+  return {
+    provider: 'adsense',
+    enabled: ADSENSE_CONFIG.enabled,
+    supportsNativeRefresh: false,
+    accountAuthorized: false,
+    supportedIntervalsSec: [],
+    chosenIntervalSec: null,
+    maxSessionRotations: null,
+    requiresVisibility: true,
+    usesCustomJsTimer: false,
+    mechanism: 'none',
+    reason: 'Google AdSense does not support timer-based ad auto-refresh',
+  };
+};
+
+export const PROVIDER_REFRESH_POLICIES: Record<RefreshCapableProvider, ProviderRefreshPolicy> = {
+  exoclick: getProviderRefreshPolicy('exoclick'),
+  trafficstars: getProviderRefreshPolicy('trafficstars'),
+  adsterra: getProviderRefreshPolicy('adsterra'),
+  juicyads: getProviderRefreshPolicy('juicyads'),
+  monetag: getProviderRefreshPolicy('monetag'),
+  adsense: getProviderRefreshPolicy('adsense'),
 };
 
 export const ADSENSE_EXCLUDED_ROUTES = [

@@ -14,7 +14,9 @@ export const MonetagScript: React.FC = () => {
     script.setAttribute('data-zone', MONETAG_CONFIG.zoneId);
     script.async = true;
     script.setAttribute('data-cfasync', 'false');
-    
+    script.addEventListener('load', () => script.setAttribute('data-ad-script-loaded', 'true'), { once: true });
+    script.addEventListener('error', () => script.setAttribute('data-ad-script-error', 'true'), { once: true });
+
     document.head.appendChild(script);
 
     return () => {

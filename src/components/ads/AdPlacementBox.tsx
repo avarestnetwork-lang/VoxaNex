@@ -12,6 +12,8 @@ import {
   getReservedDimensionTarget,
   getVerifiedAdUnitSpec,
   getVerifiedVerticalUnitForProvider,
+  getProviderRefreshPolicy,
+  RefreshCapableProvider,
   isAdSenseExcludedRoute,
   isInternalHorizontalPlacement,
 } from '../../config/adsConfig';
@@ -64,6 +66,193 @@ export function isAttemptCurrent(
   isMounted: boolean
 ): boolean {
   return Boolean(isMounted) && capturedAttemptId === activeAttemptId;
+}
+
+// Single-owner placement instance registry to prevent duplicate placement instances for the same slotId
+const activeSlotInstances = new Map<string, symbol>();
+
+export function claimSlotInstance(slotId: string, token: symbol): boolean {
+  const existing = activeSlotInstances.get(slotId);
+  if (existing && existing !== token) {
+    return false;
+  }
+  activeSlotInstances.set(slotId, token);
+  return true;
+}
+
+export function releaseSlotInstance(slotId: string, token: symbol): void {
+  if (activeSlotInstances.get(slotId) === token) {
+    activeSlotInstances.delete(slotId);
+  }
+}
+
+export function getActiveSlotInstanceCount(slotId?: string): number {
+  if (slotId !== undefined) {
+    return activeSlotInstances.has(slotId) ? 1 : 0;
+  }
+  return activeSlotInstances.size;
+}
+
+// Per-session rotation cap storage (enforces ExoClick max 10 rotations per user session)
+const inMemorySessionRotations = new Map<string, number>();
+
+export function getProviderSessionRotationCount(provider: RefreshCapableProvider): number {
+  const key = `vx_ad_session_rotations_${provider}`;
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const raw = sessionStorage.getItem(key);
+      const parsed = raw ? Number(raw) : 0;
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        return parsed;
+      }
+    }
+  } catch {
+    // Fallback to in-memory map if storage is restricted
+  }
+  return inMemorySessionRotations.get(provider) ?? 0;
+}
+
+export function recordProviderSessionRotation(
+  provider: RefreshCapableProvider,
+  accountAuthorizedOverride?: boolean
+): { recorded: boolean; count: number; maxSessionRotations: number | null } {
+  const policy = getProviderRefreshPolicy(provider, { accountAuthorizedOverride });
+  const current = getProviderSessionRotationCount(provider);
+  if (!policy.supportsNativeRefresh || !policy.accountAuthorized) {
+    return { recorded: false, count: current, maxSessionRotations: policy.maxSessionRotations };
+  }
+  if (policy.maxSessionRotations !== null && current >= policy.maxSessionRotations) {
+    return { recorded: false, count: current, maxSessionRotations: policy.maxSessionRotations };
+  }
+  const next = current + 1;
+  inMemorySessionRotations.set(provider, next);
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(`vx_ad_session_rotations_${provider}`, String(next));
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return { recorded: true, count: next, maxSessionRotations: policy.maxSessionRotations };
+}
+
+export function resetProviderSessionRotations(provider?: RefreshCapableProvider): void {
+  if (provider) {
+    inMemorySessionRotations.delete(provider);
+    try {
+      sessionStorage?.removeItem?.(`vx_ad_session_rotations_${provider}`);
+    } catch {
+      // Ignore
+    }
+    return;
+  }
+  inMemorySessionRotations.clear();
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      for (const p of ['exoclick', 'trafficstars', 'adsterra', 'juicyads', 'monetag', 'adsense']) {
+        sessionStorage.removeItem(`vx_ad_session_rotations_${p}`);
+      }
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+export interface VisibilityEligibilityParams {
+  isPageVisible: boolean;
+  isSlotVisible: boolean;
+  isMounted: boolean;
+  isSlotOwner: boolean;
+}
+
+export function isVisibilityEligibleForAdActivity({
+  isPageVisible,
+  isSlotVisible,
+  isMounted,
+  isSlotOwner,
+}: VisibilityEligibilityParams): boolean {
+  return Boolean(isPageVisible && isSlotVisible && isMounted && isSlotOwner);
+}
+
+export interface AuthorizedRefreshEvaluationParams {
+  provider: RefreshCapableProvider;
+  zoneId?: string | null;
+  isPageVisible: boolean;
+  isSlotVisible: boolean;
+  isMounted: boolean;
+  isChatroomActive: boolean;
+  sessionRotationCount?: number;
+  accountAuthorizedOverride?: boolean;
+}
+
+export interface AuthorizedRefreshDecision {
+  allowed: boolean;
+  intervalSec: number | null;
+  usesCustomJsTimer: false;
+  mechanism: 'provider_native_async' | 'none';
+  reason: string;
+}
+
+/**
+ * Mechanism 1: Evaluates whether provider-authorized native refresh is permitted.
+ * Never permits a custom JS refresh timer (usesCustomJsTimer is always false).
+ */
+export function evaluateAuthorizedRefresh({
+  provider,
+  zoneId,
+  isPageVisible,
+  isSlotVisible,
+  isMounted,
+  isChatroomActive,
+  sessionRotationCount,
+  accountAuthorizedOverride,
+}: AuthorizedRefreshEvaluationParams): AuthorizedRefreshDecision {
+  const policy = getProviderRefreshPolicy(provider, {
+    accountAuthorizedOverride,
+    zoneIdOverride: zoneId,
+  });
+
+  if (!policy.supportsNativeRefresh || !policy.accountAuthorized || policy.chosenIntervalSec === null) {
+    return {
+      allowed: false,
+      intervalSec: null,
+      usesCustomJsTimer: false,
+      mechanism: 'none',
+      reason: policy.reason,
+    };
+  }
+
+  if (!isMounted || !isChatroomActive || !isPageVisible || !isSlotVisible) {
+    return {
+      allowed: false,
+      intervalSec: null,
+      usesCustomJsTimer: false,
+      mechanism: policy.mechanism,
+      reason: 'Refresh paused: slot hidden, page backgrounded, inactive, or unmounted',
+    };
+  }
+
+  const count =
+    sessionRotationCount !== undefined
+      ? sessionRotationCount
+      : getProviderSessionRotationCount(provider);
+  if (policy.maxSessionRotations !== null && count >= policy.maxSessionRotations) {
+    return {
+      allowed: false,
+      intervalSec: null,
+      usesCustomJsTimer: false,
+      mechanism: policy.mechanism,
+      reason: `Session cap reached (${count}/${policy.maxSessionRotations}) for ${provider}`,
+    };
+  }
+
+  return {
+    allowed: true,
+    intervalSec: policy.chosenIntervalSec,
+    usesCustomJsTimer: false,
+    mechanism: policy.mechanism,
+    reason: policy.reason,
+  };
 }
 
 // Global queue for Adsterra to prevent atOptions collisions across concurrent slots
@@ -850,10 +1039,18 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const [adStatus, setAdStatus] = useState<AdSlotStatus>('idle');
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
   const [providerIndex, setProviderIndex] = useState(0);
+  const [isPageVisible, setIsPageVisible] = useState<boolean>(() =>
+    typeof document === 'undefined' ? true : document.visibilityState !== 'hidden'
+  );
+  const [isSlotVisible, setIsSlotVisible] = useState<boolean>(
+    () => typeof IntersectionObserver === 'undefined'
+  );
 
   const adRef = useRef<HTMLDivElement | null>(null);
   const imperativeHostRef = useRef<HTMLDivElement | null>(null);
   const isMountedRef = useRef(true);
+  const slotInstanceTokenRef = useRef<symbol>(Symbol(`ad-slot-${slotId}`));
+  const isSlotOwnerRef = useRef(false);
   const attemptIdRef = useRef(0);
   const observerRef = useRef<MutationObserver | null>(null);
   const lastReportedStatusRef = useRef<'filled' | 'unfilled' | 'error' | 'unverifiable' | null>(null);
@@ -864,6 +1061,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const ownedNativeScriptRef = useRef<HTMLScriptElement | null>(null);
   const prevChatExclusionRef = useRef<boolean>(effectiveIsLiveChatScreen);
   const settledUnitSignatureRef = useRef<string | null>(null);
+  const settledRequiredWidthRef = useRef<number | null>(null);
 
   const clearAllActiveTimers = useCallback(() => {
     activeTimersRef.current.forEach((t) => {
@@ -921,6 +1119,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       prevChatExclusionRef.current = effectiveIsLiveChatScreen;
       cleanupSlotRuntime();
       settledUnitSignatureRef.current = null;
+      settledRequiredWidthRef.current = null;
       if (imperativeHostRef.current && !renderAd) {
         imperativeHostRef.current.innerHTML = '';
       }
@@ -967,13 +1166,19 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           imperativeHostRef.current.innerHTML = '';
         }
         settledUnitSignatureRef.current = null;
+        settledRequiredWidthRef.current = null;
         setProviderIndex(decision.nextIndex);
         setAdStatus(decision.nextStatus);
       } else {
         if (decision.nextStatus === 'filled' || decision.nextStatus === 'unverifiable') {
           settledUnitSignatureRef.current = `${currentProvider}:${effectiveUnitId}:${rotationKey}`;
+          const verifiedSpec = effectiveUnitId
+            ? getVerifiedAdUnitSpec(effectiveUnitId, currentProvider)
+            : null;
+          settledRequiredWidthRef.current = verifiedSpec ? verifiedSpec.width : null;
         } else {
           settledUnitSignatureRef.current = null;
+          settledRequiredWidthRef.current = null;
         }
         setAdStatus(decision.nextStatus);
         if (lastReportedStatusRef.current !== status) {
@@ -996,9 +1201,11 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     ]
   );
 
-  // 2. Lifecycle & Measurement (with capture-phase iframe load & error tracking)
+  // 2. Lifecycle, Single-Instance Ownership, Visibility & Measurement
   useEffect(() => {
     isMountedRef.current = true;
+    const token = slotInstanceTokenRef.current;
+    isSlotOwnerRef.current = claimSlotInstance(slotId, token);
     const container = adRef.current;
 
     const handleCaptureLoad = (e: Event) => {
@@ -1020,6 +1227,68 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       container.addEventListener('error', handleCaptureError, true);
     }
 
+    const handleVisibilityChange = () => {
+      const visible = typeof document === 'undefined' ? true : document.visibilityState !== 'hidden';
+      setIsPageVisible(visible);
+      if (!visible) {
+        setAdStatus((prev) => {
+          if (prev === 'loading') {
+            cleanupSlotRuntime();
+            return 'idle';
+          }
+          return prev;
+        });
+      }
+    };
+
+    const handlePageHide = () => {
+      setIsPageVisible(false);
+      setAdStatus((prev) => {
+        if (prev === 'loading') {
+          cleanupSlotRuntime();
+          return 'idle';
+        }
+        return prev;
+      });
+    };
+
+    const handlePageShow = () => {
+      const visible = typeof document === 'undefined' ? true : document.visibilityState !== 'hidden';
+      setIsPageVisible(visible);
+    };
+
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('pagehide', handlePageHide);
+      window.addEventListener('pageshow', handlePageShow);
+    }
+
+    let intersectionObserver: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver !== 'undefined' && adRef.current) {
+      intersectionObserver = new IntersectionObserver(
+        (entries) => {
+          const entry = entries[0];
+          const intersecting = Boolean(entry && (entry.isIntersecting || entry.intersectionRatio > 0));
+          setIsSlotVisible(intersecting);
+          if (!intersecting) {
+            setAdStatus((prev) => {
+              if (prev === 'loading') {
+                cleanupSlotRuntime();
+                return 'idle';
+              }
+              return prev;
+            });
+          }
+        },
+        { threshold: 0.01 }
+      );
+      intersectionObserver.observe(adRef.current);
+    } else {
+      setIsSlotVisible(true);
+    }
+
     const updateWidth = () => {
       if (adRef.current) {
         const w = adRef.current.offsetWidth;
@@ -1036,32 +1305,79 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
     return () => {
       isMountedRef.current = false;
+      isSlotOwnerRef.current = false;
+      releaseSlotInstance(slotId, token);
       if (container) {
         container.removeEventListener('load', handleCaptureLoad, true);
         container.removeEventListener('error', handleCaptureError, true);
       }
+      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('pagehide', handlePageHide);
+        window.removeEventListener('pageshow', handlePageShow);
+      }
+      if (intersectionObserver) {
+        intersectionObserver.disconnect();
+      }
       cleanupSlotRuntime();
       resizeObserver.disconnect();
     };
-  }, [cleanupSlotRuntime]);
+  }, [slotId, cleanupSlotRuntime]);
 
-  // Re-evaluate if viewport width crossed a breakpoint threshold while unfilled or changed target unit
+  // Re-evaluate if viewport width crossed a breakpoint threshold while unfilled OR shrank below a settled fixed unit width
   useEffect(() => {
     if (containerWidth === null || renderAd) return;
     if (adStatus === 'unfilled' || adStatus === 'error') {
       const primaryEligible = getEffectiveUnitId(explicitProvider || rotation[0], containerWidth);
       if (primaryEligible) {
         settledUnitSignatureRef.current = null;
+        settledRequiredWidthRef.current = null;
         setProviderIndex(0);
         setAdStatus('idle');
       }
+      return;
     }
-  }, [containerWidth, adStatus, renderAd, explicitProvider, rotation, getEffectiveUnitId]);
+
+    if (
+      (adStatus === 'filled' || adStatus === 'unverifiable') &&
+      settledRequiredWidthRef.current !== null &&
+      containerWidth < settledRequiredWidthRef.current
+    ) {
+      cleanupSlotRuntime();
+      if (imperativeHostRef.current) {
+        imperativeHostRef.current.innerHTML = '';
+      }
+      settledUnitSignatureRef.current = null;
+      settledRequiredWidthRef.current = null;
+      setProviderIndex(0);
+      setAdStatus('idle');
+    }
+  }, [
+    containerWidth,
+    adStatus,
+    renderAd,
+    explicitProvider,
+    rotation,
+    getEffectiveUnitId,
+    cleanupSlotRuntime,
+  ]);
 
   // 3. Orchestration Effect
   useEffect(() => {
     if (adStatus !== 'idle') return;
     if (containerWidth === null || containerWidth <= 0) return;
+    if (
+      !isVisibilityEligibleForAdActivity({
+        isPageVisible,
+        isSlotVisible,
+        isMounted: isMountedRef.current,
+        isSlotOwner: isSlotOwnerRef.current,
+      })
+    ) {
+      return;
+    }
 
     const signature = `${currentProvider}:${effectiveUnitId}:${rotationKey}`;
     if (settledUnitSignatureRef.current === signature) {
@@ -1454,6 +1770,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     effectiveIsLiveChatScreen,
     rotationKey,
     validationOptions,
+    isPageVisible,
+    isSlotVisible,
   ]);
 
   // 4. Isolated, Reserved Container Rendering (NEVER disappear on slow response, rotation, or unfilled)

@@ -11,6 +11,14 @@ import {
   isAttemptCurrent,
   cancelQueuedAdsterraTasksForSlot,
   ensureHeadScriptOnce,
+  claimSlotInstance,
+  releaseSlotInstance,
+  getActiveSlotInstanceCount,
+  isVisibilityEligibleForAdActivity,
+  evaluateAuthorizedRefresh,
+  getProviderSessionRotationCount,
+  recordProviderSessionRotation,
+  resetProviderSessionRotations,
 } from '../src/components/ads/AdPlacementBox';
 import {
   ADSTERRA_CONFIG,
@@ -18,6 +26,9 @@ import {
   JUICYADS_CONFIG,
   MONETAG_CONFIG,
   ADSENSE_CONFIG,
+  TRAFFICSTARS_CONFIG,
+  PROVIDER_REFRESH_POLICIES,
+  getProviderRefreshPolicy,
   getProviderRotation,
   isAdSenseExcludedRoute,
   isInternalHorizontalPlacement,
@@ -1472,6 +1483,232 @@ async function runAdRenderingTests() {
       rightVerticalHtml.includes('min-h-[520px]') &&
       statusInlineHtml.includes('data-ad-orientation="horizontal"'),
     '16.9 Reserved vertical sidebar containers remain stable and uncollapsed when unfilled while internal placements stay horizontal'
+  );
+
+  // --- Task 17: Provider-Compliant Refresh Policies, Visibility & Multi-Viewport Sizing ---
+  console.log('\n--- 17. Provider-Compliant Ad Rotation & Maximum Responsive Ad Space ---');
+
+  // 17.1 ExoClick longest 120s native refresh & 10 session cap (disabled by default until dashboard authorization verified)
+  const exoCurrent = getProviderRefreshPolicy('exoclick');
+  const exoAuthorized = getProviderRefreshPolicy('exoclick', { accountAuthorizedOverride: true });
+  assert(
+    exoCurrent.supportsNativeRefresh === true &&
+      exoCurrent.chosenIntervalSec === null &&
+      exoCurrent.usesCustomJsTimer === false &&
+      exoCurrent.maxSessionRotations === 10 &&
+      exoAuthorized.chosenIntervalSec === 120 &&
+      exoAuthorized.supportedIntervalsSec.includes(120) &&
+      exoAuthorized.usesCustomJsTimer === false,
+    '17.1 ExoClick enforces native 120s max interval + 10-rotation cap when authorized, and stays disabled when dashboard auth is unverified'
+  );
+
+  // 17.2 TrafficStars 120s MasterSpot refresh ONLY when zone & account-authorized
+  const tsCurrent = getProviderRefreshPolicy('trafficstars');
+  const tsAuthorizedNoZone = getProviderRefreshPolicy('trafficstars', {
+    accountAuthorizedOverride: true,
+    zoneIdOverride: null,
+  });
+  const tsAuthorizedWithZone = getProviderRefreshPolicy('trafficstars', {
+    accountAuthorizedOverride: true,
+    zoneIdOverride: 'ts-master-zone-1',
+  });
+  assert(
+    TRAFFICSTARS_CONFIG.adsTxtPublisherId === '354866' &&
+      tsCurrent.chosenIntervalSec === null &&
+      tsCurrent.accountAuthorized === false &&
+      tsAuthorizedNoZone.chosenIntervalSec === null &&
+      tsAuthorizedWithZone.chosenIntervalSec === 120 &&
+      tsAuthorizedWithZone.usesCustomJsTimer === false,
+    '17.2 TrafficStars MasterSpot enforces 120s ONLY when both zone and account authorization are verified'
+  );
+
+  // 17.3 Unsupported providers (Adsterra, JuicyAds, Monetag, AdSense) strictly disable auto-refresh & custom JS timers
+  assert(
+    PROVIDER_REFRESH_POLICIES.adsterra.chosenIntervalSec === null &&
+      PROVIDER_REFRESH_POLICIES.adsterra.usesCustomJsTimer === false &&
+      PROVIDER_REFRESH_POLICIES.juicyads.chosenIntervalSec === null &&
+      PROVIDER_REFRESH_POLICIES.juicyads.usesCustomJsTimer === false &&
+      PROVIDER_REFRESH_POLICIES.monetag.chosenIntervalSec === null &&
+      PROVIDER_REFRESH_POLICIES.monetag.usesCustomJsTimer === false &&
+      PROVIDER_REFRESH_POLICIES.adsense.chosenIntervalSec === null &&
+      PROVIDER_REFRESH_POLICIES.adsense.usesCustomJsTimer === false,
+    '17.3 Adsterra, JuicyAds, Monetag, and AdSense have no forced/custom JS refresh timers'
+  );
+
+  // 17.4 ExoClick 10-rotation session cap & visibility/pagehide/unmount refresh gating
+  resetProviderSessionRotations();
+  assert(
+    getProviderSessionRotationCount('exoclick') === 0,
+    '17.4a Session rotation counter initializes cleanly at 0'
+  );
+  for (let i = 0; i < 10; i++) {
+    const rec = recordProviderSessionRotation('exoclick', true);
+    assert(rec.recorded === true && rec.count === i + 1, `17.4b ExoClick authorized rotation #${i + 1} recorded within 10-rotation cap`);
+  }
+  const eleventh = recordProviderSessionRotation('exoclick', true);
+  const blockedAtCap = evaluateAuthorizedRefresh({
+    provider: 'exoclick',
+    isPageVisible: true,
+    isSlotVisible: true,
+    isMounted: true,
+    isChatroomActive: true,
+    accountAuthorizedOverride: true,
+  });
+  assert(
+    eleventh.recorded === false &&
+      eleventh.count === 10 &&
+      blockedAtCap.allowed === false &&
+      blockedAtCap.reason.includes('10/10'),
+    '17.4c ExoClick 11th session rotation is strictly blocked at max 10 rotations/session'
+  );
+  resetProviderSessionRotations();
+
+  // 17.5 Visibility, page-hidden, inactive chatroom, and unmount stop authorized refresh immediately
+  assert(
+    evaluateAuthorizedRefresh({
+      provider: 'exoclick',
+      isPageVisible: true,
+      isSlotVisible: true,
+      isMounted: true,
+      isChatroomActive: true,
+      sessionRotationCount: 0,
+      accountAuthorizedOverride: true,
+    }).allowed === true &&
+      evaluateAuthorizedRefresh({
+        provider: 'exoclick',
+        isPageVisible: false,
+        isSlotVisible: true,
+        isMounted: true,
+        isChatroomActive: true,
+        sessionRotationCount: 0,
+        accountAuthorizedOverride: true,
+      }).allowed === false &&
+      evaluateAuthorizedRefresh({
+        provider: 'exoclick',
+        isPageVisible: true,
+        isSlotVisible: false,
+        isMounted: true,
+        isChatroomActive: true,
+        sessionRotationCount: 0,
+        accountAuthorizedOverride: true,
+      }).allowed === false &&
+      evaluateAuthorizedRefresh({
+        provider: 'exoclick',
+        isPageVisible: true,
+        isSlotVisible: true,
+        isMounted: false,
+        isChatroomActive: true,
+        sessionRotationCount: 0,
+        accountAuthorizedOverride: true,
+      }).allowed === false &&
+      evaluateAuthorizedRefresh({
+        provider: 'exoclick',
+        isPageVisible: true,
+        isSlotVisible: true,
+        isMounted: true,
+        isChatroomActive: false,
+        sessionRotationCount: 0,
+        accountAuthorizedOverride: true,
+      }).allowed === false,
+    '17.5 Authorized refresh strictly pauses when page is hidden, slot is invisible, chatroom is inactive, or slot is unmounted'
+  );
+
+  // 17.6 Duplicate placement instance ownership & cleanup
+  const tokA = Symbol('slotA');
+  const tokB = Symbol('slotB');
+  assert(
+    claimSlotInstance('public-chatroom-top', tokA) === true &&
+      claimSlotInstance('public-chatroom-top', tokB) === false &&
+      getActiveSlotInstanceCount('public-chatroom-top') === 1 &&
+      isVisibilityEligibleForAdActivity({
+        isPageVisible: true,
+        isSlotVisible: true,
+        isMounted: true,
+        isSlotOwner: false,
+      }) === false,
+    '17.6 Duplicate simultaneous placement instances for the same slotId are prevented'
+  );
+  releaseSlotInstance('public-chatroom-top', tokA);
+  assert(
+    getActiveSlotInstanceCount('public-chatroom-top') === 0 &&
+      claimSlotInstance('public-chatroom-top', tokB) === true,
+    '17.7 Unmounting releases slot ownership cleanly for subsequent navigation remount'
+  );
+  releaseSlotInstance('public-chatroom-top', tokB);
+
+  // 17.8 All 6 verification widths (1920, 1440, 1366, 768, 390, 320): maximum compatible creative selection & zero 320px clipping
+  const desktopWidths = [1920, 1440, 1366, 768];
+  for (const vw of desktopWidths) {
+    // At >=768px with sm:px-4 (32px), outer banner container >= 736px -> fits 728x90 & 728x102
+    const availOuter = vw === 768 ? 736 : 728;
+    assert(
+      resolveEffectiveUnitId({
+        provider: 'adsterra',
+        position: 'top',
+        slotId: 'public-chatroom-top',
+        containerWidth: availOuter,
+        isLiveChatScreen: true,
+      }) === ADSTERRA_CONFIG.banner728x90 &&
+        resolveEffectiveUnitId({
+          provider: 'juicyads',
+          position: 'bottom',
+          slotId: 'public-chatroom-bottom',
+          containerWidth: availOuter,
+          isLiveChatScreen: true,
+        }) === JUICYADS_CONFIG.zones.banner728x102,
+      `17.8a Viewport ${vw}px selects maximum compatible 728x90 / 728x102 outer horizontal creatives`
+    );
+  }
+
+  for (const mobileWidth of [390, 320]) {
+    // PublicChatPage uses px-0 sm:px-4 on top/bottom -> full 320px/390px available
+    assert(
+      resolveEffectiveUnitId({
+        provider: 'adsterra',
+        position: 'top',
+        slotId: 'public-chatroom-top',
+        containerWidth: mobileWidth,
+        isLiveChatScreen: true,
+      }) === ADSTERRA_CONFIG.banner320x50 &&
+        resolveEffectiveUnitId({
+          provider: 'juicyads',
+          position: 'bottom',
+          slotId: 'public-chatroom-bottom',
+          containerWidth: mobileWidth,
+          isLiveChatScreen: true,
+        }) === JUICYADS_CONFIG.zones.banner300x62,
+      `17.8b Mobile viewport ${mobileWidth}px fits 320x50 and 300x62 cleanly on outer banners without clipping`
+    );
+
+    // Internal inline width at 320px: 320 - 16 (px-2) - 2 (border) = 302px (JuicyAds 300x62 fits; Adsterra 320x50 skips cleanly!)
+    // At 390px: 390 - 16 - 2 = 372px (both 320x50 and 300x62 fit)
+    const internalAvail = mobileWidth - 18;
+    const expectedAdsterraInternal = mobileWidth === 320 ? null : ADSTERRA_CONFIG.banner320x50;
+    assert(
+      resolveEffectiveUnitId({
+        provider: 'adsterra',
+        position: 'sidebar-horizontal',
+        slotId: 'public-chatroom-status-inline',
+        containerWidth: internalAvail,
+        isLiveChatScreen: true,
+      }) === expectedAdsterraInternal &&
+        resolveEffectiveUnitId({
+          provider: 'juicyads',
+          position: 'sidebar-horizontal',
+          slotId: 'public-chatroom-message-inline',
+          containerWidth: internalAvail,
+          isLiveChatScreen: true,
+        }) === JUICYADS_CONFIG.zones.banner300x62,
+      `17.8c Internal chatroom ads at ${mobileWidth}px (${internalAvail}px inner width) prevent 320px overflow and fall back cleanly to 300x62`
+    );
+  }
+
+  assert(
+    adPlacementBoxSource.includes('visibilitychange') &&
+      adPlacementBoxSource.includes('IntersectionObserver') &&
+      adPlacementBoxSource.includes('settledRequiredWidthRef') &&
+      !adPlacementBoxSource.includes('setInterval(() => {\n        // refresh'),
+    '17.9 AdPlacementBox enforces page/slot visibility, viewport-shrink downgrade, and zero forced auto-refresh JS timers'
   );
 
   console.log('\n================================================================');
