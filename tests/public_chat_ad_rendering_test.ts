@@ -233,10 +233,11 @@ async function runAdRenderingTests() {
     '3.10b Monetag executes strictly on the single dedicated public-chatroom-body-bottom slot (no global script or wildcard position)'
   );
   assert(
-    publicChatPageSource.includes('h-[calc(100dvh-10.25rem)] md:h-[calc(100dvh-12.5rem)]') &&
-      publicChatPageSource.includes('min-h-[380px]') &&
+    publicChatPageSource.includes('grid grid-cols-1 grid-rows-[minmax(0,1fr)]') &&
+      publicChatPageSource.includes('h-[clamp(520px,calc(100svh-11.125rem),780px)]') &&
+      publicChatPageSource.includes('md:h-[clamp(600px,calc(100svh-13.625rem),980px)]') &&
       publicChatPageSource.includes('min-h-0'),
-    '3.11 Central chatroom container enforces bounded responsive viewport sizing with min-h-0 internal scroll protection'
+    '3.11 Central chatroom container enforces calculated clamp() responsive viewport sizing with grid-rows-[minmax(0,1fr)] and min-h-0 internal scroll protection'
   );
 
   assert(!publicChatPageSource.includes('BanglishHelperBar'), '3.12 BanglishHelperBar is successfully removed');
@@ -1992,6 +1993,50 @@ async function runAdRenderingTests() {
       chatFooterHtml.includes('data-ad-provider="adsterra"') &&
       !chatFooterHtml.includes('adsbygoogle'),
     '19.4 Footer slot on /chat renders Adsterra container cleanly without AdSense'
+  );
+
+  // --- Task 20: Chatroom Height, Border Alignment & Equal Vertical Spacing ---
+  console.log('\n--- 20. Chatroom Height Restoration, Border Alignment & Equal Vertical Spacing ---');
+
+  assert(
+    publicChatPageSource.includes('className="relative w-full overflow-x-clip flex flex-col gap-4 py-4"') &&
+      publicChatPageSource.includes('<AdPlacementBox\n          slotId="public-chatroom-top"\n          position="top"\n          className="!my-0"') &&
+      publicChatPageSource.includes('<AdPlacementBox\n          slotId="public-chatroom-bottom"\n          position="bottom"\n          className="!my-0"') &&
+      publicChatPageSource.includes('<AdPlacementBox\n          slotId="public-chatroom-body-bottom"\n          provider="monetag"\n          position="content-gap"\n          className="!my-0"') &&
+      !publicChatPageSource.includes('data-testid="explore-other-chatrooms-section"\n            className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mb-8"'),
+    '20.1 PublicChatPage outer stack uses uniform 16px (gap-4 py-4) spacing with !my-0 margin overrides on outer ads'
+  );
+
+  assert(
+    publicChatPageSource.includes('h-[clamp(520px,calc(100svh-11.125rem),780px)]') &&
+      publicChatPageSource.includes('md:h-[clamp(600px,calc(100svh-13.625rem),980px)]') &&
+      publicChatPageSource.includes('className="h-full w-full flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 min-h-0 ring-1 ring-slate-800/50"') &&
+      !publicChatPageSource.includes('10.25rem') &&
+      !publicChatPageSource.includes('12.5rem') &&
+      !publicChatPageSource.includes('min-h-[380px]') &&
+      !publicChatPageSource.includes('max-h-[880px]'),
+    '20.2 Chatroom container uses calculated clamp() heights derived from chrome + top ad + uniform 16px gaps and preserves flush rounded border'
+  );
+
+  const topOrderIdx = publicChatPageSource.indexOf('slotId="public-chatroom-top"');
+  const chatOrderIdx = publicChatPageSource.indexOf('data-testid="central-chatroom-container"');
+  const bottomOrderIdx = publicChatPageSource.indexOf('slotId="public-chatroom-bottom"');
+  const monetagOrderIdx = publicChatPageSource.indexOf('slotId="public-chatroom-body-bottom"');
+  const exploreOrderIdx = publicChatPageSource.indexOf('data-testid="explore-other-chatrooms-section"');
+  assert(
+    topOrderIdx > 0 &&
+      chatOrderIdx > topOrderIdx &&
+      bottomOrderIdx > chatOrderIdx &&
+      monetagOrderIdx > bottomOrderIdx &&
+      exploreOrderIdx > monetagOrderIdx,
+    '20.3 Vertical section order strictly matches Top Ad -> Chatroom -> Bottom Ad -> Monetag Body-Bottom -> Explore Other Chatrooms'
+  );
+
+  assert(
+    publicChatPageSource.includes('<div className="flex-1 min-w-0 relative">') &&
+      publicChatPageSource.includes('<TypingIndicator typers={typers} />') &&
+      publicChatPageSource.includes('className="p-3 border-t border-slate-800 bg-[#0c1222] space-y-2 shrink-0 relative"'),
+    '20.4 Mobile composer wrapper uses flex-1 min-w-0 and unclipped shrink-0 dock inside central chatroom container'
   );
 
   console.log('\n================================================================');

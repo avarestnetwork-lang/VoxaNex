@@ -1221,7 +1221,7 @@ export const PublicChatPage: React.FC = () => {
   }
 
   return (
-    <div className="relative w-full overflow-x-clip min-h-[calc(100dvh-4.5rem)] flex flex-col">
+    <div className="relative w-full overflow-x-clip flex flex-col gap-4 py-4">
       <SEOHead
         title={`${activeRoom.name[language] || activeRoom.name.en} – ChatLustora`}
         description={`Real-time adult public group chat and live conversations in ${activeRoom.name[language] || activeRoom.name.en} on ChatLustora.`}
@@ -1229,20 +1229,21 @@ export const PublicChatPage: React.FC = () => {
         noindex={true}
       />
 
-      {/* Ad 1 — Header Horizontal Ad (Immediately below header, equal vertical spacing) */}
-      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 my-2 shrink-0 flex justify-center">
+      {/* Ad 1 — Header Horizontal Ad (Immediately below header, equal 16px vertical spacing) */}
+      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 shrink-0 flex justify-center">
         <AdPlacementBox
           slotId="public-chatroom-top"
           position="top"
+          className="!my-0"
         />
       </div>
 
       {/* Main Responsive Workspace containing Full-Width Central Chatroom Container (no empty side rails without verified vertical units) */}
-      <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mb-4 h-[calc(100dvh-10.25rem)] md:h-[calc(100dvh-12.5rem)] min-h-[380px] sm:min-h-[420px] max-h-[880px] flex items-stretch overflow-hidden">
+      <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 grid grid-cols-1 grid-rows-[minmax(0,1fr)] h-[clamp(520px,calc(100svh-11.125rem),780px)] md:h-[clamp(600px,calc(100svh-13.625rem),980px)] overflow-hidden">
         {/* Central Chatroom Container */}
         <div
           data-testid="central-chatroom-container"
-          className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 min-h-0 ring-1 ring-slate-800/50"
+          className="h-full w-full flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 min-h-0 ring-1 ring-slate-800/50"
         >
           <div className="p-3 border-b border-slate-800 bg-[#0c1324] flex items-center justify-between gap-3 shrink-0">
             {/* ... tab buttons ... */}
@@ -1825,7 +1826,7 @@ export const PublicChatPage: React.FC = () => {
                 </div>
 
                 {/* 4. Message Input */}
-                <div className="flex-1 relative">
+                <div className="flex-1 min-w-0 relative">
                   <input
                     ref={inputRef}
                     type="text"
@@ -2144,20 +2145,22 @@ export const PublicChatPage: React.FC = () => {
     </div>
     </div>
 
-      {/* Ad 5 — Bottom Horizontal Ad (Below chatroom border, stable reserved space) */}
-      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 mb-4 shrink-0 flex justify-center">
+      {/* Ad 5 — Bottom Horizontal Ad (Below chatroom border, equal 16px vertical spacing) */}
+      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 shrink-0 flex justify-center">
         <AdPlacementBox
           slotId="public-chatroom-bottom"
           position="bottom"
+          className="!my-0"
         />
       </div>
 
       {/* Monetag Body-Bottom Dedicated Advertisement */}
-      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 mb-6 shrink-0 flex justify-center">
+      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 shrink-0 flex justify-center">
         <AdPlacementBox
           slotId="public-chatroom-body-bottom"
           provider="monetag"
           position="content-gap"
+          className="!my-0"
         />
       </div>
 
@@ -2168,7 +2171,7 @@ export const PublicChatPage: React.FC = () => {
           <section
             aria-labelledby="explore-chatrooms-heading"
             data-testid="explore-other-chatrooms-section"
-            className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mb-8"
+            className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6"
           >
             <div className="bg-[#0c1324] border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
               <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-5 mb-5 border-b border-slate-800/80">

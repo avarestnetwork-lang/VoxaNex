@@ -326,10 +326,15 @@ async function runTests() {
     '1.5 Modal overlay uses z-50 so modals layer cleanly above sticky header (z-40)'
   );
   assert(
-    publicChatSource.includes('h-[calc(100dvh-10.25rem)] md:h-[calc(100dvh-12.5rem)]') &&
-      publicChatSource.includes('min-h-[380px]') &&
+    publicChatSource.includes('grid grid-cols-1 grid-rows-[minmax(0,1fr)]') &&
+      publicChatSource.includes('h-[clamp(520px,calc(100svh-11.125rem),780px)]') &&
+      publicChatSource.includes('md:h-[clamp(600px,calc(100svh-13.625rem),980px)]') &&
+      !publicChatSource.includes('10.25rem') &&
+      !publicChatSource.includes('12.5rem') &&
+      !publicChatSource.includes('min-h-[380px]') &&
+      !publicChatSource.includes('max-h-[880px]') &&
       publicChatSource.includes('min-h-0'),
-    '1.6 PublicChatPage enforces viewport-bounded responsive workspace height and min-h-0 internal scroll safety below sticky header'
+    '1.6 PublicChatPage enforces calculated clamp() viewport workspace height (520-780px mobile, 600-980px md+), grid-rows-[minmax(0,1fr)], and min-h-0 scroll safety without crushed 380px floor'
   );
 
   const navbarHtml = renderToString(
@@ -379,10 +384,10 @@ async function runTests() {
   assert(
     publicChatSource.includes('data-testid="central-chatroom-container"') &&
       publicChatSource.includes(
-        'className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 min-h-0 ring-1 ring-slate-800/50"'
+        'className="h-full w-full flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 min-h-0 ring-1 ring-slate-800/50"'
       ) &&
       publicChatSource.includes('<div className="flex-1 min-h-0 flex overflow-hidden">'),
-    '1.13 Central Chatroom Container establishes the relative + overflow-hidden + min-h-0 reference without blocking scroll or top/bottom alignment'
+    '1.13 Central Chatroom Container establishes full-grid-cell relative + overflow-hidden + min-h-0 reference without blocking scroll or top/bottom border alignment'
   );
   assert(
     publicChatSource.includes('absolute inset-y-0 right-0 z-30 lg:static lg:inset-auto lg:z-auto') &&
@@ -430,6 +435,25 @@ async function runTests() {
       !publicChatSource.includes('slotId="public-chatroom-left"') &&
       !publicChatSource.includes('slotId="public-chatroom-right"'),
     '1.19 PublicChatPage renders all approved active chatroom ad slots and omits empty left/right vertical rails'
+  );
+  assert(
+    (() => {
+      const topAdIdx = publicChatSource.indexOf('slotId="public-chatroom-top"');
+      const chatIdx = publicChatSource.indexOf('data-testid="central-chatroom-container"');
+      const bottomAdIdx = publicChatSource.indexOf('slotId="public-chatroom-bottom"');
+      const monetagIdx = publicChatSource.indexOf('slotId="public-chatroom-body-bottom"');
+      const exploreIdx = publicChatSource.indexOf('data-testid="explore-other-chatrooms-section"');
+      return (
+        publicChatSource.includes('className="relative w-full overflow-x-clip flex flex-col gap-4 py-4"') &&
+        (publicChatSource.match(/className="!my-0"/g) || []).length >= 3 &&
+        topAdIdx > 0 &&
+        chatIdx > topAdIdx &&
+        bottomAdIdx > chatIdx &&
+        monetagIdx > bottomAdIdx &&
+        exploreIdx > monetagIdx
+      );
+    })(),
+    '1.20 PublicChatPage enforces uniform 16px (gap-4 py-4 + !my-0) vertical spacing and strict Top Ad -> Chatroom -> Bottom Ad -> Monetag -> Explore DOM order'
   );
 
   // -------------------------------------------------------------------------
