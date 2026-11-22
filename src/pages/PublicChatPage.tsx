@@ -1427,6 +1427,19 @@ export const PublicChatPage: React.FC = () => {
           </div>
         ) : (
           <div className="flex-1 flex flex-col justify-between overflow-hidden relative z-0">
+            {/* Placement — Status-strip above advertisement */}
+            <div
+              aria-label="Sponsored advertisement"
+              className="px-0 sm:px-3 py-1 bg-[#0a0f1d] border-b border-slate-800/80 shrink-0 flex justify-center overflow-hidden"
+            >
+              <AdPlacementBox
+                slotId="public-chatroom-status-above"
+                adUnitId={ADSTERRA_CONFIG.banner320x50}
+                position="sidebar-horizontal"
+                className="px-0 shrink-0"
+              />
+            </div>
+
             {/* Safety & Retention Notification Strip */}
             <div className="px-4 py-2 bg-[#0c1324] border-b border-slate-800 text-[11px] text-slate-400 font-mono flex items-center justify-between shrink-0">
               <div className="flex items-center gap-1.5">
@@ -1438,13 +1451,13 @@ export const PublicChatPage: React.FC = () => {
               <span className="text-slate-500 hidden md:inline shrink-0">Asia/Dhaka</span>
             </div>
 
-            {/* Placement A — Status-strip horizontal advertisement (strictly landscape) */}
+            {/* Placement — Status-strip below advertisement */}
             <div
               aria-label="Sponsored advertisement"
               className="px-0 sm:px-3 py-1 bg-[#0a0f1d] border-b border-slate-800/80 shrink-0 flex justify-center overflow-hidden"
             >
               <AdPlacementBox
-                slotId="public-chatroom-status-inline"
+                slotId="public-chatroom-status-below"
                 adUnitId={ADSTERRA_CONFIG.banner320x50}
                 position="sidebar-horizontal"
                 className="px-0 shrink-0"
@@ -2144,12 +2157,65 @@ export const PublicChatPage: React.FC = () => {
     </div>
 
       {/* Ad 5 — Bottom Horizontal Ad (Below chatroom border, stable reserved space) */}
-      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 mb-6 shrink-0 flex justify-center">
+      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 mb-4 shrink-0 flex justify-center">
         <AdPlacementBox
           slotId="public-chatroom-bottom"
           adUnitId={ADSTERRA_CONFIG.banner728x90}
           position="bottom"
         />
+      </div>
+
+      {/* Monetag Body-Bottom Dedicated Advertisement */}
+      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 mb-6 shrink-0 flex justify-center">
+        <AdPlacementBox
+          slotId="public-chatroom-body-bottom"
+          provider="monetag"
+          position="content-gap"
+        />
+      </div>
+
+      {/* Explore Other Chatrooms Discovery Section */}
+      <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mb-8">
+        <div className="bg-[#0c1324] border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
+          <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-cyan-400" />
+            <span>{language === 'bn' ? 'অন্যান্য চ্যাটরুম ঘুরে দেখুন' : 'Explore Other Chatrooms'}</span>
+          </h3>
+          <p className="text-xs text-slate-400 mb-4">
+            {language === 'bn'
+              ? 'আমাদের অন্যান্য লাইভ চ্যাটরুমে যোগ দিন এবং আরও নতুন বন্ধুদের সাথে কথা বলুন।'
+              : 'Join our other live chatrooms and connect with more active members.'}
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {ROOMS_CONFIG.filter((r) => r.slug !== activeRoom.slug).map((r) => (
+              <button
+                key={r.id}
+                onClick={() => navigate('/chat', { roomId: r.slug })}
+                className="p-3.5 rounded-xl bg-[#101729] hover:bg-[#151f38] border border-slate-800 hover:border-cyan-500/50 text-left transition-all cursor-pointer group flex flex-col justify-between shadow-sm"
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="font-bold text-xs text-white group-hover:text-cyan-300 transition-colors">
+                      {r.name[language] || r.name.en}
+                    </span>
+                    {r.is18Plus && (
+                      <span className="text-[9px] font-semibold text-rose-300 bg-rose-950/80 border border-rose-800 px-1.5 py-0.2 rounded shrink-0">
+                        18+
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
+                    {r.description[language] || r.description.en}
+                  </p>
+                </div>
+                <div className="mt-3 flex items-center justify-between text-[10px] text-cyan-400 font-medium">
+                  <span>{language === 'bn' ? 'চ্যাট করুন' : 'Join Room'}</span>
+                  <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Contextual User Action Menu */}

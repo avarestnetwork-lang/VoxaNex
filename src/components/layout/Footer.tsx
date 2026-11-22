@@ -37,17 +37,34 @@ export const Footer: React.FC = () => {
   const showTrustpilotWidget =
     !normalizedRoute.startsWith('/admin') &&
     !normalizedRoute.startsWith('/moderator') &&
-    !normalizedRoute.startsWith('/chat') &&
     normalizedRoute !== '/messages' &&
     normalizedRoute !== '/av-chat' &&
     normalizedRoute !== '/random';
 
   useEffect(() => {
     if (!showTrustpilotWidget || !trustBoxRef.current) return;
-    const tp = (window as any)?.Trustpilot;
-    if (tp && typeof tp.loadFromElement === 'function') {
-      tp.loadFromElement(trustBoxRef.current, true);
-    }
+    let timer: any = null;
+    let interval: any = null;
+
+    const loadTrustWidget = () => {
+      const tp = (window as any)?.Trustpilot;
+      if (tp && typeof tp.loadFromElement === 'function' && trustBoxRef.current) {
+        try {
+          tp.loadFromElement(trustBoxRef.current, true);
+        } catch (e) {
+          console.warn('[Trustpilot] loadFromElement error:', e);
+        }
+      }
+    };
+
+    loadTrustWidget();
+    timer = setTimeout(loadTrustWidget, 400);
+    interval = setInterval(loadTrustWidget, 1500);
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (interval) clearInterval(interval);
+    };
   }, [showTrustpilotWidget, currentRoute]);
 
   return (

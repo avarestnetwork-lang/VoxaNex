@@ -2181,6 +2181,45 @@ async function runSuite() {
       assert(dmParticipantMediaRes.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'J8.6: Private DM media emits exact origin');
     }
 
+    // -------------------------------------------------------------------------
+    // CATEGORY K: Non-API OPTIONS Routing & Preflight Isolation
+    // -------------------------------------------------------------------------
+    console.log('\n--- Category K: Non-API OPTIONS Routing & Preflight Isolation ---');
+
+    // K1: Non-API OPTIONS request is NOT intercepted by handleCorsPreflight
+    {
+      const nonApiOptionsRes = await worker.fetch(
+        new Request('https://chatlustora.com/some-non-api-page', {
+          method: 'OPTIONS',
+          headers: {
+            'Origin': 'https://chatlustora.com',
+            'Access-Control-Request-Method': 'GET',
+          },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(nonApiOptionsRes.status === 404, 'K1: Non-API OPTIONS request falls through to Not Found (not intercepted by CORS preflight)');
+      assert(nonApiOptionsRes.headers.get('Access-Control-Allow-Origin') === null, 'K1.1: Non-API OPTIONS does not emit ACAO header');
+    }
+
+    // K2: Trusted /api/* OPTIONS succeeds with 204
+    {
+      const apiOptionsRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/health', {
+          method: 'OPTIONS',
+          headers: {
+            'Origin': 'https://chatlustora.com',
+            'Access-Control-Request-Method': 'GET',
+          },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(apiOptionsRes.status === 204, 'K2: Trusted /api/* OPTIONS preflight succeeds with 204');
+      assert(apiOptionsRes.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'K2.1: API preflight emits exact allowed origin');
+    }
+
     console.log('\n================================================================');
     console.log(` ALL ${passedCount} / ${testCount} R2 MEDIA & SECURITY TESTS PASSED SUCCESSFULLY!`);
     console.log('================================================================');

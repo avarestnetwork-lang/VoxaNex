@@ -18,7 +18,7 @@ import {
   isInternalHorizontalPlacement,
 } from '../../config/adsConfig';
 
-export type AdSlotPosition = 'top' | 'bottom' | 'left' | 'right' | 'footer' | 'sidebar-horizontal' | 'content-gap';
+export type AdSlotPosition = 'top' | 'bottom' | 'left' | 'right' | 'footer' | 'sidebar-horizontal' | 'content-gap' | 'body-bottom';
 
 export type CreativeValidationStatus =
   | 'empty'
@@ -839,6 +839,14 @@ export function resolveEffectiveUnitId({
 }: UnitResolutionParams): string | null {
   // 1. Google AdSense is STRICTLY & NON-OVERRIDABLY EXCLUDED from chat/private screens
   if (provider === 'adsense' && isLiveChatScreen) {
+    return null;
+  }
+  // Adsterra is strictly Footer-only
+  if (provider === 'adsterra' && position !== 'footer' && !slotId?.includes('footer')) {
+    return null;
+  }
+  // Monetag is strictly body-bottom-only
+  if (provider === 'monetag' && slotId !== 'public-chatroom-body-bottom' && position !== 'body-bottom') {
     return null;
   }
 

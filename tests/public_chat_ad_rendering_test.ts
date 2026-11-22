@@ -145,15 +145,27 @@ async function runAdRenderingTests() {
   assert(EXOCLICK_CONFIG.elementClass === 'eas6a97888e2', '3.7b ExoClick element class is eas6a97888e2');
   assert(MONETAG_CONFIG.zoneId === '12241585', '3.7c Monetag zone ID is 12241585');
 
-  const chatroomRotation = getProviderRotation('top', true);
+  const chatroomRotation = getProviderRotation('top', true, 'public-chatroom-top');
   assert(
-    chatroomRotation.length === 4 &&
-      chatroomRotation.includes('adsterra') &&
+    chatroomRotation.length === 2 &&
       chatroomRotation.includes('juicyads') &&
       chatroomRotation.includes('exoclick') &&
-      chatroomRotation.includes('monetag') &&
+      !chatroomRotation.includes('adsterra') &&
+      !chatroomRotation.includes('monetag') &&
       !chatroomRotation.includes('adsense'),
-    '3.8 Chatroom rotation strictly enforces exactly 4 networks without AdSense'
+    '3.8 Chatroom regular rotation strictly enforces ExoClick and JuicyAds only'
+  );
+
+  const footerRotation = getProviderRotation('footer', true, 'global-footer-responsive');
+  assert(
+    footerRotation.length === 1 && footerRotation.includes('adsterra'),
+    '3.8b Footer rotation strictly enforces Adsterra only'
+  );
+
+  const bodyBottomRotation = getProviderRotation('content-gap', true, 'public-chatroom-body-bottom');
+  assert(
+    bodyBottomRotation.length === 1 && bodyBottomRotation.includes('monetag'),
+    '3.8c Body-bottom rotation strictly enforces Monetag only'
   );
 
   const nonChatroomRotation = getProviderRotation('top', false);
@@ -177,9 +189,11 @@ async function runAdRenderingTests() {
       publicChatPageSource.includes('slotId="public-chatroom-right"') &&
       publicChatPageSource.includes('slotId="participant-box-horizontal"') &&
       publicChatPageSource.includes('slotId="public-chatroom-bottom"') &&
-      publicChatPageSource.includes('slotId="public-chatroom-status-inline"') &&
-      publicChatPageSource.includes('slotId="public-chatroom-message-inline"'),
-    '3.10 All 7 chatroom ad placement IDs (original 5 plus status-inline and message-inline) are present'
+      publicChatPageSource.includes('slotId="public-chatroom-status-above"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-status-below"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-message-inline"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-body-bottom"'),
+    '3.10 All chatroom ad placement IDs including status-above, status-below, message-inline, and body-bottom are present'
   );
   assert(
     publicChatPageSource.includes('h-[calc(100vh-5.5rem)] min-h-[580px]'),
@@ -196,90 +210,62 @@ async function runAdRenderingTests() {
   // --- Task 8: Behavioral Responsive Unit Selection Assertions ---
   console.log('\n--- 8. Behavioral Responsive Unit Selection & Preconfigured Override Protection ---');
 
-  // 8.1 Mobile Top Ad: Preconfigured 728x90 unit must NOT bypass responsive selection on 375px mobile
-  const mobileTopUnit = resolveEffectiveUnitId({
+  // 8.1 Mobile Footer Ad: Preconfigured 728x90 unit must NOT bypass responsive selection on 375px mobile
+  const mobileFooterUnit = resolveEffectiveUnitId({
     provider: 'adsterra',
-    position: 'top',
-    slotId: 'public-chatroom-top',
+    position: 'footer',
+    slotId: 'global-footer-responsive',
     primaryAdUnitId: ADSTERRA_CONFIG.banner728x90,
     containerWidth: 375,
-    isLiveChatScreen: true,
+    isLiveChatScreen: false,
   });
   assert(
-    mobileTopUnit === ADSTERRA_CONFIG.banner320x50,
-    '8.1 Mobile (375px): Preconfigured 728x90 desktop unit is downgraded to 320x50 banner format'
+    mobileFooterUnit === ADSTERRA_CONFIG.banner320x50,
+    '8.1 Mobile (375px): Preconfigured 728x90 desktop unit in footer is downgraded to 320x50 banner format'
   );
 
-  // 8.2 Tablet Top Ad: 768px container safely accommodates 728x90
-  const tabletTopUnit = resolveEffectiveUnitId({
+  // 8.2 Tablet Footer Ad: 768px container safely accommodates 728x90
+  const tabletFooterUnit = resolveEffectiveUnitId({
     provider: 'adsterra',
-    position: 'top',
-    slotId: 'public-chatroom-top',
+    position: 'footer',
+    slotId: 'global-footer-responsive',
     primaryAdUnitId: ADSTERRA_CONFIG.banner728x90,
     containerWidth: 768,
-    isLiveChatScreen: true,
+    isLiveChatScreen: false,
   });
   assert(
-    tabletTopUnit === ADSTERRA_CONFIG.banner728x90,
-    '8.2 Tablet (768px): Top ad safely selects 728x90 banner format'
+    tabletFooterUnit === ADSTERRA_CONFIG.banner728x90,
+    '8.2 Tablet (768px): Footer ad safely selects 728x90 banner format'
   );
 
-  // 8.3 Mobile Bottom Ad: Preconfigured 728x90 downgraded on 390px mobile
-  const mobileBottomUnit = resolveEffectiveUnitId({
+  // 8.3 Mobile Footer Ad: Preconfigured 728x90 downgraded on 390px mobile
+  const mobileFooterBottomUnit = resolveEffectiveUnitId({
     provider: 'adsterra',
-    position: 'bottom',
-    slotId: 'public-chatroom-bottom',
+    position: 'footer',
+    slotId: 'global-footer-responsive',
     primaryAdUnitId: ADSTERRA_CONFIG.banner728x90,
     containerWidth: 390,
-    isLiveChatScreen: true,
+    isLiveChatScreen: false,
   });
   assert(
-    mobileBottomUnit === ADSTERRA_CONFIG.banner320x50,
-    '8.3 Mobile (390px): Bottom ad selects 320x50 banner format'
+    mobileFooterBottomUnit === ADSTERRA_CONFIG.banner320x50,
+    '8.3 Mobile (390px): Footer ad selects 320x50 banner format'
   );
 
   // 8.4 Narrow viewport (<320px) returns null to prevent clipping and overflow
   const tooNarrowUnit = resolveEffectiveUnitId({
     provider: 'adsterra',
-    position: 'top',
-    slotId: 'public-chatroom-top',
+    position: 'footer',
+    slotId: 'global-footer-responsive',
     containerWidth: 300,
-    isLiveChatScreen: true,
+    isLiveChatScreen: false,
   });
   assert(
     tooNarrowUnit === null,
     '8.4 Insufficient width (<320px): Returns null to trigger fallback/clean collapse'
   );
 
-  // 8.5 Internal status-inline ad on mobile
-  const statusInlineUnit = resolveEffectiveUnitId({
-    provider: 'adsterra',
-    position: 'sidebar-horizontal',
-    slotId: 'public-chatroom-status-inline',
-    primaryAdUnitId: ADSTERRA_CONFIG.banner320x50,
-    containerWidth: 430,
-    isLiveChatScreen: true,
-  });
-  assert(
-    statusInlineUnit === ADSTERRA_CONFIG.banner320x50,
-    '8.5 Status-inline ad on mobile (430px) selects 320x50 banner'
-  );
-
-  // 8.6 Internal message-inline ad on desktop
-  const messageInlineUnit = resolveEffectiveUnitId({
-    provider: 'adsterra',
-    position: 'sidebar-horizontal',
-    slotId: 'public-chatroom-message-inline',
-    primaryAdUnitId: ADSTERRA_CONFIG.banner320x50,
-    containerWidth: 850,
-    isLiveChatScreen: true,
-  });
-  assert(
-    messageInlineUnit === ADSTERRA_CONFIG.banner320x50,
-    '8.6 Message-inline ad on desktop (850px) maintains compact 320x50 height'
-  );
-
-  // 8.7 JuicyAds horizontal mobile vs desktop
+  // 8.5 JuicyAds horizontal mobile vs desktop
   const juicyMobile = resolveEffectiveUnitId({
     provider: 'juicyads',
     position: 'top',
@@ -289,7 +275,7 @@ async function runAdRenderingTests() {
   });
   assert(
     juicyMobile === JUICYADS_CONFIG.zones.banner300x62,
-    '8.7 JuicyAds horizontal on mobile (375px) selects 300x62 zone (1131763)'
+    '8.5 JuicyAds horizontal on mobile (375px) selects 300x62 zone (1131763)'
   );
 
   const juicyDesktop = resolveEffectiveUnitId({
@@ -301,8 +287,10 @@ async function runAdRenderingTests() {
   });
   assert(
     juicyDesktop === JUICYADS_CONFIG.zones.banner728x102,
-    '8.8 JuicyAds horizontal on desktop (1280px) selects 728x102 zone (1131766)'
+    '8.6 JuicyAds horizontal on desktop (1280px) selects 728x102 zone (1131766)'
   );
+
+
 
   // 8.9 JuicyAds vertical sidebar: narrow vs wide
   const juicyVerticalNarrow = resolveEffectiveUnitId({
@@ -776,36 +764,29 @@ async function runAdRenderingTests() {
   // --- Task 9B: Provider Rotation on No-Fill and Error via computeProviderTransition ---
   console.log('\n--- 9B. Provider Rotation Progression & Terminal Cleanup ---');
 
-  const rotationList = getProviderRotation('top', true);
+  const rotationList = getProviderRotation('top', true, 'public-chatroom-top');
   assert(
-    rotationList[0] === 'adsterra' &&
-      rotationList[1] === 'juicyads' &&
-      rotationList[2] === 'exoclick' &&
-      rotationList[3] === 'monetag',
-    '9.22 Chatroom rotation follows exact priority sequence: Adsterra -> JuicyAds -> ExoClick -> Monetag'
+    rotationList.length === 2 &&
+      rotationList[0] === 'juicyads' &&
+      rotationList[1] === 'exoclick',
+    '9.22 Chatroom rotation enforces JuicyAds and ExoClick only'
   );
 
   // Test actual production computeProviderTransition
   const t1 = computeProviderTransition('unfilled', 0, rotationList);
-  assert(t1.shouldRotate && t1.nextIndex === 1 && t1.action === 'rotate', '9.23 Adsterra no-fill -> JuicyAds rotation decision');
+  assert(t1.shouldRotate && t1.nextIndex === 1 && t1.action === 'rotate', '9.23 JuicyAds no-fill -> ExoClick rotation decision');
 
-  const t2 = computeProviderTransition('error', 1, rotationList);
-  assert(t2.shouldRotate && t2.nextIndex === 2 && t2.action === 'rotate', '9.24 JuicyAds error -> ExoClick rotation decision');
-
-  const t3 = computeProviderTransition('unfilled', 2, rotationList);
-  assert(t3.shouldRotate && t3.nextIndex === 3 && t3.action === 'rotate', '9.25 ExoClick no-fill -> Monetag rotation decision');
-
-  const t4 = computeProviderTransition('unfilled', 3, rotationList);
-  assert(!t4.shouldRotate && t4.isTerminal && t4.action === 'settle', '9.26 Monetag terminal no-fill terminates rotation without loop');
+  const t2 = computeProviderTransition('unfilled', 1, rotationList);
+  assert(!t2.shouldRotate && t2.isTerminal && t2.action === 'settle', '9.24 ExoClick terminal no-fill terminates rotation without loop');
 
   const t5 = computeProviderTransition('unverifiable', 0, rotationList);
-  assert(!t5.shouldRotate && t5.isTerminal, '9.27 Unverifiable status does not trigger rotation');
+  assert(!t5.shouldRotate && t5.isTerminal, '9.25 Unverifiable status does not trigger rotation');
 
   const t6 = computeProviderTransition('filled', 0, rotationList);
-  assert(!t6.shouldRotate && t6.isTerminal, '9.28 Confirmed filled status does not trigger rotation');
+  assert(!t6.shouldRotate && t6.isTerminal, '9.26 Confirmed filled status does not trigger rotation');
 
-  const t7 = computeProviderTransition('unfilled', 0, rotationList, 'adsterra');
-  assert(!t7.shouldRotate && t7.isTerminal, '9.29 Explicit provider behavior respects single provider without rotation');
+  const t7 = computeProviderTransition('unfilled', 0, rotationList, 'juicyads');
+  assert(!t7.shouldRotate && t7.isTerminal, '9.27 Explicit provider behavior respects single provider without rotation');
 
   // --- Task 10: Strict Participant Sidebar & Composer Preservation ---
   console.log('\n--- 10. Chatroom Layout & Participant Sidebar Preservation ---');
@@ -818,9 +799,10 @@ async function runAdRenderingTests() {
     '10.2 External participant horizontal ad placement remains intact'
   );
   assert(
-    publicChatPageSource.includes('slotId="public-chatroom-status-inline"') &&
+    publicChatPageSource.includes('slotId="public-chatroom-status-above"') &&
+      publicChatPageSource.includes('slotId="public-chatroom-status-below"') &&
       publicChatPageSource.includes('slotId="public-chatroom-message-inline"'),
-    '10.3 Both internal chatroom placements (status-inline and message-inline) remain intact'
+    '10.3 All internal chatroom placements (status-above, status-below, and message-inline) remain intact'
   );
   assert(
     !composerCode.includes('AdPlacementBox'),
@@ -831,11 +813,12 @@ async function runAdRenderingTests() {
   console.log('\n--- 11. Phase 1 Orientation Guard, Reserved Dimensions & Bounds Validation ---');
 
   assert(
-    isInternalHorizontalPlacement('public-chatroom-status-inline') &&
+    isInternalHorizontalPlacement('public-chatroom-status-above') &&
+      isInternalHorizontalPlacement('public-chatroom-status-below') &&
       isInternalHorizontalPlacement('public-chatroom-message-inline') &&
       !isInternalHorizontalPlacement('public-chatroom-left') &&
       !isInternalHorizontalPlacement('public-chatroom-top'),
-    '11.1 isInternalHorizontalPlacement accurately identifies both internal chatroom placements'
+    '11.1 isInternalHorizontalPlacement accurately identifies all internal chatroom placements'
   );
 
   assert(
@@ -1036,14 +1019,13 @@ async function runAdRenderingTests() {
   );
   assert(
     resolveEffectiveUnitId({
-      provider: 'adsterra',
+      provider: 'juicyads',
       position: 'sidebar-horizontal',
       slotId: 'participant-box-horizontal',
-      primaryAdUnitId: ADSTERRA_CONFIG.banner320x50,
       containerWidth: 324,
       isLiveChatScreen: true,
-    }) === ADSTERRA_CONFIG.banner320x50,
-    '12.3 Participant Bar (324px desktop lg/xl): Adsterra 320x50 fits cleanly without overflow'
+    }) === JUICYADS_CONFIG.zones.banner300x112,
+    '12.3 Participant Bar (324px desktop lg/xl): JuicyAds resolves 300x112 zone (1131767)'
   );
 
   // 12.4 Vertical sidebars reject landscape 300x250, 300x262, unverified nativeWidget, and unverified generic zones
@@ -1643,20 +1625,27 @@ async function runAdRenderingTests() {
     const availOuter = vw === 768 ? 736 : 728;
     assert(
       resolveEffectiveUnitId({
-        provider: 'adsterra',
+        provider: 'juicyads',
         position: 'top',
         slotId: 'public-chatroom-top',
         containerWidth: availOuter,
         isLiveChatScreen: true,
-      }) === ADSTERRA_CONFIG.banner728x90 &&
+      }) === JUICYADS_CONFIG.zones.banner728x102 &&
         resolveEffectiveUnitId({
           provider: 'juicyads',
           position: 'bottom',
           slotId: 'public-chatroom-bottom',
           containerWidth: availOuter,
           isLiveChatScreen: true,
-        }) === JUICYADS_CONFIG.zones.banner728x102,
-      `17.8a Viewport ${vw}px selects maximum compatible 728x90 / 728x102 outer horizontal creatives`
+        }) === JUICYADS_CONFIG.zones.banner728x102 &&
+        resolveEffectiveUnitId({
+          provider: 'adsterra',
+          position: 'footer',
+          slotId: 'global-footer-responsive',
+          containerWidth: availOuter,
+          isLiveChatScreen: false,
+        }) === ADSTERRA_CONFIG.banner728x90,
+      `17.8a Viewport ${vw}px selects maximum compatible 728x102 / 728x90 outer horizontal creatives`
     );
   }
 
@@ -1664,34 +1653,40 @@ async function runAdRenderingTests() {
     // PublicChatPage uses px-0 sm:px-4 on top/bottom -> full 320px/390px available
     assert(
       resolveEffectiveUnitId({
-        provider: 'adsterra',
+        provider: 'juicyads',
         position: 'top',
         slotId: 'public-chatroom-top',
         containerWidth: mobileWidth,
         isLiveChatScreen: true,
-      }) === ADSTERRA_CONFIG.banner320x50 &&
+      }) === JUICYADS_CONFIG.zones.banner300x62 &&
         resolveEffectiveUnitId({
           provider: 'juicyads',
           position: 'bottom',
           slotId: 'public-chatroom-bottom',
           containerWidth: mobileWidth,
           isLiveChatScreen: true,
-        }) === JUICYADS_CONFIG.zones.banner300x62,
-      `17.8b Mobile viewport ${mobileWidth}px fits 320x50 and 300x62 cleanly on outer banners without clipping`
+        }) === JUICYADS_CONFIG.zones.banner300x62 &&
+        resolveEffectiveUnitId({
+          provider: 'adsterra',
+          position: 'footer',
+          slotId: 'global-footer-responsive',
+          containerWidth: mobileWidth,
+          isLiveChatScreen: false,
+        }) === ADSTERRA_CONFIG.banner320x50,
+      `17.8b Mobile viewport ${mobileWidth}px fits 300x62 and 320x50 cleanly on outer banners without clipping`
     );
 
     // Internal inline width at 320px: 320 - 16 (px-2) - 2 (border) = 302px (JuicyAds 300x62 fits; Adsterra 320x50 skips cleanly!)
     // At 390px: 390 - 16 - 2 = 372px (both 320x50 and 300x62 fit)
     const internalAvail = mobileWidth - 18;
-    const expectedAdsterraInternal = mobileWidth === 320 ? null : ADSTERRA_CONFIG.banner320x50;
     assert(
       resolveEffectiveUnitId({
-        provider: 'adsterra',
+        provider: 'juicyads',
         position: 'sidebar-horizontal',
-        slotId: 'public-chatroom-status-inline',
+        slotId: 'public-chatroom-status-above',
         containerWidth: internalAvail,
         isLiveChatScreen: true,
-      }) === expectedAdsterraInternal &&
+      }) === JUICYADS_CONFIG.zones.banner300x62 &&
         resolveEffectiveUnitId({
           provider: 'juicyads',
           position: 'sidebar-horizontal',
@@ -1699,7 +1694,7 @@ async function runAdRenderingTests() {
           containerWidth: internalAvail,
           isLiveChatScreen: true,
         }) === JUICYADS_CONFIG.zones.banner300x62,
-      `17.8c Internal chatroom ads at ${mobileWidth}px (${internalAvail}px inner width) prevent 320px overflow and fall back cleanly to 300x62`
+      `17.8c Internal chatroom ads at ${mobileWidth}px (${internalAvail}px inner width) select JuicyAds 300x62 cleanly`
     );
   }
 

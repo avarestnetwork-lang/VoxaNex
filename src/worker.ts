@@ -1173,8 +1173,8 @@ export default {
   async fetch(request: Request, env: WorkerEnv, ctx: any): Promise<Response> {
     const url = new URL(request.url);
 
-    // Handle CORS preflight strictly (exact origin allowlist, method check, Vary: Origin)
-    if (request.method === 'OPTIONS') {
+    // Handle CORS preflight strictly for /api/* routes (exact origin allowlist, method check, Vary: Origin)
+    if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
       return handleCorsPreflight(request, url.pathname, env);
     }
 
