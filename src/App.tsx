@@ -8,6 +8,7 @@ import { PrivateChatProvider } from './context/PrivateChatContext';
 import { ConsentProvider } from './context/ConsentContext';
 import { CookieConsent } from './components/ads/CookieConsent';
 import { AdSenseScriptLoader } from './components/ads/AdSenseScriptLoader';
+import { CentralizedAdCoordinator } from './components/ads/CentralizedAdCoordinator';
 import { FloatingChatManager } from './components/chat/FloatingChatManager';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
@@ -168,6 +169,7 @@ export default function App() {
                 <ConsentProvider>
                   <AppRoutes />
                   <FloatingChatManager />
+                  <CentralizedAdCoordinator />
                   <AdSenseScriptLoader />
                 </ConsentProvider>
               </PrivateChatProvider>

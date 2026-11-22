@@ -949,6 +949,10 @@ export function resolveEffectiveUnitId({
       return JUICYADS_CONFIG.zones.banner300x62; // 1131763
     }
 
+    if (slotId === 'chatroom-juicyads-bottom' || primaryAdUnitId === JUICYADS_CONFIG.zones.display308x298) {
+      return JUICYADS_CONFIG.zones.display308x298; // 1133909
+    }
+
     if (posStr === 'top' || posStr === 'bottom' || posStr === 'footer' || posStr === 'content-gap') {
       if (containerWidth !== null && containerWidth >= 728) {
         return JUICYADS_CONFIG.zones.banner728x102; // 1131766
@@ -1550,9 +1554,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         } else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x112) {
           width = 300;
           height = 112;
+        } else if (effectiveUnitId === JUICYADS_CONFIG.zones.display308x298) {
+          width = 308;
+          height = 298;
         }
 
-        const domId = `juicyads-ins-${effectiveUnitId}-${slotId}`;
+        const is308x298 = effectiveUnitId === JUICYADS_CONFIG.zones.display308x298;
+        const domId = is308x298 ? '1133909' : `juicyads-ins-${effectiveUnitId}-${slotId}`;
         imperativeHostRef.current.innerHTML = `<ins id="${domId}" data-width="${width}" data-height="${height}"></ins>`;
 
         ensureHeadScriptOnce(JUICYADS_CONFIG.scriptUrl, {
@@ -1562,7 +1570,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
         const win = window as any;
         win.adsbyjuicy = win.adsbyjuicy || [];
-        win.adsbyjuicy.push({ adzone: effectiveUnitId, id: domId });
+        win.adsbyjuicy.push(is308x298 ? { adzone: 1133909 } : { adzone: effectiveUnitId, id: domId });
 
         startPolling(() => {
           const target = document.getElementById(domId);
@@ -1849,6 +1857,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     posClasses = isParticipantWidthCollapsed
       ? 'w-full max-w-[300px] min-h-0 h-0 max-h-0 m-0 p-0 border-0 opacity-0 pointer-events-none mx-auto flex items-center justify-center overflow-hidden shrink-0'
       : 'w-full max-w-[300px] lg:max-w-[320px] min-h-[112px] h-[112px] max-h-[120px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
+  } else if (slotId === 'chatroom-juicyads-bottom' || effectiveUnitId === JUICYADS_CONFIG.zones.display308x298) {
+    posClasses =
+      'w-full max-w-[320px] min-h-[298px] h-[298px] max-h-[300px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
   } else if (isInternalHorizontalPlacement(slotId) || position === 'sidebar-horizontal') {
     posClasses =
       'w-full max-w-[320px] min-h-[62px] h-[62px] max-h-[68px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';

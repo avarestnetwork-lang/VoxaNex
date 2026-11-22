@@ -13,8 +13,12 @@ export const ADSTERRA_CONFIG = {
 
 export const EXOCLICK_CONFIG = {
   zoneId: '6087300',
+  videoSliderZoneId: '6102494',
+  horizontalVastZoneId: '6102492',
+  horizontalVastUrl: 'https://s.magsrv.com/v1/vast.php?idz=6102492',
   scriptUrl: 'https://a.magsrv.com/ad-provider.js',
   elementClass: 'eas6a97888e2',
+  videoSliderElementClass: 'eas6a97888e31',
   verificationFile: '28befc4532cb8837aa59edffca607a5a.html',
   integrationType: 'async' as const,
   // ExoClick native Ad Refresh supports 30, 60, 90, 120s (max 10 session rotations) on async zones
@@ -29,11 +33,14 @@ export const EXOCLICK_CONFIG = {
 export const JUICYADS_CONFIG = {
   verificationTag: '97a6aeec522d11d21efa5f84c86eb958',
   scriptUrl: 'https://poweredby.jads.co/js/jads.js',
+  floatingScriptUrl: 'https://poweredby.jads.co/js/jfc.js',
   zones: {
     banner300x62: '1131763',
     banner300x262: '1131765',
     banner728x102: '1131766',
     banner300x112: '1131767',
+    floating: '1133907',
+    display308x298: '1133909',
   },
   enabled: true,
 };
@@ -341,6 +348,83 @@ export const isRouteExcludedFromFooterAds = (currentRoute: string): boolean => {
   );
 };
 
+export const GLOBAL_ADS_INELIGIBLE_ROUTES = [
+  '/user/login',
+  '/user/register',
+  '/user/guest-entry',
+  '/user/reset-password',
+  '/user/password-reset',
+  '/user/account-recovery',
+  '/auth',
+  '/admin',
+  '/moderator',
+  '/checkout',
+  '/payment',
+];
+
+export const isEligibleRouteForGlobalAds = (currentRoute: string): boolean => {
+  const normalized = (currentRoute || '').toLowerCase().split(/[?#]/)[0];
+  if (!normalized) return true;
+  return !GLOBAL_ADS_INELIGIBLE_ROUTES.some(
+    (route) =>
+      normalized === route ||
+      normalized.startsWith(`${route}/`) ||
+      normalized.startsWith('/admin') ||
+      normalized.startsWith('/moderator') ||
+      normalized.includes('/auth') ||
+      normalized.includes('/checkout') ||
+      normalized.includes('/payment')
+  );
+};
+
+export type JuicyAdsAlternatingZone = '1133907' | '1133909';
+
+// Evaluated once per full browser page load, never on React re-render or client navigation
+let cachedJuicyAdsAlternatingZone: JuicyAdsAlternatingZone | null = null;
+let cachedPageLoadCount: number | null = null;
+
+export const getJuicyAdsPageLoadAlternation = (forceNewCounter?: number): {
+  zone: JuicyAdsAlternatingZone;
+  loadCount: number;
+} => {
+  if (typeof forceNewCounter === 'number') {
+    const zone = forceNewCounter % 2 === 1 ? '1133907' : '1133909';
+    return { zone, loadCount: forceNewCounter };
+  }
+
+  if (cachedJuicyAdsAlternatingZone !== null && cachedPageLoadCount !== null) {
+    return { zone: cachedJuicyAdsAlternatingZone, loadCount: cachedPageLoadCount };
+  }
+
+  let count = 1;
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const stored = window.sessionStorage.getItem('vx_juicyads_page_load_count');
+      const prevCount = stored ? parseInt(stored, 10) : 0;
+      count = isNaN(prevCount) ? 1 : prevCount + 1;
+      window.sessionStorage.setItem('vx_juicyads_page_load_count', String(count));
+    }
+  } catch {
+    count = 1;
+  }
+
+  cachedPageLoadCount = count;
+  cachedJuicyAdsAlternatingZone = count % 2 === 1 ? '1133907' : '1133909';
+  return { zone: cachedJuicyAdsAlternatingZone, loadCount: count };
+};
+
+export const resetJuicyAdsAlternationForTest = (initialCount?: number) => {
+  cachedJuicyAdsAlternatingZone = null;
+  cachedPageLoadCount = null;
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    if (typeof initialCount === 'number') {
+      window.sessionStorage.setItem('vx_juicyads_page_load_count', String(initialCount));
+    } else {
+      window.sessionStorage.removeItem('vx_juicyads_page_load_count');
+    }
+  }
+};
+
 export const getAdsterraUnitForWidth = (width: number, position: string): string | null => {
   if (position === 'footer') {
     if (width >= 728) return ADSTERRA_CONFIG.banner728x90;
@@ -441,6 +525,13 @@ export const VERIFIED_AD_UNITS: readonly VerifiedAdUnitSpec[] = [
     provider: 'juicyads',
     width: 728,
     height: 102,
+    orientation: 'horizontal',
+  },
+  {
+    id: JUICYADS_CONFIG.zones.display308x298,
+    provider: 'juicyads',
+    width: 308,
+    height: 298,
     orientation: 'horizontal',
   },
 ];

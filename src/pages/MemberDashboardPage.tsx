@@ -6,6 +6,7 @@ import { safetyService } from '../services/safetyService';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { SEOHead } from '../components/common/SEOHead';
+import { HorizontalVastVideoAd } from '../components/ads/HorizontalVastVideoAd';
 import { BlockedUserEntry, UserConnection } from '../types';
 import {
   User,
@@ -1208,6 +1209,9 @@ export const MemberDashboardPage: React.FC = () => {
           </div>
         </Modal>
       )}
+
+      {/* ExoClick Horizontal VAST Video Placement */}
+      <HorizontalVastVideoAd className="my-6" />
     </div>
   );
 };
