@@ -66,6 +66,14 @@ export function useChatMediaAttachment({
   const uploadingLockRef = useRef<boolean>(false);
   const isUnmountedRef = useRef<boolean>(false);
   const lastModeRef = useRef<'image' | 'audio'>('image');
+  const activeIdempotencyKeyRef = useRef<string | null>(null);
+
+  const createIdempotencyKey = useCallback((): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `upl_${crypto.randomUUID().replace(/-/g, '')}`;
+    }
+    return `upl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+  }, []);
 
   const revokePreviewBlob = useCallback(() => {
     if (localBlobUrlRef.current) {
@@ -93,6 +101,7 @@ export function useChatMediaAttachment({
   // Reset and isolate state strictly whenever conversationId or roomId changes
   useEffect(() => {
     activeAttemptIdRef.current += 1;
+    activeIdempotencyKeyRef.current = null;
     abortActiveUpload();
     revokePreviewBlob();
     setState(INITIAL_ATTACHMENT_STATE);
@@ -132,12 +141,16 @@ export function useChatMediaAttachment({
         uploadedAsset: null,
       }));
 
+      const idempotencyKey = activeIdempotencyKeyRef.current || createIdempotencyKey();
+      activeIdempotencyKeyRef.current = idempotencyKey;
+
       const res = await messagingService.uploadChatMedia({
         file,
         contextType,
         contextId,
         isGuest,
         userId,
+        idempotencyKey,
         onProgress: (pct) => {
           if (isUnmountedRef.current || activeAttemptIdRef.current !== attemptId) return;
           setState((prev) =>
@@ -208,6 +221,7 @@ export function useChatMediaAttachment({
       // Cancel any prior upload attempt cleanly before starting a new selection
       activeAttemptIdRef.current += 1;
       const attemptId = activeAttemptIdRef.current;
+      activeIdempotencyKeyRef.current = createIdempotencyKey();
       abortActiveUpload();
       revokePreviewBlob();
       lastModeRef.current = mode;
@@ -288,6 +302,7 @@ export function useChatMediaAttachment({
   const selectGif = useCallback(
     (gif: { url: string; title?: string }) => {
       activeAttemptIdRef.current += 1;
+      activeIdempotencyKeyRef.current = null;
       abortActiveUpload();
       revokePreviewBlob();
 
@@ -347,6 +362,7 @@ export function useChatMediaAttachment({
 
   const removeAttachment = useCallback(() => {
     activeAttemptIdRef.current += 1;
+    activeIdempotencyKeyRef.current = null;
     abortActiveUpload();
     revokePreviewBlob();
     setState(INITIAL_ATTACHMENT_STATE);
@@ -354,6 +370,7 @@ export function useChatMediaAttachment({
 
   const markSent = useCallback(() => {
     activeAttemptIdRef.current += 1;
+    activeIdempotencyKeyRef.current = null;
     abortActiveUpload();
     revokePreviewBlob();
     setState(INITIAL_ATTACHMENT_STATE);

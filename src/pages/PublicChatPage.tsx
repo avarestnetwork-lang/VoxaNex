@@ -1221,7 +1221,7 @@ export const PublicChatPage: React.FC = () => {
   }
 
   return (
-    <div className="relative w-full overflow-x-clip min-h-[calc(100vh-5.5rem)] flex flex-col">
+    <div className="relative w-full overflow-x-clip min-h-[calc(100dvh-4.5rem)] flex flex-col">
       <SEOHead
         title={`${activeRoom.name[language] || activeRoom.name.en} – ChatLustora`}
         description={`Real-time adult public group chat and live conversations in ${activeRoom.name[language] || activeRoom.name.en} on ChatLustora.`}
@@ -1237,21 +1237,12 @@ export const PublicChatPage: React.FC = () => {
         />
       </div>
 
-      {/* Main Responsive Desktop Workspace containing Side Ads + Central Chatroom Container */}
-      <div className="w-full max-w-[1720px] 2xl:max-w-[1920px] 3xl:max-w-[2160px] mx-auto px-2 sm:px-4 xl:px-6 mb-4 h-[calc(100vh-5.5rem)] min-h-[580px] flex gap-2.5 xl:gap-3.5 2xl:gap-5 items-stretch overflow-hidden">
-        {/* Ad 2 — Left Vertical Ad (Visible on desktop xl+ outside chatroom left border) */}
-        <div className="hidden xl:flex shrink-0 w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
-          <AdPlacementBox
-            slotId="public-chatroom-left"
-            isVertical={true}
-            position="left"
-          />
-        </div>
-
+      {/* Main Responsive Workspace containing Full-Width Central Chatroom Container (no empty side rails without verified vertical units) */}
+      <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mb-4 h-[calc(100dvh-10.25rem)] md:h-[calc(100dvh-12.5rem)] min-h-[380px] sm:min-h-[420px] max-h-[880px] flex items-stretch overflow-hidden">
         {/* Central Chatroom Container */}
         <div
           data-testid="central-chatroom-container"
-          className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 ring-1 ring-slate-800/50"
+          className="flex-1 flex flex-col overflow-hidden border border-slate-800 rounded-2xl bg-[#090d18] relative shadow-2xl min-w-0 min-h-0 ring-1 ring-slate-800/50"
         >
           <div className="p-3 border-b border-slate-800 bg-[#0c1324] flex items-center justify-between gap-3 shrink-0">
             {/* ... tab buttons ... */}
@@ -1408,9 +1399,9 @@ export const PublicChatPage: React.FC = () => {
       </div>
 
       {/* Main Container */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 min-h-0 flex overflow-hidden">
         {activeMaximizedWindow ? (
-          <div className="flex-1 flex flex-col overflow-hidden relative z-0" data-testid="maximized-private-pane">
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative z-0" data-testid="maximized-private-pane">
             <PrivateChatPane
               conversationId={activeMaximizedWindow.conversationId}
               partner={{
@@ -1433,7 +1424,7 @@ export const PublicChatPage: React.FC = () => {
             />
           </div>
         ) : (
-          <div className="flex-1 flex flex-col justify-between overflow-hidden relative z-0">
+          <div className="flex-1 min-h-0 flex flex-col justify-between overflow-hidden relative z-0">
             {/* Placement — Status-strip above advertisement */}
             <div
               aria-label="Sponsored advertisement"
@@ -1475,33 +1466,25 @@ export const PublicChatPage: React.FC = () => {
             <div
               ref={messagesContainerRef}
               onScroll={handleScrollMessages}
-              className="flex-1 overflow-y-auto px-2 py-3 sm:p-4 space-y-1.5"
+              className="flex-1 min-h-0 overflow-y-auto px-2 py-3 sm:p-4 space-y-1.5"
             >
               {(() => {
-                const totalChatMsgs = messages.filter((m) => !m.isSystem).length;
-                let chatMsgCount = 0;
+                let nonSystemSeen = 0;
+                let splitIndex = messages.length;
+                for (let i = 0; i < messages.length; i++) {
+                  if (!messages[i].isSystem) {
+                    nonSystemSeen += 1;
+                    if (nonSystemSeen === 5) {
+                      splitIndex = i + 1;
+                      break;
+                    }
+                  }
+                }
 
-                const inlineAdBlock = (
-                  <div
-                    key="public-chatroom-message-inline-container"
-                    data-testid="public-chatroom-message-inline-container"
-                    aria-label="Sponsored advertisement"
-                    className="my-2 -mx-2 sm:mx-0 py-1.5 px-0 sm:rounded-xl border-y sm:border border-slate-800/70 bg-[#080d19]/90 flex flex-col items-center gap-1 select-none overflow-hidden"
-                  >
-                    <span className="text-[9px] uppercase tracking-widest text-slate-500 font-mono leading-none">
-                      Sponsored
-                    </span>
-                    <AdPlacementBox
-                      slotId="public-chatroom-message-inline"
-                      position="sidebar-horizontal"
-                      className="px-0 shrink-0"
-                    />
-                  </div>
-                );
+                const preInlineMessages = messages.slice(0, splitIndex);
+                const postInlineMessages = messages.slice(splitIndex);
 
-                return (
-                  <>
-                    {messages.map((msg, idx) => {
+                const renderChatMessageRow = (msg: ExtendedChatMessage, idx: number) => {
                   const isMe = msg.senderId === user.id;
                   const isMentioned =
                     user.nickname &&
@@ -1511,7 +1494,7 @@ export const PublicChatPage: React.FC = () => {
                   if (msg.isSystem) {
                     return (
                       <div
-                        key={`${msg.id}-${idx}`}
+                        key={msg.id || `sys-${idx}`}
                         className="p-3 my-2 rounded-xl bg-[#111728]/90 border border-slate-800 text-xs text-slate-300 flex items-start gap-2.5 max-w-xl mx-auto shadow-sm"
                       >
                         <span className="text-lg select-none shrink-0">{msg.senderAvatar}</span>
@@ -1528,126 +1511,142 @@ export const PublicChatPage: React.FC = () => {
                     );
                   }
 
-                  chatMsgCount++;
-                  const showMessageInlineAdAfterFifth = totalChatMsgs >= 5 && chatMsgCount === 5;
-
                   // Normal message row with alternating subtle background
                   return (
-                    <React.Fragment key={`${msg.id}-${idx}`}>
-                      <div
-                        className={`group flex items-start gap-2.5 p-2 sm:px-3 sm:py-2.5 rounded-xl transition-colors ${
-                          idx % 2 === 0 ? 'bg-[#0d1424]/40' : 'bg-transparent'
-                        } hover:bg-slate-800/30 ${
-                          isMentioned ? 'bg-amber-950/25 border border-amber-800/40 shadow-sm' : ''
-                        }`}
+                    <div
+                      key={msg.id || `msg-${idx}`}
+                      className={`group flex items-start gap-2.5 p-2 sm:px-3 sm:py-2.5 rounded-xl transition-colors ${
+                        idx % 2 === 0 ? 'bg-[#0d1424]/40' : 'bg-transparent'
+                      } hover:bg-slate-800/30 ${
+                        isMentioned ? 'bg-amber-950/25 border border-amber-800/40 shadow-sm' : ''
+                      }`}
+                    >
+                      {/* Clickable Participant Avatar */}
+                      <button
+                        type="button"
+                        onClick={(e) =>
+                          handleUserClick(e, {
+                            id: msg.senderId,
+                            nickname: msg.senderNickname,
+                            avatar: msg.senderAvatar,
+                          })
+                        }
+                        className="w-8 h-8 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-sm shrink-0 select-none hover:scale-105 hover:border-cyan-500 transition-all cursor-pointer shadow-sm"
+                        title="Click user options"
                       >
-                        {/* Clickable Participant Avatar */}
-                        <button
-                          type="button"
-                          onClick={(e) =>
-                            handleUserClick(e, {
-                              id: msg.senderId,
-                              nickname: msg.senderNickname,
-                              avatar: msg.senderAvatar,
-                            })
-                          }
-                          className="w-8 h-8 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-sm shrink-0 select-none hover:scale-105 hover:border-cyan-500 transition-all cursor-pointer shadow-sm"
-                          title="Click user options"
-                        >
-                          {msg.senderAvatar}
-                        </button>
+                        {msg.senderAvatar}
+                      </button>
 
-                        {/* Message Details */}
-                        <div className="flex-1 min-w-0">
-                          {/* Name, Gender, Timestamp Bar */}
-                          <div className="flex items-center justify-between gap-2 mb-0.5">
-                            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                              {/* Clickable Nickname */}
-                              <button
-                                type="button"
-                                onClick={(e) =>
-                                  handleUserClick(e, {
-                                    id: msg.senderId,
-                                    nickname: msg.senderNickname,
-                                    avatar: msg.senderAvatar,
-                                  })
-                                }
-                                className={`font-bold text-xs truncate hover:underline cursor-pointer text-left ${getGenderColor(
-                                  onlineMembers.find((m) => m.id === msg.senderId)?.gender
-                                )}`}
-                              >
-                                {msg.senderNickname}
-                              </button>
+                      {/* Message Details */}
+                      <div className="flex-1 min-w-0">
+                        {/* Name, Gender, Timestamp Bar */}
+                        <div className="flex items-center justify-between gap-2 mb-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                            {/* Clickable Nickname */}
+                            <button
+                              type="button"
+                              onClick={(e) =>
+                                handleUserClick(e, {
+                                  id: msg.senderId,
+                                  nickname: msg.senderNickname,
+                                  avatar: msg.senderAvatar,
+                                })
+                              }
+                              className={`font-bold text-xs truncate hover:underline cursor-pointer text-left ${getGenderColor(
+                                onlineMembers.find((m) => m.id === msg.senderId)?.gender
+                              )}`}
+                            >
+                              {msg.senderNickname}
+                            </button>
 
-                              {/* Gender sign */}
-                              <GenderBadge
-                                gender={onlineMembers.find((m) => m.id === msg.senderId)?.gender}
-                              />
+                            {/* Gender sign */}
+                            <GenderBadge
+                              gender={onlineMembers.find((m) => m.id === msg.senderId)?.gender}
+                            />
 
-                              {isMe && (
-                                <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-violet-950 text-violet-300 border border-violet-800">
-                                  You
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Light gray formatted timestamp */}
-                            <span className="text-[10px] text-slate-500 font-mono shrink-0 select-none">
-                              [{formatDhakaTime(msg.timestamp, language)}]
-                            </span>
+                            {isMe && (
+                              <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-violet-950 text-violet-300 border border-violet-800">
+                                You
+                              </span>
+                            )}
                           </div>
 
-                          {/* Content with mention parsing */}
-                          {msg.content && (
-                            <div className="text-xs text-slate-200 leading-relaxed break-words whitespace-pre-wrap">
-                              {renderMessageContent(msg.content)}
-                            </div>
-                          )}
-
-                          {/* Attached Media (GIF / Image / Audio) */}
-                          {msg.mediaUrl && (
-                            <div className="mt-2 rounded-xl overflow-hidden border border-slate-700/60 max-w-xs shadow-md">
-                              <SecureMediaRenderer
-                                mediaUrl={msg.mediaUrl}
-                                mediaType={msg.mediaType}
-                                alt="Shared media"
-                                className="w-full max-h-48 object-cover"
-                                isGuest={user.isGuest}
-                                userId={user.id}
-                              />
-                            </div>
-                          )}
-
-                          {/* Safe link preview card */}
-                          {msg.linkPreview && <LinkPreviewCard preview={msg.linkPreview} />}
-
-                          {/* Delivery status or failure retry */}
-                          {isMe && (
-                            <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px]">
-                              {msg.status === 'sending' && (
-                                <span className="text-violet-300 font-mono">Sending...</span>
-                              )}
-                              {msg.status === 'failed' && (
-                                <div className="flex items-center gap-1 text-rose-300">
-                                  <span>{msg.errorReason || 'Failed'}</span>
-                                  <button
-                                    onClick={() => handleRetry(msg)}
-                                    className="underline hover:text-white flex items-center gap-0.5 ml-1 cursor-pointer"
-                                  >
-                                    <RotateCcw className="w-2.5 h-2.5" />
-                                    <span>Retry</span>
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          )}
+                          {/* Light gray formatted timestamp */}
+                          <span className="text-[10px] text-slate-500 font-mono shrink-0 select-none">
+                            [{formatDhakaTime(msg.timestamp, language)}]
+                          </span>
                         </div>
+
+                        {/* Content with mention parsing */}
+                        {msg.content && (
+                          <div className="text-xs text-slate-200 leading-relaxed break-words whitespace-pre-wrap">
+                            {renderMessageContent(msg.content)}
+                          </div>
+                        )}
+
+                        {/* Attached Media (GIF / Image / Audio) */}
+                        {msg.mediaUrl && (
+                          <div className="mt-2 rounded-xl overflow-hidden border border-slate-700/60 max-w-xs shadow-md">
+                            <SecureMediaRenderer
+                              mediaUrl={msg.mediaUrl}
+                              mediaType={msg.mediaType}
+                              alt="Shared media"
+                              className="w-full max-h-48 object-cover"
+                              isGuest={user.isGuest}
+                              userId={user.id}
+                            />
+                          </div>
+                        )}
+
+                        {/* Safe link preview card */}
+                        {msg.linkPreview && <LinkPreviewCard preview={msg.linkPreview} />}
+
+                        {/* Delivery status or failure retry */}
+                        {isMe && (
+                          <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px]">
+                            {msg.status === 'sending' && (
+                              <span className="text-violet-300 font-mono">Sending...</span>
+                            )}
+                            {msg.status === 'failed' && (
+                              <div className="flex items-center gap-1 text-rose-300">
+                                <span>{msg.errorReason || 'Failed'}</span>
+                                <button
+                                  onClick={() => handleRetry(msg)}
+                                  className="underline hover:text-white flex items-center gap-0.5 ml-1 cursor-pointer"
+                                >
+                                  <RotateCcw className="w-2.5 h-2.5" />
+                                  <span>Retry</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      {showMessageInlineAdAfterFifth && inlineAdBlock}
-                    </React.Fragment>
+                    </div>
                   );
-                    })}
-                    {totalChatMsgs < 5 && inlineAdBlock}
+                };
+
+                return (
+                  <>
+                    {preInlineMessages.map((msg, idx) => renderChatMessageRow(msg, idx))}
+                    <div
+                      key="public-chatroom-message-inline-container"
+                      data-testid="public-chatroom-message-inline-container"
+                      aria-label="Sponsored advertisement"
+                      className="my-2 -mx-2 sm:mx-0 py-1.5 px-0 sm:rounded-xl border-y sm:border border-slate-800/70 bg-[#080d19]/90 flex flex-col items-center gap-1 select-none overflow-hidden"
+                    >
+                      <span className="text-[9px] uppercase tracking-widest text-slate-500 font-mono leading-none">
+                        Sponsored
+                      </span>
+                      <AdPlacementBox
+                        slotId="public-chatroom-message-inline"
+                        position="sidebar-horizontal"
+                        className="px-0 shrink-0"
+                      />
+                    </div>
+                    {postInlineMessages.map((msg, idx) =>
+                      renderChatMessageRow(msg, splitIndex + idx)
+                    )}
                   </>
                 );
               })()}
@@ -2143,15 +2142,6 @@ export const PublicChatPage: React.FC = () => {
         />
       )}
     </div>
-
-      {/* Ad 3 — Right Vertical Ad (Visible on desktop xl+ outside chatroom right border) */}
-      <div className="hidden xl:flex shrink-0 w-[160px] 2xl:w-[240px] 3xl:w-[300px] items-center justify-center">
-        <AdPlacementBox
-          slotId="public-chatroom-right"
-          isVertical={true}
-          position="right"
-        />
-      </div>
     </div>
 
       {/* Ad 5 — Bottom Horizontal Ad (Below chatroom border, stable reserved space) */}

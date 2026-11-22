@@ -1134,7 +1134,10 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       ownedNativeScriptRef.current.parentNode.removeChild(ownedNativeScriptRef.current);
     }
     ownedNativeScriptRef.current = null;
-  }, [slotId, clearAllActiveTimers, disconnectObserver]);
+    if (imperativeHostRef.current && !renderAd && adStatusRef.current === 'loading') {
+      imperativeHostRef.current.innerHTML = '';
+    }
+  }, [slotId, clearAllActiveTimers, disconnectObserver, renderAd]);
 
   const rotationKey = effectiveIsLiveChatScreen ? 'chat' : 'public';
   const rotation = useMemo(
@@ -1561,7 +1564,10 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         win.adsbyjuicy = win.adsbyjuicy || [];
         win.adsbyjuicy.push({ adzone: effectiveUnitId, id: domId });
 
-        startPolling(() => document.getElementById(domId), 12, 18);
+        startPolling(() => {
+          const target = document.getElementById(domId);
+          return target && imperativeHostRef.current?.contains(target) ? target : null;
+        }, 12, 18);
       } catch {
         updateStatus('error', attemptId);
       }
@@ -1782,7 +1788,10 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           win.AdProvider.push({ serve: {} });
         }
 
-        startPolling(() => document.getElementById(domId), 12, 18);
+        startPolling(() => {
+          const target = document.getElementById(domId);
+          return target && imperativeHostRef.current?.contains(target) ? target : null;
+        }, 12, 18);
       } catch {
         updateStatus('error', attemptId);
       }
@@ -1825,6 +1834,11 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   ]);
 
   // 4. Isolated, Reserved Container Rendering (NEVER disappear on slow response, rotation, or unfilled)
+  const isParticipantWidthCollapsed =
+    slotId === 'participant-box-horizontal' &&
+    containerWidth !== null &&
+    containerWidth < 300;
+
   let posClasses =
     'w-full max-w-[320px] md:max-w-[728px] min-h-[62px] h-[62px] md:min-h-[102px] md:h-[102px] max-h-[62px] md:max-h-[102px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0 transition-colors duration-200';
 
@@ -1832,8 +1846,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     posClasses =
       'hidden xl:flex shrink-0 w-[160px] 2xl:w-[240px] 3xl:w-[300px] max-w-[300px] min-h-[520px] h-[520px] xl:h-[540px] max-h-full items-center justify-center overflow-hidden [contain:layout_style]';
   } else if (slotId === 'participant-box-horizontal') {
-    posClasses =
-      'w-full max-w-[300px] lg:max-w-[320px] min-h-[112px] h-[112px] max-h-[120px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
+    posClasses = isParticipantWidthCollapsed
+      ? 'w-full max-w-[300px] min-h-0 h-0 max-h-0 m-0 p-0 border-0 opacity-0 pointer-events-none mx-auto flex items-center justify-center overflow-hidden shrink-0'
+      : 'w-full max-w-[300px] lg:max-w-[320px] min-h-[112px] h-[112px] max-h-[120px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
   } else if (isInternalHorizontalPlacement(slotId) || position === 'sidebar-horizontal') {
     posClasses =
       'w-full max-w-[320px] min-h-[62px] h-[62px] max-h-[68px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
@@ -1850,6 +1865,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     'data-ad-status': adStatus,
     'data-ad-orientation': orientation,
     'data-ad-provider': currentProvider,
+    'data-ad-collapsed': isParticipantWidthCollapsed ? 'true' : 'false',
     className: `${posClasses} ${className}`.trim(),
     ref: adRef,
   };

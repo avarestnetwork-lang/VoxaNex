@@ -40,6 +40,7 @@ function assert(condition: boolean, testName: string, detail?: string) {
 class MockR2Bucket {
   store: Map<string, { body: Uint8Array; httpMetadata: any; customMetadata: any }> = new Map();
   failNextPut = false;
+  failNextDelete = false;
 
   async put(key: string, value: any, options?: any) {
     if (this.failNextPut) {
@@ -77,6 +78,10 @@ class MockR2Bucket {
   }
 
   async delete(key: string | string[]) {
+    if (this.failNextDelete) {
+      this.failNextDelete = false;
+      throw new Error('Simulated R2 delete failure');
+    }
     const keys = Array.isArray(key) ? key : [key];
     for (const k of keys) {
       this.store.delete(k);
@@ -193,6 +198,8 @@ async function runSuite() {
   let simulateModerationHttpError = false;
   let simulateModerationNetworkError = false;
   let simulateModerationMalformedRow = false;
+  let nextMediaPostOverride: ((rawBody: string) => Promise<Response> | Response) | null = null;
+  let nextMediaGetOverride: (() => Promise<Response> | Response) | null = null;
 
   // Populate initial state
   const memberAliceId = '11111111-1111-4111-8111-111111111111';
@@ -201,11 +208,15 @@ async function runSuite() {
   const guestDaveId = '44444444-4444-4444-8444-444444444444';
   const nonParticipantId = '99999999-9999-4999-8999-999999999999';
   const rateLimitUserId = '88888888-8888-4888-8888-888888888888';
+  const mediaM1UserId = '66666666-6666-4666-8666-666666666661';
+  const mediaM2UserId = '66666666-6666-4666-8666-666666666662';
 
   mockMembers.set('jwt_alice', { id: memberAliceId, email: 'alice@chatlustora.com' });
   mockMembers.set('jwt_bob', { id: memberBobId, email: 'bob@chatlustora.com' });
   mockMembers.set('jwt_stranger', { id: nonParticipantId, email: 'stranger@chatlustora.com' });
   mockMembers.set('jwt_ratelimit', { id: rateLimitUserId, email: 'ratelimit@chatlustora.com' });
+  mockMembers.set('jwt_media_m1', { id: mediaM1UserId, email: 'm1@chatlustora.com' });
+  mockMembers.set('jwt_media_m2', { id: mediaM2UserId, email: 'm2@chatlustora.com' });
 
   // Conversation with Alice (member) and Charlie (guest)
   const conversationId = '55555555-5555-4555-8555-555555555555';
@@ -284,6 +295,12 @@ async function runSuite() {
     // Supabase media_uploads metadata table
     if (urlStr.includes('/rest/v1/media_uploads')) {
       if (method === 'POST') {
+        const rawBody = typeof init?.body === 'string' ? init.body : '';
+        if (nextMediaPostOverride) {
+          const fn = nextMediaPostOverride;
+          nextMediaPostOverride = null;
+          return fn(rawBody);
+        }
         if (failNextMetadataInsert) {
           failNextMetadataInsert = false;
           return new Response(JSON.stringify({ message: 'Simulated DB metadata insert error' }), {
@@ -291,7 +308,6 @@ async function runSuite() {
             headers: { 'Content-Type': 'application/json' },
           });
         }
-        const rawBody = typeof init?.body === 'string' ? init.body : '';
         const payload = rawBody ? JSON.parse(rawBody) : {};
         const row = {
           ...payload,
@@ -304,6 +320,11 @@ async function runSuite() {
         });
       }
 
+      if (nextMediaGetOverride) {
+        const fn = nextMediaGetOverride;
+        nextMediaGetOverride = null;
+        return fn();
+      }
       if (simulateModerationNetworkError) {
         simulateModerationNetworkError = false;
         throw new Error('Simulated Supabase network failure');
@@ -2246,6 +2267,328 @@ async function runSuite() {
           /bucket_name\s*=\s*["']chatlustora-media["']/.test(wranglerToml),
         'L1: wrangler.toml explicitly binds CHAT_MEDIA R2 binding to chatlustora-media bucket'
       );
+    }
+
+    // -------------------------------------------------------------------------
+    // CATEGORY M: Metadata Persistence Hardening, Normalization, Idempotency & Leak Safety
+    // -------------------------------------------------------------------------
+    console.log('\n--- Category M: Media Metadata Persistence Hardening & Rollback Safety ---');
+
+    // M1: Trailing slashes & padded credentials normalize cleanly
+    {
+      const paddedEnv = {
+        ...defaultEnv,
+        SUPABASE_URL: `  ${SUPABASE_URL}///  `,
+        SUPABASE_SERVICE_ROLE_KEY: `  ${SERVICE_KEY}  `,
+      };
+      const fd = new FormData();
+      fd.append('file', new File([VALID_PNG_BYTES], 'normalized_env.png', { type: 'image/png' }));
+      fd.append('contextType', 'room');
+      fd.append('contextId', 'general');
+      const res = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fd,
+        }),
+        paddedEnv,
+        {}
+      );
+      assert(res.status === 200, 'M1: Normalized SUPABASE_URL trailing slashes and whitespace service key persist cleanly (200)');
+    }
+
+    // M2: Misconfigured JWT (role=anon bound as SUPABASE_SERVICE_ROLE_KEY) fails closed 503 BEFORE writing R2
+    {
+      const anonJwtPayload = toBase64Url(JSON.stringify({ role: 'anon', iss: 'supabase' }));
+      const anonJwt = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${anonJwtPayload}.sig`;
+      const storeBefore = mockR2.store.size;
+      const fd = new FormData();
+      fd.append('file', new File([VALID_PNG_BYTES], 'misbound_role.png', { type: 'image/png' }));
+      const res = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fd,
+        }),
+        { ...defaultEnv, SUPABASE_SERVICE_ROLE_KEY: anonJwt },
+        {}
+      );
+      const body: any = await res.json();
+      assert(
+        res.status === 503 && body.code === 'MEDIA_DB_ROLE_MISCONFIGURED',
+        'M2: Misbound anon JWT in SUPABASE_SERVICE_ROLE_KEY fails closed with HTTP 503'
+      );
+      assert(mockR2.store.size === storeBefore, 'M2.1: Zero R2 writes executed when service-role JWT is misconfigured');
+    }
+
+    // M3: DB HTTP 403 / 42501 RLS error triggers scoped R2 rollback & preserves existing R2 objects
+    {
+      const existingSnapshotCount = mockR2.store.size;
+      const existingMemberKey = `media/objects/${memberMediaId}`;
+      const existingPresentBefore = mockR2.store.has(existingMemberKey);
+      nextMediaPostOverride = () =>
+        new Response(JSON.stringify({ code: '42501', message: 'new row violates row-level security policy' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const fd = new FormData();
+      fd.append('file', new File([VALID_PNG_BYTES], 'rls_denied.png', { type: 'image/png' }));
+      const res = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fd,
+        }),
+        defaultEnv,
+        {}
+      );
+      const body: any = await res.json();
+      assert(
+        res.status === 503 &&
+          body.code === 'MEDIA_DB_PERMISSION_DENIED' &&
+          body.cleanupAttempted === true &&
+          body.cleanupSucceeded === true,
+        'M3: DB 403/42501 maps to 503 MEDIA_DB_PERMISSION_DENIED with verified cleanup telemetry'
+      );
+      assert(
+        mockR2.store.size === existingSnapshotCount && mockR2.store.has(existingMemberKey) === existingPresentBefore,
+        'M3.1: Scoped R2 rollback deletes only the failed upload key and leaves existing R2 objects intact'
+      );
+    }
+
+    // M4: DB HTTP 404 / PGRST205 missing table returns 503 MEDIA_DB_SCHEMA_MISSING + rollback
+    {
+      const existingSnapshotCount = mockR2.store.size;
+      nextMediaPostOverride = () =>
+        new Response(JSON.stringify({ code: 'PGRST205', message: "Could not find the table 'public.media_uploads' in the schema cache" }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const fd = new FormData();
+      fd.append('file', new File([VALID_PNG_BYTES], 'missing_table.png', { type: 'image/png' }));
+      const res = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fd,
+        }),
+        defaultEnv,
+        {}
+      );
+      const body: any = await res.json();
+      assert(
+        res.status === 503 && body.code === 'MEDIA_DB_SCHEMA_MISSING' && mockR2.store.size === existingSnapshotCount,
+        'M4: DB 404/PGRST205 maps to 503 MEDIA_DB_SCHEMA_MISSING with scoped R2 rollback'
+      );
+    }
+
+    // M5: DB HTTP 400 / 23514 check constraint returns 400 MEDIA_DB_CONSTRAINT_FAILED + rollback
+    {
+      const existingSnapshotCount = mockR2.store.size;
+      nextMediaPostOverride = () =>
+        new Response(JSON.stringify({ code: '23514', message: 'violates check constraint media_uploads_mime_type_check' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const fd = new FormData();
+      fd.append('file', new File([VALID_PNG_BYTES], 'constraint.png', { type: 'image/png' }));
+      const res = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fd,
+        }),
+        defaultEnv,
+        {}
+      );
+      const body: any = await res.json();
+      assert(
+        res.status === 400 && body.code === 'MEDIA_DB_CONSTRAINT_FAILED' && mockR2.store.size === existingSnapshotCount,
+        'M5: DB 400/23514 maps to 400 MEDIA_DB_CONSTRAINT_FAILED with scoped R2 rollback'
+      );
+    }
+
+    // M6: Empty 201 Created response verifies via read-back GET (succeeds when present, rolls back 502 when missing)
+    {
+      nextMediaPostOverride = (rawBody) => {
+        const p = JSON.parse(rawBody);
+        mockMediaUploads.set(p.id, { ...p, created_at: new Date().toISOString() });
+        return new Response('', { status: 201 });
+      };
+      const fdOk = new FormData();
+      fdOk.append('file', new File([VALID_PNG_BYTES], 'empty_201_ok.png', { type: 'image/png' }));
+      const resOk = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fdOk,
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(resOk.status === 200, 'M6a: Empty PostgREST 201 verified cleanly by read-back GET succeeds (200)');
+
+      const storeBeforeBad = mockR2.store.size;
+      nextMediaPostOverride = () => new Response('', { status: 201 });
+      nextMediaGetOverride = () => new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const fdMissing = new FormData();
+      fdMissing.append('file', new File([VALID_PNG_BYTES], 'empty_201_missing.png', { type: 'image/png' }));
+      const resMissing = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fdMissing,
+        }),
+        defaultEnv,
+        {}
+      );
+      const bodyMissing: any = await resMissing.json();
+      assert(
+        resMissing.status === 502 &&
+          bodyMissing.code === 'MEDIA_DB_INVALID_RESPONSE' &&
+          mockR2.store.size === storeBeforeBad,
+        'M6b: Empty 201 when read-back finds no row fails closed with 502 MEDIA_DB_INVALID_RESPONSE and rolls back R2 object'
+      );
+    }
+
+    // M7: R2 cleanup failure preserves BOTH original DB failure message/code and cleanupSucceeded=false
+    {
+      failNextMetadataInsert = true;
+      mockR2.failNextDelete = true;
+      const fd = new FormData();
+      fd.append('file', new File([VALID_PNG_BYTES], 'cleanup_fail.png', { type: 'image/png' }));
+      const res = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fd,
+        }),
+        defaultEnv,
+        {}
+      );
+      const body: any = await res.json();
+      assert(
+        res.status === 502 &&
+          body.code === 'MEDIA_DB_UPSTREAM_FAILURE' &&
+          body.cleanupAttempted === true &&
+          body.cleanupSucceeded === false &&
+          String(body.error).includes('R2 cleanup also failed'),
+        'M7: R2 delete failure preserves original 502 DB failure and explicitly reports R2 cleanup failure'
+      );
+    }
+
+    // M8: X-Idempotency-Key retry after transient DB failure & repeated retry prevent duplicates
+    {
+      const idemKey = 'idem_retry_case_0001';
+      const dbBefore = mockMediaUploads.size;
+      const r2Before = mockR2.store.size;
+      failNextMetadataInsert = true;
+
+      const fd1 = new FormData();
+      fd1.append('file', new File([VALID_PNG_BYTES], 'idem_photo.png', { type: 'image/png' }));
+      const res1 = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m2', 'X-Idempotency-Key': idemKey },
+          body: fd1,
+        }),
+        defaultEnv,
+        {}
+      );
+      assert(res1.status === 502 && mockR2.store.size === r2Before, 'M8a: Initial transient DB failure rolls back cleanly');
+
+      const fd2 = new FormData();
+      fd2.append('file', new File([VALID_PNG_BYTES], 'idem_photo.png', { type: 'image/png' }));
+      const res2 = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m2', 'X-Idempotency-Key': idemKey },
+          body: fd2,
+        }),
+        defaultEnv,
+        {}
+      );
+      const data2: any = await res2.json();
+      assert(
+        res2.status === 200 && mockMediaUploads.size === dbBefore + 1 && mockR2.store.size === r2Before + 1,
+        'M8b: Retrying with same X-Idempotency-Key succeeds with 1 DB row and 1 R2 object'
+      );
+
+      const fd3 = new FormData();
+      fd3.append('file', new File([VALID_PNG_BYTES], 'idem_photo.png', { type: 'image/png' }));
+      const res3 = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m2', 'X-Idempotency-Key': idemKey },
+          body: fd3,
+        }),
+        defaultEnv,
+        {}
+      );
+      const data3: any = await res3.json();
+      assert(
+        res3.status === 200 &&
+          data3.idempotentReplay === true &&
+          data3.media?.uploadId === data2.media?.uploadId &&
+          mockMediaUploads.size === dbBefore + 1 &&
+          mockR2.store.size === r2Before + 1,
+        'M8c: Repeated retry with same X-Idempotency-Key replays existing upload with zero duplicates'
+      );
+    }
+
+    // M9: Preflight includes X-Idempotency-Key & failure responses + logs leak zero secrets/raw keys
+    {
+      const optRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'OPTIONS',
+          headers: {
+            'Origin': 'https://chatlustora.com',
+            'Access-Control-Request-Method': 'POST',
+            'Access-Control-Request-Headers': 'Authorization, Content-Type, X-Idempotency-Key',
+          },
+        }),
+        nativeChatEnv,
+        {}
+      );
+      assert(
+        optRes.status === 204 && (optRes.headers.get('Access-Control-Allow-Headers') || '').includes('X-Idempotency-Key'),
+        'M9: CORS preflight permits X-Idempotency-Key header'
+      );
+
+      const capturedLogs: string[] = [];
+      const origErr = console.error;
+      console.error = (...args: any[]) => {
+        capturedLogs.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+      };
+      try {
+        failNextMetadataInsert = true;
+        const fd = new FormData();
+        fd.append('file', new File([VALID_PNG_BYTES], `${'x'.repeat(280)}.png`, { type: 'image/png' }));
+        const errRes = await worker.fetch(
+          new Request('https://chatlustora.com/api/media/upload', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer jwt_media_m2',
+              'Cookie': 'admin_token=secret_cookie_val',
+            },
+            body: fd,
+          }),
+          defaultEnv,
+          {}
+        );
+        const errText = await errRes.text();
+        const combined = `${errText}\n${capturedLogs.join('\n')}`;
+        assert(
+          !combined.includes(SERVICE_KEY) &&
+            !combined.includes(GUEST_SECRET) &&
+            !combined.includes('secret_cookie_val') &&
+            !combined.includes('jwt_media_m2') &&
+            !combined.includes('media/objects/'),
+          'M10: Error responses and structured logs leak zero secrets, tokens, cookies, or R2 object keys'
+        );
+      } finally {
+        console.error = origErr;
+      }
     }
 
     console.log('\n================================================================');

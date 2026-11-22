@@ -325,15 +325,15 @@ export const FOOTER_EXCLUDED_ROUTES = [
   '/moderator/login',
   '/checkout',
   '/payment',
-  '/chat',
 ];
 
 export const isRouteExcludedFromFooterAds = (currentRoute: string): boolean => {
-  const normalized = (currentRoute || '').toLowerCase();
-  return FOOTER_EXCLUDED_ROUTES.some(route => 
-    normalized === route || 
-    normalized.startsWith('/chat/') || 
-    normalized.startsWith('/admin/') || 
+  const normalized = (currentRoute || '').toLowerCase().split(/[?#]/)[0];
+  if (!normalized) return false;
+  return FOOTER_EXCLUDED_ROUTES.some((route) =>
+    normalized === route ||
+    normalized.startsWith(`${route}/`) ||
+    normalized.startsWith('/admin/') ||
     normalized.startsWith('/moderator/') ||
     normalized.includes('/auth/') ||
     normalized.includes('/checkout/') ||
@@ -342,7 +342,13 @@ export const isRouteExcludedFromFooterAds = (currentRoute: string): boolean => {
 };
 
 export const getAdsterraUnitForWidth = (width: number, position: string): string | null => {
-  if (position === 'footer' || position === 'content-gap') {
+  if (position === 'footer') {
+    if (width >= 728) return ADSTERRA_CONFIG.banner728x90;
+    if (width >= 320) return ADSTERRA_CONFIG.banner320x50;
+    return null;
+  }
+
+  if (position === 'content-gap') {
     if (width >= 728) return ADSTERRA_CONFIG.banner728x90;
     if (width >= 320) return ADSTERRA_CONFIG.banner320x50;
     if (width >= 300) return ADSTERRA_CONFIG.banner300x250;

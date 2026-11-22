@@ -1029,12 +1029,14 @@ export const messagingService = {
     contextId: string;
     isGuest?: boolean;
     userId?: string;
+    idempotencyKey?: string;
     onProgress?: (percent: number) => void;
     registerAbort?: (abortFn: () => void) => void;
   }): Promise<{
     success: boolean;
     media?: UploadedMediaAsset;
     error?: string;
+    code?: string;
     aborted?: boolean;
   }> {
     try {
@@ -1069,6 +1071,9 @@ export const messagingService = {
 
         xhr.open('POST', `${API_BASE}/api/media/upload`, true);
         xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        if (params.idempotencyKey) {
+          xhr.setRequestHeader('X-Idempotency-Key', params.idempotencyKey);
+        }
 
         xhr.upload.onprogress = (evt) => {
           if (evt.lengthComputable && evt.total > 0) {
@@ -1095,6 +1100,7 @@ export const messagingService = {
             resolve({
               success: false,
               error: payload.error || `Upload failed (HTTP ${xhr.status}).`,
+              code: typeof payload.code === 'string' ? payload.code : undefined,
             });
           }
         };

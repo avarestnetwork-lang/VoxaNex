@@ -33,6 +33,8 @@ import {
   getProviderRotation,
   getSessionAdRotationParity,
   isAdSenseExcludedRoute,
+  isRouteExcludedFromFooterAds,
+  getAdsterraUnitForWidth,
   isInternalHorizontalPlacement,
   getPlacementOrientation,
   getReservedDimensionTarget,
@@ -202,15 +204,15 @@ async function runAdRenderingTests() {
   const appSource = fs.readFileSync(path.resolve('src/App.tsx'), 'utf-8');
   assert(
     publicChatPageSource.includes('slotId="public-chatroom-top"') &&
-      publicChatPageSource.includes('slotId="public-chatroom-left"') &&
-      publicChatPageSource.includes('slotId="public-chatroom-right"') &&
+      !publicChatPageSource.includes('slotId="public-chatroom-left"') &&
+      !publicChatPageSource.includes('slotId="public-chatroom-right"') &&
       publicChatPageSource.includes('slotId="participant-box-horizontal"') &&
       publicChatPageSource.includes('slotId="public-chatroom-bottom"') &&
       publicChatPageSource.includes('slotId="public-chatroom-status-above"') &&
       !publicChatPageSource.includes('public-chatroom-status-below') &&
       publicChatPageSource.includes('slotId="public-chatroom-message-inline"') &&
       publicChatPageSource.includes('slotId="public-chatroom-body-bottom"'),
-    '3.10 Approved chatroom ad placement IDs are present and public-chatroom-status-below is removed'
+    '3.10 Approved chatroom ad placement IDs are present, empty left/right rails removed, and public-chatroom-status-below is removed'
   );
   assert(
     !appSource.includes('<MonetagScript') &&
@@ -231,8 +233,10 @@ async function runAdRenderingTests() {
     '3.10b Monetag executes strictly on the single dedicated public-chatroom-body-bottom slot (no global script or wildcard position)'
   );
   assert(
-    publicChatPageSource.includes('h-[calc(100vh-5.5rem)] min-h-[580px]'),
-    '3.11 Central chatroom container dimensions are strictly preserved'
+    publicChatPageSource.includes('h-[calc(100dvh-10.25rem)] md:h-[calc(100dvh-12.5rem)]') &&
+      publicChatPageSource.includes('min-h-[380px]') &&
+      publicChatPageSource.includes('min-h-0'),
+    '3.11 Central chatroom container enforces bounded responsive viewport sizing with min-h-0 internal scroll protection'
   );
 
   assert(!publicChatPageSource.includes('BanglishHelperBar'), '3.12 BanglishHelperBar is successfully removed');
@@ -844,10 +848,11 @@ async function runAdRenderingTests() {
     '10.4 Chat message composer remains strictly free of ad placements'
   );
   assert(
-    publicChatPageSource.includes('totalChatMsgs < 5 && inlineAdBlock') &&
-      publicChatPageSource.includes('totalChatMsgs >= 5 && chatMsgCount === 5') &&
-      publicChatPageSource.includes('showMessageInlineAdAfterFifth && inlineAdBlock'),
-    '10.5 public-chatroom-message-inline persists reliably for 0, 1-4, and >=5 chat messages with zero duplicate mounts'
+    publicChatPageSource.includes('const preInlineMessages = messages.slice(0, splitIndex);') &&
+      publicChatPageSource.includes('const postInlineMessages = messages.slice(splitIndex);') &&
+      publicChatPageSource.includes('key="public-chatroom-message-inline-container"') &&
+      (publicChatPageSource.match(/slotId="public-chatroom-message-inline"/g) || []).length === 1,
+    '10.5 public-chatroom-message-inline mounts once at a fixed React sibling position across 0, 1-4, and >=5 non-system messages without remounting'
   );
   assert(
     /getProviderRotation\(\s*position\s*\|\|\s*'',\s*effectiveIsLiveChatScreen,\s*slotId/.test(adPlacementBoxSource),
@@ -1915,14 +1920,78 @@ async function runAdRenderingTests() {
   const footerSource = fs.readFileSync(path.resolve('src/components/layout/Footer.tsx'), 'utf-8');
   const indexHtmlSource = fs.readFileSync(path.resolve('index.html'), 'utf-8');
   assert(
-    publicChatPageSource.includes('{totalChatMsgs < 5 && inlineAdBlock}') &&
-      publicChatPageSource.includes('{showMessageInlineAdAfterFifth && inlineAdBlock}') &&
+    publicChatPageSource.includes('const preInlineMessages = messages.slice(0, splitIndex);') &&
+      publicChatPageSource.includes('const postInlineMessages = messages.slice(splitIndex);') &&
       !publicChatPageSource.includes('public-chatroom-status-below') &&
       !footerSource.toLowerCase().includes('trustpilot') &&
       !indexHtmlSource.toLowerCase().includes('trustpilot') &&
       !publicChatPageSource.toLowerCase().includes('livejasmin') &&
       !publicChatPageSource.toLowerCase().includes('awempire'),
-    '18.7 Message-inline persists across empty/low/populated chats while status-below, Trustpilot, and Live Cam widgets remain completely absent'
+    '18.7 Message-inline persists cleanly at fixed split index while status-below, Trustpilot, and Live Cam widgets remain completely absent'
+  );
+
+  // --- Task 19: Chatroom Ad Stability, Footer Route Re-enablement, Participant Bar Collapse & Scoped Loaders ---
+  console.log('\n--- 19. Chatroom Layout Protection, Footer Adsterra Policy & Container-Scoped Loaders ---');
+
+  // 19.1 Footer Adsterra policy: enabled on public chatroom & public pages, excluded on auth/admin/checkout/payment
+  assert(
+    isRouteExcludedFromFooterAds('/chat') === false &&
+      isRouteExcludedFromFooterAds('/chat/bangla') === false &&
+      isRouteExcludedFromFooterAds('/chat?roomId=bangla') === false &&
+      isRouteExcludedFromFooterAds('/') === false &&
+      isRouteExcludedFromFooterAds('/rooms') === false &&
+      isRouteExcludedFromFooterAds('/user/login') === true &&
+      isRouteExcludedFromFooterAds('/user/register') === true &&
+      isRouteExcludedFromFooterAds('/user/guest-entry') === true &&
+      isRouteExcludedFromFooterAds('/user/password-reset') === true &&
+      isRouteExcludedFromFooterAds('/user/account-recovery') === true &&
+      isRouteExcludedFromFooterAds('/auth') === true &&
+      isRouteExcludedFromFooterAds('/admin/login') === true &&
+      isRouteExcludedFromFooterAds('/moderator/login') === true &&
+      isRouteExcludedFromFooterAds('/checkout') === true &&
+      isRouteExcludedFromFooterAds('/payment') === true,
+    '19.1 Footer Adsterra re-enabled on chatroom/public routes while strictly excluded on auth, admin, moderator, checkout, and payment routes'
+  );
+
+  // 19.2 Adsterra footer sizing rejects <320px (no 300x250 fallback in footer)
+  assert(
+    getAdsterraUnitForWidth(300, 'footer') === null &&
+      getAdsterraUnitForWidth(319, 'footer') === null &&
+      getAdsterraUnitForWidth(320, 'footer') === ADSTERRA_CONFIG.banner320x50 &&
+      getAdsterraUnitForWidth(728, 'footer') === ADSTERRA_CONFIG.banner728x90 &&
+      getAdsterraUnitForWidth(1024, 'footer') === ADSTERRA_CONFIG.banner728x90,
+    '19.2 Adsterra footer selects 728x90 (>=728px) or 320x50 (>=320px) and returns null <320px without substituting 300x250'
+  );
+
+  // 19.3 Participant bar width-collapse + external-to-panel border + container-scoped polling checks
+  assert(
+    adPlacementBoxSource.includes('isParticipantWidthCollapsed') &&
+      adPlacementBoxSource.includes("'data-ad-collapsed': isParticipantWidthCollapsed ? 'true' : 'false'") &&
+      adPlacementBoxSource.includes('imperativeHostRef.current?.contains(target)') &&
+      adPlacementBoxSource.includes("adStatusRef.current === 'loading'") &&
+      publicChatPageSource.includes('{/* Ad 4 — External Participant-Side Ad (50px) - OUTSIDE and BELOW the participant panel\'s border */}') &&
+      !publicChatPageSource.includes('public-chatroom-left') &&
+      !publicChatPageSource.includes('public-chatroom-right'),
+    '19.3 Participant bar collapses cleanly below 300px, JuicyAds/ExoClick polling is scoped to slot DOM host, loading host clears cleanly on visibility loss, and no empty vertical rails waste horizontal width'
+  );
+
+  // 19.4 SSR sanity on PublicChatPage route context (/chat still excludes AdSense but enables footer global-footer-responsive)
+  const chatFooterHtml = renderToString(
+    React.createElement(
+      RouterProvider,
+      null,
+      React.createElement(AdPlacementBox, {
+        slotId: 'global-footer-responsive',
+        position: 'footer',
+        isLiveChatScreen: true,
+      })
+    )
+  );
+  assert(
+    chatFooterHtml.includes('data-testid="ad-slot-global-footer-responsive"') &&
+      chatFooterHtml.includes('data-ad-provider="adsterra"') &&
+      !chatFooterHtml.includes('adsbygoogle'),
+    '19.4 Footer slot on /chat renders Adsterra container cleanly without AdSense'
   );
 
   console.log('\n================================================================');

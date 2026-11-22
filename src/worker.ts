@@ -694,6 +694,7 @@ const NATIVE_CORS_HEADERS = [
   'X-Context-Type',
   'X-Context-Id',
   'X-File-Name',
+  'X-Idempotency-Key',
   'X-Requested-With',
 ] as const;
 const PROXIED_CORS_HEADERS = [
@@ -1197,14 +1198,134 @@ export default {
   },
 };
 
+function normalizeSupabaseBaseUrl(raw?: string): string {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().replace(/\/+$/, '');
+}
+
+function normalizeCredentialValue(raw?: string): string {
+  if (typeof raw !== 'string') return '';
+  return raw.trim();
+}
+
+function inspectJwtRoleSafe(token: string): string | null {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const payload = JSON.parse(fromBase64Url(parts[1]));
+    return typeof payload?.role === 'string' ? payload.role.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function deriveIdempotentUploadId(params: {
+  idempotencyKey: string;
+  userId: string;
+  contextType: string;
+  contextId: string;
+}): Promise<string> {
+  const input = `${params.userId}|${params.contextType}|${params.contextId}|${params.idempotencyKey}`;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  const hex = Array.from(new Uint8Array(digest))
+    .slice(0, 16)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `med_idem_${hex}`;
+}
+
+interface MediaDbErrorClassification {
+  status: 400 | 409 | 502 | 503;
+  code: string;
+  pgCode?: string;
+  userMessage: string;
+}
+
+function classifyMediaDbInsertError(httpStatus: number, rawBodyText: string): MediaDbErrorClassification {
+  let parsed: any = null;
+  if (rawBodyText) {
+    try {
+      parsed = JSON.parse(rawBodyText);
+    } catch {
+      parsed = null;
+    }
+  }
+  const pgCode = typeof parsed?.code === 'string' ? parsed.code.trim() : '';
+  const msgLower = String(parsed?.message || rawBodyText || '').toLowerCase();
+
+  if (
+    httpStatus === 401 ||
+    httpStatus === 403 ||
+    pgCode === '42501' ||
+    msgLower.includes('row-level security') ||
+    msgLower.includes('permission denied')
+  ) {
+    return {
+      status: 503,
+      code: 'MEDIA_DB_PERMISSION_DENIED',
+      pgCode: pgCode || undefined,
+      userMessage: 'Failed to persist media metadata due to database authorization policy; uploaded object was cleaned up.',
+    };
+  }
+
+  if (
+    httpStatus === 404 ||
+    pgCode === 'PGRST205' ||
+    pgCode === '42P01' ||
+    msgLower.includes('does not exist') ||
+    msgLower.includes('schema cache')
+  ) {
+    return {
+      status: 503,
+      code: 'MEDIA_DB_SCHEMA_MISSING',
+      pgCode: pgCode || undefined,
+      userMessage: 'Media metadata storage schema is unavailable or missing migration; uploaded object was cleaned up.',
+    };
+  }
+
+  if (httpStatus === 409 || pgCode === '23505' || msgLower.includes('duplicate key')) {
+    return {
+      status: 409,
+      code: 'MEDIA_DB_CONFLICT',
+      pgCode: pgCode || undefined,
+      userMessage: 'Media metadata record conflict occurred; uploaded object was cleaned up.',
+    };
+  }
+
+  if (
+    httpStatus === 400 ||
+    httpStatus === 422 ||
+    pgCode === '23514' ||
+    pgCode === '23502' ||
+    pgCode === '22P02' ||
+    msgLower.includes('check constraint') ||
+    msgLower.includes('violates')
+  ) {
+    return {
+      status: 400,
+      code: 'MEDIA_DB_CONSTRAINT_FAILED',
+      pgCode: pgCode || undefined,
+      userMessage: 'Media metadata failed database schema validation; uploaded object was cleaned up.',
+    };
+  }
+
+  return {
+    status: 502,
+    code: 'MEDIA_DB_UPSTREAM_FAILURE',
+    pgCode: pgCode || undefined,
+    userMessage: 'Failed to persist media metadata; uploaded object was cleaned up.',
+  };
+}
+
 async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: any): Promise<Response> {
     const supabaseClient = getSupabaseClientFromEnv(env);
     const guestSecretInfo = getGuestSecret(env);
 
-    // Resolve explicit Supabase Worker runtime env bindings
-    const baseSupabaseUrl = env?.SUPABASE_URL || '';
-    const supabaseAnonKey = env?.SUPABASE_ANON_KEY || '';
-    const supabaseServiceKey = env?.SUPABASE_SERVICE_ROLE_KEY || '';
+    // Resolve explicit Supabase Worker runtime env bindings (normalized without trailing slashes/whitespace)
+    const baseSupabaseUrl = normalizeSupabaseBaseUrl(env?.SUPABASE_URL || env?.VITE_SUPABASE_URL || '');
+    const supabaseAnonKey = normalizeCredentialValue(env?.SUPABASE_ANON_KEY);
+    const supabaseServiceKey = normalizeCredentialValue(env?.SUPABASE_SERVICE_ROLE_KEY);
 
     // -------------------------------------------------------------------------
     // 0. ADULT ROOM SECURITY GATE (Enforced regardless of BACKEND_URL proxy)
@@ -1586,19 +1707,112 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
           return jsonResponse({ success: false, error: binValidation.error || 'Binary validation failed.' }, 400);
         }
 
-        // Require server-side Supabase credentials in production to store media metadata
+        // Require valid server-side Supabase credentials in production to store media metadata
         if ((!baseSupabaseUrl || !supabaseServiceKey) && !guestSecretInfo.isDevFallback) {
           return jsonResponse({
             success: false,
             error: 'Service Unavailable: Database bindings missing for media metadata persistence.',
+            code: 'MEDIA_DB_BINDINGS_MISSING',
+            stage: 'config',
           }, 503);
         }
 
-        const uploadId = `med_${crypto.randomUUID()}`;
+        if (supabaseServiceKey) {
+          const serviceJwtRole = inspectJwtRoleSafe(supabaseServiceKey);
+          if (serviceJwtRole === 'anon' || serviceJwtRole === 'authenticated') {
+            console.error('[Worker][media-upload] Misconfigured SUPABASE_SERVICE_ROLE_KEY role detected:', {
+              role: serviceJwtRole,
+            });
+            return jsonResponse({
+              success: false,
+              error: 'Service Unavailable: Media metadata service-role credential is misconfigured.',
+              code: 'MEDIA_DB_ROLE_MISCONFIGURED',
+              stage: 'config',
+            }, 503);
+          }
+        }
+
+        const sanitizedFileName = (binValidation.sanitizedOriginalName || `media.${binValidation.extension}`)
+          .trim()
+          .slice(0, 255) || `media.${binValidation.extension}`;
+        if (!Number.isInteger(fileBytes.byteLength) || fileBytes.byteLength <= 0 || fileBytes.byteLength > 10485760) {
+          return jsonResponse({
+            success: false,
+            error: 'Invalid media payload size for metadata persistence.',
+            code: 'MEDIA_INVALID_SIZE',
+            stage: 'validation',
+          }, 400);
+        }
+
+        const rawIdempotencyKey = (request.headers.get('x-idempotency-key') || '').trim();
+        const validIdempotencyKey = /^[a-zA-Z0-9_-]{8,96}$/.test(rawIdempotencyKey) ? rawIdempotencyKey : '';
+        const requestId = crypto.randomUUID().slice(0, 12);
+
+        const uploadId = validIdempotencyKey
+          ? await deriveIdempotentUploadId({
+              idempotencyKey: validIdempotencyKey,
+              userId: authResult.verifiedUserId,
+              contextType,
+              contextId,
+            })
+          : `med_${crypto.randomUUID()}`;
         const objectKey = `media/objects/${uploadId}`;
-        const sanitizedFileName = binValidation.sanitizedOriginalName || `${uploadId}.${binValidation.extension}`;
         const sanitizedUrl = `/api/media/${uploadId}`;
         const contentDisposition = buildSafeContentDisposition(sanitizedFileName, binValidation.extension);
+
+        // Idempotent replay pre-check: if caller retries with same X-Idempotency-Key and record + R2 object already exist cleanly, return it without duplicate insert
+        if (validIdempotencyKey && baseSupabaseUrl && supabaseServiceKey) {
+          try {
+            const replayCheckRes = await fetch(
+              `${baseSupabaseUrl}/rest/v1/media_uploads?id=eq.${encodeURIComponent(uploadId)}&select=id,uploader_id,file_name,file_size_bytes,mime_type,media_url,is_flagged`,
+              {
+                headers: {
+                  'apikey': supabaseServiceKey,
+                  'Authorization': `Bearer ${supabaseServiceKey}`,
+                },
+              }
+            );
+            if (replayCheckRes.ok) {
+              const replayRows: any = await replayCheckRes.json().catch(() => null);
+              if (Array.isArray(replayRows) && replayRows.length === 1) {
+                const existing = replayRows[0];
+                if (existing?.uploader_id !== authResult.verifiedUserId) {
+                  return jsonResponse({
+                    success: false,
+                    error: 'Idempotency conflict: Media identifier owned by another user.',
+                    code: 'MEDIA_IDEMPOTENCY_FORBIDDEN',
+                    stage: 'idempotency',
+                  }, 409);
+                }
+                if (existing?.is_flagged === true) {
+                  return jsonResponse({
+                    success: false,
+                    error: 'Forbidden: This media asset has been flagged by moderation.',
+                    code: 'MEDIA_FLAGGED',
+                    stage: 'moderation',
+                  }, 403);
+                }
+                const existingObj = await env.CHAT_MEDIA.get(objectKey).catch(() => null);
+                if (existingObj && existingObj.body) {
+                  return jsonResponse({
+                    success: true,
+                    idempotentReplay: true,
+                    media: {
+                      uploadId,
+                      url: existing.media_url || sanitizedUrl,
+                      mediaType: binValidation.chatMediaType,
+                      mimeType: existing.mime_type || binValidation.canonicalMime,
+                      fileName: existing.file_name || sanitizedFileName,
+                      fileSize: Number(existing.file_size_bytes) || fileBytes.byteLength,
+                    },
+                  }, 200);
+                }
+              }
+            }
+          } catch (replayErr) {
+            console.warn('[Worker][media-upload] Idempotency pre-check skipped:', { requestId });
+          }
+        }
 
         const customMetadata = {
           mediaId: uploadId,
@@ -1623,21 +1837,37 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
             customMetadata,
           });
         } catch (r2Err: any) {
-          console.error('[Worker] R2 put failed:', r2Err);
+          console.error('[Worker][media-upload] R2 put failed:', {
+            requestId,
+            uploadId,
+            stage: 'r2_put',
+            message: r2Err?.message || 'Storage write failure',
+          });
           return jsonResponse({
             success: false,
             error: 'Storage write failure while saving media to Cloudflare R2.',
+            code: 'MEDIA_R2_WRITE_FAILED',
+            stage: 'r2_put',
+            requestId,
           }, 502);
         }
 
-        // Persist metadata in Supabase public.media_uploads; rollback R2 object on any failure
+        // Persist metadata in Supabase public.media_uploads; rollback scoped R2 object on any failure
         if (baseSupabaseUrl && supabaseServiceKey) {
           let metadataPersisted = false;
+          let existingRowPreserved = false;
+          let failureClassification: MediaDbErrorClassification = {
+            status: 502,
+            code: 'MEDIA_DB_UPSTREAM_FAILURE',
+            userMessage: 'Failed to persist media metadata; uploaded object was cleaned up.',
+          };
+
           try {
             const dbRes = await fetch(`${baseSupabaseUrl}/rest/v1/media_uploads`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
+                'Accept': 'application/json',
                 'apikey': supabaseServiceKey,
                 'Authorization': `Bearer ${supabaseServiceKey}`,
                 'Prefer': 'return=representation',
@@ -1653,29 +1883,138 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
               }),
             });
 
+            const dbBodyText = await dbRes.text().catch(() => '');
+
             if (dbRes.ok) {
-              const insertedRows: any = await dbRes.json().catch(() => null);
-              if (Array.isArray(insertedRows) && insertedRows.length === 1 && insertedRows[0]?.id === uploadId) {
+              let parsedBody: any = null;
+              if (dbBodyText && dbBodyText.trim().length > 0) {
+                try {
+                  parsedBody = JSON.parse(dbBodyText);
+                } catch {
+                  parsedBody = null;
+                }
+              }
+
+              if (Array.isArray(parsedBody) && parsedBody.length === 1 && parsedBody[0]?.id === uploadId) {
                 metadataPersisted = true;
+              } else if (parsedBody && !Array.isArray(parsedBody) && typeof parsedBody === 'object' && parsedBody.id === uploadId) {
+                metadataPersisted = true;
+              } else if (dbRes.status === 201 || dbRes.status === 200 || dbRes.status === 204) {
+                // Verify via explicit read-back when PostgREST omits representation payload
+                const verifyRes = await fetch(
+                  `${baseSupabaseUrl}/rest/v1/media_uploads?id=eq.${encodeURIComponent(uploadId)}&select=id,uploader_id,is_flagged`,
+                  {
+                    headers: {
+                      'apikey': supabaseServiceKey,
+                      'Authorization': `Bearer ${supabaseServiceKey}`,
+                    },
+                  }
+                ).catch(() => null);
+                if (verifyRes && verifyRes.ok) {
+                  const verifyRows: any = await verifyRes.json().catch(() => null);
+                  if (Array.isArray(verifyRows) && verifyRows.length === 1 && verifyRows[0]?.id === uploadId) {
+                    metadataPersisted = true;
+                  }
+                }
+                if (!metadataPersisted) {
+                  failureClassification = {
+                    status: 502,
+                    code: 'MEDIA_DB_INVALID_RESPONSE',
+                    userMessage: 'Failed to confirm media metadata persistence; uploaded object was cleaned up.',
+                  };
+                  console.error('[Worker][media-upload] Unexpected Supabase insert response shape:', {
+                    requestId,
+                    uploadId,
+                    httpStatus: dbRes.status,
+                  });
+                }
               }
             } else {
-              const errText = await dbRes.text().catch(() => '');
-              console.error(`[Worker] Supabase media_uploads insert failed HTTP ${dbRes.status}:`, errText);
+              failureClassification = classifyMediaDbInsertError(dbRes.status, dbBodyText);
+
+              // On 409 / 23505 duplicate key when retrying with same idempotency key, verify matching ownership safely
+              if (failureClassification.status === 409 && validIdempotencyKey) {
+                const conflictRes = await fetch(
+                  `${baseSupabaseUrl}/rest/v1/media_uploads?id=eq.${encodeURIComponent(uploadId)}&select=id,uploader_id,file_size_bytes,mime_type,is_flagged`,
+                  {
+                    headers: {
+                      'apikey': supabaseServiceKey,
+                      'Authorization': `Bearer ${supabaseServiceKey}`,
+                    },
+                  }
+                ).catch(() => null);
+                if (conflictRes && conflictRes.ok) {
+                  const rows: any = await conflictRes.json().catch(() => null);
+                  if (
+                    Array.isArray(rows) &&
+                    rows.length === 1 &&
+                    rows[0]?.uploader_id === authResult.verifiedUserId &&
+                    rows[0]?.is_flagged === false
+                  ) {
+                    metadataPersisted = true;
+                    existingRowPreserved = true;
+                  } else if (Array.isArray(rows) && rows.length === 1) {
+                    existingRowPreserved = true;
+                  }
+                }
+              }
+
+              if (!metadataPersisted) {
+                console.error('[Worker][media-upload] Supabase media_uploads insert failed:', {
+                  requestId,
+                  uploadId,
+                  stage: 'db_insert',
+                  httpStatus: dbRes.status,
+                  code: failureClassification.code,
+                  pgCode: failureClassification.pgCode || null,
+                });
+              }
             }
-          } catch (dbErr) {
-            console.error('[Worker] Supabase media_uploads insert exception:', dbErr);
+          } catch (dbErr: any) {
+            failureClassification = {
+              status: 502,
+              code: 'MEDIA_DB_NETWORK_EXCEPTION',
+              userMessage: 'Failed to persist media metadata due to database connection error; uploaded object was cleaned up.',
+            };
+            console.error('[Worker][media-upload] Supabase media_uploads insert exception:', {
+              requestId,
+              uploadId,
+              stage: 'db_insert',
+              message: dbErr?.name || 'NetworkException',
+            });
           }
 
           if (!metadataPersisted) {
-            try {
-              await env.CHAT_MEDIA.delete(objectKey);
-            } catch (cleanupErr) {
-              console.error('[Worker] Failed to clean up R2 object after metadata failure:', objectKey, cleanupErr);
+            let cleanupSucceeded = false;
+            if (!existingRowPreserved) {
+              try {
+                await env.CHAT_MEDIA.delete(objectKey);
+                cleanupSucceeded = true;
+              } catch (cleanupErr: any) {
+                cleanupSucceeded = false;
+                console.error('[Worker][media-upload] R2 rollback delete failed after DB metadata error:', {
+                  requestId,
+                  uploadId,
+                  stage: 'r2_rollback',
+                  dbCode: failureClassification.code,
+                  cleanupError: cleanupErr?.name || 'R2DeleteError',
+                });
+              }
             }
+            const errorMsg = existingRowPreserved
+              ? failureClassification.userMessage
+              : cleanupSucceeded
+              ? failureClassification.userMessage
+              : `${failureClassification.userMessage.replace(/; uploaded object was cleaned up\.$/, '')}; R2 cleanup also failed.`;
             return jsonResponse({
               success: false,
-              error: 'Failed to persist media metadata; uploaded object was cleaned up.',
-            }, 502);
+              error: errorMsg,
+              code: failureClassification.code,
+              stage: 'db_insert',
+              requestId,
+              cleanupAttempted: !existingRowPreserved,
+              cleanupSucceeded: existingRowPreserved ? undefined : cleanupSucceeded,
+            }, failureClassification.status);
           }
         }
 
@@ -1693,7 +2032,9 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
           media: mediaAsset,
         }, 200);
       } catch (err: any) {
-        console.error('[Worker] R2 Media Upload Error:', err);
+        console.error('[Worker][media-upload] Unhandled upload processing error:', {
+          message: err?.name || 'InternalError',
+        });
         return jsonResponse({ success: false, error: 'Internal error processing media upload.' }, 500);
       }
     }
