@@ -53,6 +53,7 @@ import {
   ShieldCheck,
   Lock,
   ArrowUp,
+  ArrowRight,
   Clock,
   Sparkles,
   MessageSquare,
@@ -62,6 +63,9 @@ import {
   ChevronRight,
   Hash,
   Minimize2,
+  Video,
+  Shuffle,
+  Globe2,
 } from 'lucide-react';
 
 interface ExtendedChatMessage extends ChatMessage {
@@ -496,6 +500,10 @@ export const GenderBadge = ({ gender }: { gender?: string }) => {
   );
 };
 
+export function getExploreRoomsForSlug(activeSlug: string): Room[] {
+  return ROOMS_CONFIG.filter((r) => r.slug !== activeSlug);
+}
+
 export const PublicChatPage: React.FC = () => {
   const { params, navigate } = useRouter();
   const { language, t } = useLanguage();
@@ -532,6 +540,7 @@ export const PublicChatPage: React.FC = () => {
 
   // Authoritative main view tab: 'room' for public group chat, or conversationId for maximized private chat
   const [activeMainTab, setActiveMainTab] = useState<'room' | string>('room');
+  const [exploreAdFailed, setExploreAdFailed] = useState(false);
 
   // Rule 6 & 7: The expanded/tab-style renderer must render ONLY conversations whose mode is 'maximized'
   const maximizedWindows = openWindows.filter(
@@ -2163,48 +2172,152 @@ export const PublicChatPage: React.FC = () => {
       </div>
 
       {/* Explore Other Chatrooms Discovery Section */}
-      <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mb-8">
-        <div className="bg-[#0c1324] border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
-          <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-cyan-400" />
-            <span>{language === 'bn' ? 'অন্যান্য চ্যাটরুম ঘুরে দেখুন' : 'Explore Other Chatrooms'}</span>
-          </h3>
-          <p className="text-xs text-slate-400 mb-4">
-            {language === 'bn'
-              ? 'আমাদের অন্যান্য লাইভ চ্যাটরুমে যোগ দিন এবং আরও নতুন বন্ধুদের সাথে কথা বলুন।'
-              : 'Join our other live chatrooms and connect with more active members.'}
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {ROOMS_CONFIG.filter((r) => r.slug !== activeRoom.slug).map((r) => (
-              <button
-                key={r.id}
-                onClick={() => navigate('/chat', { roomId: r.slug })}
-                className="p-3.5 rounded-xl bg-[#101729] hover:bg-[#151f38] border border-slate-800 hover:border-cyan-500/50 text-left transition-all cursor-pointer group flex flex-col justify-between shadow-sm"
-              >
+      {(() => {
+        const exploreRooms = getExploreRoomsForSlug(activeRoom.slug);
+        return (
+          <section
+            aria-labelledby="explore-chatrooms-heading"
+            data-testid="explore-other-chatrooms-section"
+            className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mb-8"
+          >
+            <div className="bg-[#0c1324] border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-5 mb-5 border-b border-slate-800/80">
                 <div>
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <span className="font-bold text-xs text-white group-hover:text-cyan-300 transition-colors">
-                      {r.name[language] || r.name.en}
-                    </span>
-                    {r.is18Plus && (
-                      <span className="text-[9px] font-semibold text-rose-300 bg-rose-950/80 border border-rose-800 px-1.5 py-0.2 rounded shrink-0">
-                        18+
-                      </span>
-                    )}
+                  <div className="text-xs font-bold uppercase tracking-wider text-cyan-400 mb-1">
+                    {language === 'bn' ? 'অন্যান্য রুম' : 'Chat Rooms'}
                   </div>
-                  <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
-                    {r.description[language] || r.description.en}
+                  <h3
+                    id="explore-chatrooms-heading"
+                    className="text-xl sm:text-2xl font-extrabold text-white tracking-tight text-balance"
+                  >
+                    {language === 'bn' ? 'অন্যান্য চ্যাটরুম ঘুরে দেখুন' : 'Explore Other Chatrooms'}
+                  </h3>
+                  <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                    {language === 'bn'
+                      ? `আরও ${exploreRooms.length}টি সক্রিয় পাবলিক রুমে ভাষা, অঞ্চল বা বিষয় অনুযায়ী যোগ দিন — কোনো অতিরিক্ত নিবন্ধন ছাড়াই।`
+                      : `Switch seamlessly across ${exploreRooms.length} other public rooms by region, language, or interest — no extra registration needed.`}
                   </p>
                 </div>
-                <div className="mt-3 flex items-center justify-between text-[10px] text-cyan-400 font-medium">
-                  <span>{language === 'bn' ? 'চ্যাট করুন' : 'Join Room'}</span>
-                  <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                <button
+                  type="button"
+                  onClick={() => navigate('/rooms')}
+                  className="self-start sm:self-auto px-4 py-2 rounded-xl border border-slate-700 bg-[#101729] hover:bg-slate-800 hover:border-cyan-500/50 text-xs font-semibold text-slate-200 hover:text-white inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                >
+                  <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>{language === 'bn' ? 'সব রুম দেখুন' : 'View All Rooms'}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div
+                data-testid="explore-other-chatrooms-grid"
+                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+              >
+                {exploreRooms.map((r) => {
+                  const RoomIcon = r.modes.includes('video')
+                    ? Video
+                    : r.slug === 'roulette'
+                    ? Shuffle
+                    : r.slug === 'bdsm' || r.slug === 'roleplay'
+                    ? Lock
+                    : r.category === 'international'
+                    ? Globe2
+                    : r.category === 'social' || r.slug === 'couples'
+                    ? Users
+                    : MessageSquare;
+
+                  const modeText = r.modes.includes('video')
+                    ? language === 'bn'
+                      ? 'ভিডিও ও টেক্সট'
+                      : 'Video & Text'
+                    : language === 'bn'
+                    ? 'লাইভ টেক্সট'
+                    : 'Live Text';
+
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      data-testid={`explore-room-card-${r.slug.replace(/\//g, '-')}`}
+                      onClick={() => navigate('/chat', { roomId: r.slug })}
+                      className="p-4 sm:p-5 rounded-xl bg-[#101729] hover:bg-[#151f38] border border-slate-800 hover:border-cyan-500/50 text-left transition-all cursor-pointer group flex flex-col justify-between shadow-sm h-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="w-10 h-10 rounded-xl bg-[#090d18] border border-slate-800/90 flex items-center justify-center shrink-0">
+                            {r.flagUrl ? (
+                              <img
+                                src={r.flagUrl}
+                                alt={r.name[language] || r.name.en}
+                                referrerPolicy="no-referrer"
+                                className="w-6 h-4 rounded-xs object-cover"
+                              />
+                            ) : (
+                              <RoomIcon
+                                className={`w-4.5 h-4.5 ${
+                                  r.is18Plus ? 'text-rose-400' : 'text-cyan-400'
+                                }`}
+                              />
+                            )}
+                          </div>
+                          {r.is18Plus && (
+                            <span className="text-[10px] font-bold text-rose-300 bg-rose-950/70 border border-rose-800/80 px-1.5 py-0.5 rounded shrink-0 tabular-nums">
+                              18+
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          <div className="font-bold text-sm sm:text-base text-white group-hover:text-cyan-300 transition-colors leading-snug">
+                            {r.name[language] || r.name.en}
+                          </div>
+                          <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed mt-1.5">
+                            {r.description[language] || r.description.en}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="pt-3.5 mt-4 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-slate-400 truncate">
+                          {r.categoryLabel[language] || r.categoryLabel.en}
+                          <span aria-hidden="true"> · </span>
+                          {modeText}
+                        </span>
+                        <span className="text-xs font-bold text-cyan-400 group-hover:text-cyan-300 inline-flex items-center gap-1 whitespace-nowrap shrink-0">
+                          <span>{language === 'bn' ? 'রুমে প্রবেশ করুন' : 'Join Room'}</span>
+                          <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {!exploreAdFailed && (
+                <div
+                  data-testid="explore-chatrooms-sponsored-wrapper"
+                  aria-label="Sponsored advertisement"
+                  className="mt-6 pt-5 border-t border-slate-800/80 flex flex-col items-center gap-1.5"
+                >
+                  <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
+                    Sponsored
+                  </span>
+                  <AdPlacementBox
+                    slotId="explore-chatrooms-inline"
+                    position="content-gap"
+                    className="!my-0"
+                    onStatusChange={(status) => {
+                      if (status === 'unfilled' || status === 'error') {
+                        setExploreAdFailed(true);
+                      }
+                    }}
+                  />
                 </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+              )}
+            </div>
+          </section>
+        );
+      })()}
 
       {/* Contextual User Action Menu */}
       {userActionMenu && (

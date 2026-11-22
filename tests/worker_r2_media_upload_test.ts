@@ -1105,6 +1105,18 @@ async function runSuite() {
       assert(res.status === 404, 'E1: Non-existent media ID returns HTTP 404');
     }
 
+    // E1b: Malformed key / path traversal attempts strictly rejected (400)
+    {
+      for (const badId of ['..%2Fsecret', '.hidden', 'bad$id!']) {
+        const req = new Request(`https://chatlustora.com/api/media/${badId}`, {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        });
+        const res = await worker.fetch(req, defaultEnv, {});
+        assert(res.status === 400, `E1b: Malformed/path-traversal media identifier "${badId}" rejected with HTTP 400`);
+      }
+    }
+
     // E2: Private conversation media returns private, no-store and nosniff
     {
       const req = new Request(`https://chatlustora.com/api/media/${privateMediaId}`, {

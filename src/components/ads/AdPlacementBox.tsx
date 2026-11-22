@@ -8,6 +8,7 @@ import {
   ADSENSE_CONFIG,
   AdProvider,
   getProviderRotation,
+  getSessionAdRotationParity,
   getPlacementOrientation,
   getReservedDimensionTarget,
   getVerifiedAdUnitSpec,
@@ -1019,6 +1020,40 @@ export function computeProviderTransition(
   };
 }
 
+export interface ResizeReevaluationParams {
+  adStatus: AdSlotStatus;
+  prevWidth: number | null;
+  nextWidth: number | null;
+  explicitProvider?: AdProvider;
+  primaryRotationProvider: AdProvider;
+  getEffectiveUnitId: (provider: AdProvider, width: number | null) => string | null;
+}
+
+/**
+ * Prevents infinite retry loops when all providers are unfilled/errored at an
+ * unchanged container width. Only resets a failed/unfilled slot to idle when a
+ * genuine viewport resize changes the eligible unit for the primary provider.
+ */
+export function shouldReevaluateSlotOnResize({
+  adStatus,
+  prevWidth,
+  nextWidth,
+  explicitProvider,
+  primaryRotationProvider,
+  getEffectiveUnitId,
+}: ResizeReevaluationParams): boolean {
+  if (nextWidth === null || prevWidth === null || prevWidth === nextWidth) {
+    return false;
+  }
+  if (adStatus !== 'unfilled' && adStatus !== 'error') {
+    return false;
+  }
+  const targetProvider = explicitProvider || primaryRotationProvider;
+  const prevUnit = getEffectiveUnitId(targetProvider, prevWidth);
+  const nextUnit = getEffectiveUnitId(targetProvider, nextWidth);
+  return Boolean(nextUnit && nextUnit !== prevUnit);
+}
+
 export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   slotId,
   provider: explicitProvider,
@@ -1070,6 +1105,10 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const prevChatExclusionRef = useRef<boolean>(effectiveIsLiveChatScreen);
   const settledUnitSignatureRef = useRef<string | null>(null);
   const settledRequiredWidthRef = useRef<number | null>(null);
+  const prevContainerWidthRef = useRef<number | null>(null);
+  const adStatusRef = useRef<AdSlotStatus>(adStatus);
+  adStatusRef.current = adStatus;
+  const sessionRotationParityRef = useRef<number>(getSessionAdRotationParity());
 
   const clearAllActiveTimers = useCallback(() => {
     activeTimersRef.current.forEach((t) => {
@@ -1099,7 +1138,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
   const rotationKey = effectiveIsLiveChatScreen ? 'chat' : 'public';
   const rotation = useMemo(
-    () => getProviderRotation(position || '', effectiveIsLiveChatScreen, slotId),
+    () =>
+      getProviderRotation(
+        position || '',
+        effectiveIsLiveChatScreen,
+        slotId,
+        sessionRotationParityRef.current
+      ),
     [position, rotationKey, slotId]
   );
   const currentProvider = explicitProvider || rotation[providerIndex] || rotation[0];
@@ -1238,26 +1283,18 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     const handleVisibilityChange = () => {
       const visible = typeof document === 'undefined' ? true : document.visibilityState !== 'hidden';
       setIsPageVisible(visible);
-      if (!visible) {
-        setAdStatus((prev) => {
-          if (prev === 'loading') {
-            cleanupSlotRuntime();
-            return 'idle';
-          }
-          return prev;
-        });
+      if (!visible && adStatusRef.current === 'loading') {
+        cleanupSlotRuntime();
+        setAdStatus('idle');
       }
     };
 
     const handlePageHide = () => {
       setIsPageVisible(false);
-      setAdStatus((prev) => {
-        if (prev === 'loading') {
-          cleanupSlotRuntime();
-          return 'idle';
-        }
-        return prev;
-      });
+      if (adStatusRef.current === 'loading') {
+        cleanupSlotRuntime();
+        setAdStatus('idle');
+      }
     };
 
     const handlePageShow = () => {
@@ -1280,14 +1317,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           const entry = entries[0];
           const intersecting = Boolean(entry && (entry.isIntersecting || entry.intersectionRatio > 0));
           setIsSlotVisible(intersecting);
-          if (!intersecting) {
-            setAdStatus((prev) => {
-              if (prev === 'loading') {
-                cleanupSlotRuntime();
-                return 'idle';
-              }
-              return prev;
-            });
+          if (!intersecting && adStatusRef.current === 'loading') {
+            cleanupSlotRuntime();
+            setAdStatus('idle');
           }
         },
         { threshold: 0.01 }
@@ -1334,17 +1366,27 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     };
   }, [slotId, cleanupSlotRuntime]);
 
-  // Re-evaluate if viewport width crossed a breakpoint threshold while unfilled OR shrank below a settled fixed unit width
+  // Re-evaluate ONLY when viewport width genuinely crossed a breakpoint threshold while unfilled
+  // OR shrank below a settled fixed unit width (never loop infinitely on constant width)
   useEffect(() => {
     if (containerWidth === null || renderAd) return;
-    if (adStatus === 'unfilled' || adStatus === 'error') {
-      const primaryEligible = getEffectiveUnitId(explicitProvider || rotation[0], containerWidth);
-      if (primaryEligible) {
-        settledUnitSignatureRef.current = null;
-        settledRequiredWidthRef.current = null;
-        setProviderIndex(0);
-        setAdStatus('idle');
-      }
+    const prevWidth = prevContainerWidthRef.current;
+    prevContainerWidthRef.current = containerWidth;
+
+    if (
+      shouldReevaluateSlotOnResize({
+        adStatus,
+        prevWidth,
+        nextWidth: containerWidth,
+        explicitProvider,
+        primaryRotationProvider: rotation[0],
+        getEffectiveUnitId,
+      })
+    ) {
+      settledUnitSignatureRef.current = null;
+      settledRequiredWidthRef.current = null;
+      setProviderIndex(0);
+      setAdStatus('idle');
       return;
     }
 

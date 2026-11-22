@@ -238,11 +238,56 @@ export const isAdSenseExcludedRoute = (currentRoute: string): boolean => {
   );
 };
 
+const SESSION_PARITY_STORAGE_KEY = 'vx_ad_session_parity';
+let inMemorySessionAdParity: 0 | 1 | null = null;
+
 /**
- * Selection strategy: Priority list.
- * CRITICAL POLICY: Google AdSense is STRICTLY EXCLUDED from live-chat screens (/chat).
+ * Returns a stable per-browser-session parity bit (0 or 1) for balancing
+ * ExoClick and JuicyAds primary impressions across approved chatroom slots
+ * without random flip-flopping on React re-renders.
  */
-export const getProviderRotation = (position: string, isLiveChatScreen: boolean = true, slotId?: string): AdProvider[] => {
+export const getSessionAdRotationParity = (): 0 | 1 => {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const existing = sessionStorage.getItem(SESSION_PARITY_STORAGE_KEY);
+      if (existing === '0') return 0;
+      if (existing === '1') return 1;
+      let next: 0 | 1 = 0;
+      if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        const buf = new Uint32Array(1);
+        crypto.getRandomValues(buf);
+        next = (buf[0] & 1) as 0 | 1;
+      } else {
+        next = Math.floor(Date.now() / 1000) % 2 === 0 ? 0 : 1;
+      }
+      sessionStorage.setItem(SESSION_PARITY_STORAGE_KEY, String(next));
+      inMemorySessionAdParity = next;
+      return next;
+    }
+  } catch {
+    // Ignore storage restrictions
+  }
+  if (inMemorySessionAdParity !== null) {
+    return inMemorySessionAdParity;
+  }
+  return 0;
+};
+
+/**
+ * Selection strategy: Deterministic provider priority list.
+ * CRITICAL POLICY:
+ * - Google AdSense is STRICTLY EXCLUDED from live-chat screens (/chat).
+ * - Adsterra is STRICTLY Footer-only (global-footer-responsive).
+ * - Monetag is STRICTLY single-slot public-chatroom-body-bottom-only.
+ * - Approved chatroom slots share primary impressions deterministically across
+ *   ExoClick and JuicyAds with mutual failover.
+ */
+export const getProviderRotation = (
+  position: string,
+  isLiveChatScreen: boolean = true,
+  slotId?: string,
+  rotationParity: number = 0
+): AdProvider[] => {
   if (slotId === 'public-chatroom-body-bottom') {
     return ['monetag'];
   }
@@ -250,8 +295,18 @@ export const getProviderRotation = (position: string, isLiveChatScreen: boolean 
     return ['adsterra'];
   }
   if (isLiveChatScreen) {
-    // Chatroom regular placements: ExoClick and JuicyAds only
-    return ['juicyads', 'exoclick'];
+    // Dedicated 300x112 participant bar slot prioritizes JuicyAds with ExoClick failover
+    if (slotId === 'participant-box-horizontal') {
+      return ['juicyads', 'exoclick'];
+    }
+
+    const flip = (rotationParity & 1) === 1;
+    // Split regular horizontal placements across ExoClick & JuicyAds deterministically
+    if (slotId === 'public-chatroom-status-above' || slotId === 'public-chatroom-bottom') {
+      return flip ? ['juicyads', 'exoclick'] : ['exoclick', 'juicyads'];
+    }
+
+    return flip ? ['exoclick', 'juicyads'] : ['juicyads', 'exoclick'];
   }
 
   // Non-chat, non-footer public pages: AdSense, JuicyAds, and ExoClick only

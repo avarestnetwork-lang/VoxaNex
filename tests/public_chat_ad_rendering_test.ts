@@ -19,6 +19,7 @@ import {
   getProviderSessionRotationCount,
   recordProviderSessionRotation,
   resetProviderSessionRotations,
+  shouldReevaluateSlotOnResize,
 } from '../src/components/ads/AdPlacementBox';
 import {
   ADSTERRA_CONFIG,
@@ -30,6 +31,7 @@ import {
   PROVIDER_REFRESH_POLICIES,
   getProviderRefreshPolicy,
   getProviderRotation,
+  getSessionAdRotationParity,
   isAdSenseExcludedRoute,
   isInternalHorizontalPlacement,
   getPlacementOrientation,
@@ -38,6 +40,8 @@ import {
   getVerifiedAdUnitSpec,
   getVerifiedVerticalUnitForProvider,
 } from '../src/config/adsConfig';
+import { ROOMS_CONFIG } from '../src/config/voxanexConfig';
+import { getExploreRoomsForSlug } from '../src/pages/PublicChatPage';
 import { RouterProvider } from '../src/context/RouterContext';
 
 let totalAssertions = 0;
@@ -846,7 +850,7 @@ async function runAdRenderingTests() {
     '10.5 public-chatroom-message-inline persists reliably for 0, 1-4, and >=5 chat messages with zero duplicate mounts'
   );
   assert(
-    adPlacementBoxSource.includes("getProviderRotation(position || '', effectiveIsLiveChatScreen, slotId)"),
+    /getProviderRotation\(\s*position\s*\|\|\s*'',\s*effectiveIsLiveChatScreen,\s*slotId/.test(adPlacementBoxSource),
     '10.6 AdPlacementBox forwards slotId to getProviderRotation for slot-specific policy enforcement'
   );
 
@@ -1747,8 +1751,182 @@ async function runAdRenderingTests() {
     '17.9 AdPlacementBox enforces page/slot visibility, viewport-shrink downgrade, and zero forced auto-refresh JS timers'
   );
 
+  // --- Task 18: Phase R2.3 Revenue-Optimized Ad Stability & Explore Chatrooms UI Integration ---
+  console.log('\n--- 18. Phase R2.3 Deterministic Ad Rotation, Loop Prevention & Explore UI ---');
+
+  // 18.1 Deterministic ExoClick & JuicyAds distribution across chatroom slots (both receive primary impressions)
+  const parity0Top = getProviderRotation('top', true, 'public-chatroom-top', 0);
+  const parity0StatusAbove = getProviderRotation('sidebar-horizontal', true, 'public-chatroom-status-above', 0);
+  const parity0MsgInline = getProviderRotation('sidebar-horizontal', true, 'public-chatroom-message-inline', 0);
+  const parity0Bottom = getProviderRotation('bottom', true, 'public-chatroom-bottom', 0);
+  const parity0Explore = getProviderRotation('content-gap', true, 'explore-chatrooms-inline', 0);
+  const parity0Participant = getProviderRotation('sidebar-horizontal', true, 'participant-box-horizontal', 0);
+
+  assert(
+    parity0Top[0] === 'juicyads' &&
+      parity0Top[1] === 'exoclick' &&
+      parity0StatusAbove[0] === 'exoclick' &&
+      parity0StatusAbove[1] === 'juicyads' &&
+      parity0MsgInline[0] === 'juicyads' &&
+      parity0Bottom[0] === 'exoclick' &&
+      parity0Explore[0] === 'juicyads' &&
+      parity0Participant[0] === 'juicyads',
+    '18.1a Parity 0 distributes primary impressions deterministically across both JuicyAds and ExoClick with mutual failover'
+  );
+
+  const parity1Top = getProviderRotation('top', true, 'public-chatroom-top', 1);
+  const parity1StatusAbove = getProviderRotation('sidebar-horizontal', true, 'public-chatroom-status-above', 1);
+  const parity1Bottom = getProviderRotation('bottom', true, 'public-chatroom-bottom', 1);
+  const parity1Explore = getProviderRotation('content-gap', true, 'explore-chatrooms-inline', 1);
+
+  assert(
+    parity1Top[0] === 'exoclick' &&
+      parity1StatusAbove[0] === 'juicyads' &&
+      parity1Bottom[0] === 'juicyads' &&
+      parity1Explore[0] === 'exoclick' &&
+      getProviderRotation('content-gap', true, 'public-chatroom-body-bottom', 1).join(',') === 'monetag' &&
+      getProviderRotation('footer', false, 'global-footer-responsive', 1).join(',') === 'adsterra',
+    '18.1b Parity 1 swaps ExoClick/JuicyAds order while keeping Monetag body-bottom-only and Adsterra footer-only'
+  );
+
+  // Repeat calls produce exact same ordering (never random per render)
+  assert(
+    getProviderRotation('top', true, 'public-chatroom-top', 0).join(',') === parity0Top.join(',') &&
+      getProviderRotation('bottom', true, 'public-chatroom-bottom', 0).join(',') === parity0Bottom.join(',') &&
+      typeof getSessionAdRotationParity() === 'number' &&
+      (getSessionAdRotationParity() === 0 || getSessionAdRotationParity() === 1),
+    '18.2 Session parity and rotation calls remain deterministic across re-renders'
+  );
+
+  // 18.3 Infinite unfilled retry loop prevention & React updater purity
+  const evalFn = (provider: 'juicyads' | 'exoclick', width: number | null) =>
+    resolveEffectiveUnitId({
+      provider,
+      position: 'top',
+      slotId: 'public-chatroom-top',
+      containerWidth: width,
+      isLiveChatScreen: true,
+    });
+
+  assert(
+    shouldReevaluateSlotOnResize({
+      adStatus: 'unfilled',
+      prevWidth: null,
+      nextWidth: 768,
+      primaryRotationProvider: 'juicyads',
+      getEffectiveUnitId: evalFn,
+    }) === false &&
+      shouldReevaluateSlotOnResize({
+        adStatus: 'unfilled',
+        prevWidth: 768,
+        nextWidth: 768,
+        primaryRotationProvider: 'juicyads',
+        getEffectiveUnitId: evalFn,
+      }) === false &&
+      shouldReevaluateSlotOnResize({
+        adStatus: 'error',
+        prevWidth: 390,
+        nextWidth: 390,
+        primaryRotationProvider: 'exoclick',
+        getEffectiveUnitId: evalFn,
+      }) === false &&
+      shouldReevaluateSlotOnResize({
+        adStatus: 'unfilled',
+        prevWidth: 390,
+        nextWidth: 768,
+        primaryRotationProvider: 'juicyads',
+        getEffectiveUnitId: evalFn,
+      }) === true &&
+      !adPlacementBoxSource.includes('cleanupSlotRuntime();\n            return \'idle\';'),
+    '18.3 Constant containerWidth never triggers infinite unfilled/error retry loops, while genuine breakpoint widening re-evaluates cleanly without side-effects in state updaters'
+  );
+
+  // 18.4 Explore Chatrooms Sponsored Placement policy & sizing
+  assert(
+    resolveEffectiveUnitId({
+      provider: 'juicyads',
+      position: 'content-gap',
+      slotId: 'explore-chatrooms-inline',
+      containerWidth: 1024,
+      isLiveChatScreen: true,
+    }) === JUICYADS_CONFIG.zones.banner728x102 &&
+      resolveEffectiveUnitId({
+        provider: 'juicyads',
+        position: 'content-gap',
+        slotId: 'explore-chatrooms-inline',
+        containerWidth: 390,
+        isLiveChatScreen: true,
+      }) === JUICYADS_CONFIG.zones.banner300x62 &&
+      resolveEffectiveUnitId({
+        provider: 'monetag',
+        position: 'content-gap',
+        slotId: 'explore-chatrooms-inline',
+        containerWidth: 1024,
+        isLiveChatScreen: true,
+      }) === null &&
+      resolveEffectiveUnitId({
+        provider: 'adsterra',
+        position: 'content-gap',
+        slotId: 'explore-chatrooms-inline',
+        containerWidth: 1024,
+        isLiveChatScreen: true,
+      }) === null,
+    '18.4 Explore Sponsored placement resolves 728x102 desktop / 300x62 mobile via JuicyAds/ExoClick only and blocks Monetag/Adsterra'
+  );
+
+  const exploreAdHtml = renderToString(
+    React.createElement(
+      RouterProvider,
+      null,
+      React.createElement(AdPlacementBox, {
+        slotId: 'explore-chatrooms-inline',
+        position: 'content-gap',
+        isLiveChatScreen: true,
+      })
+    )
+  );
+  assert(
+    exploreAdHtml.includes('data-testid="ad-slot-explore-chatrooms-inline"') &&
+      exploreAdHtml.includes('data-ad-orientation="horizontal"') &&
+      exploreAdHtml.includes('md:max-w-[728px]'),
+    '18.5 Explore Sponsored slot SSR renders non-collapsing responsive horizontal container'
+  );
+
+  // 18.6 Explore Other Chatrooms UI redesign, exclusion, responsive 3/2/1 columns & failure-hide behavior
+  const banglaExcluded = getExploreRoomsForSlug('bangla');
+  const sexExcluded = getExploreRoomsForSlug('sex');
+  assert(
+    banglaExcluded.length === ROOMS_CONFIG.length - 1 &&
+      !banglaExcluded.some((r) => r.slug === 'bangla') &&
+      sexExcluded.length === ROOMS_CONFIG.length - 1 &&
+      !sexExcluded.some((r) => r.slug === 'sex') &&
+      publicChatPageSource.includes('data-testid="explore-other-chatrooms-grid"') &&
+      publicChatPageSource.includes('grid-cols-1 md:grid-cols-2 lg:grid-cols-3') &&
+      publicChatPageSource.includes('data-testid="explore-chatrooms-sponsored-wrapper"') &&
+      publicChatPageSource.includes('slotId="explore-chatrooms-inline"') &&
+      publicChatPageSource.includes('!exploreAdFailed') &&
+      publicChatPageSource.includes('অন্যান্য চ্যাটরুম ঘুরে দেখুন') &&
+      publicChatPageSource.includes('Explore Other Chatrooms') &&
+      !/active\s*users\s*online\s*now/i.test(publicChatPageSource),
+    '18.6 Explore Other Chatrooms excludes active room, uses responsive 1/2/3-col grid, bilingual EN/BN labels, zero fake live stats, and hides Sponsored wrapper on terminal failure'
+  );
+
+  // 18.7 Persistent message-inline & complete removal of deprecated placements/widgets
+  const footerSource = fs.readFileSync(path.resolve('src/components/layout/Footer.tsx'), 'utf-8');
+  const indexHtmlSource = fs.readFileSync(path.resolve('index.html'), 'utf-8');
+  assert(
+    publicChatPageSource.includes('{totalChatMsgs < 5 && inlineAdBlock}') &&
+      publicChatPageSource.includes('{showMessageInlineAdAfterFifth && inlineAdBlock}') &&
+      !publicChatPageSource.includes('public-chatroom-status-below') &&
+      !footerSource.toLowerCase().includes('trustpilot') &&
+      !indexHtmlSource.toLowerCase().includes('trustpilot') &&
+      !publicChatPageSource.toLowerCase().includes('livejasmin') &&
+      !publicChatPageSource.toLowerCase().includes('awempire'),
+    '18.7 Message-inline persists across empty/low/populated chats while status-below, Trustpilot, and Live Cam widgets remain completely absent'
+  );
+
   console.log('\n================================================================');
-  console.log(`  ALL ${totalAssertions} PHASE 1 AD STABILITY & LAYOUT REGRESSION TESTS PASSED!`);
+  console.log(`  ALL ${totalAssertions} PHASE R2.3 AD STABILITY & EXPLORE UI TESTS PASSED!`);
   console.log('================================================================\n');
 }
 
