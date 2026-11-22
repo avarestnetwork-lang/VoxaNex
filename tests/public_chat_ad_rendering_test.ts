@@ -165,24 +165,37 @@ async function runAdRenderingTests() {
   const bodyBottomRotation = getProviderRotation('content-gap', true, 'public-chatroom-body-bottom');
   assert(
     bodyBottomRotation.length === 1 && bodyBottomRotation.includes('monetag'),
-    '3.8c Body-bottom rotation strictly enforces Monetag only'
+    '3.8c Body-bottom rotation strictly enforces Monetag only for public-chatroom-body-bottom'
   );
 
-  const nonChatroomRotation = getProviderRotation('top', false);
+  const wildcardBodyBottomRotation = getProviderRotation('body-bottom', true, 'unrelated-slot');
   assert(
-    nonChatroomRotation.length === 5 &&
+    !wildcardBodyBottomRotation.includes('monetag'),
+    '3.8d Generic body-bottom position wildcard no longer enables Monetag on unrelated slots'
+  );
+
+  const publicFooterRotation = getProviderRotation('footer', false, 'global-footer-responsive');
+  assert(
+    publicFooterRotation.length === 1 && publicFooterRotation.includes('adsterra'),
+    '3.8e Global footer rotation enforces Adsterra only on public routes as well'
+  );
+
+  const nonChatroomRotation = getProviderRotation('top', false, 'public-content-top');
+  assert(
+    nonChatroomRotation.length === 3 &&
       nonChatroomRotation.includes('adsense') &&
-      nonChatroomRotation.includes('adsterra') &&
       nonChatroomRotation.includes('juicyads') &&
       nonChatroomRotation.includes('exoclick') &&
-      nonChatroomRotation.includes('monetag'),
-    '3.9 Non-chatroom rotation includes all 5 networks including AdSense'
+      !nonChatroomRotation.includes('adsterra') &&
+      !nonChatroomRotation.includes('monetag'),
+    '3.9 Non-chatroom non-footer rotation allows AdSense, JuicyAds, and ExoClick while excluding Footer-only Adsterra and slot-only Monetag'
   );
 
   const publicChatPageSource = fs.readFileSync(
     path.resolve('src/pages/PublicChatPage.tsx'),
     'utf-8'
   );
+  const appSource = fs.readFileSync(path.resolve('src/App.tsx'), 'utf-8');
   assert(
     publicChatPageSource.includes('slotId="public-chatroom-top"') &&
       publicChatPageSource.includes('slotId="public-chatroom-left"') &&
@@ -190,10 +203,28 @@ async function runAdRenderingTests() {
       publicChatPageSource.includes('slotId="participant-box-horizontal"') &&
       publicChatPageSource.includes('slotId="public-chatroom-bottom"') &&
       publicChatPageSource.includes('slotId="public-chatroom-status-above"') &&
-      publicChatPageSource.includes('slotId="public-chatroom-status-below"') &&
+      !publicChatPageSource.includes('public-chatroom-status-below') &&
       publicChatPageSource.includes('slotId="public-chatroom-message-inline"') &&
       publicChatPageSource.includes('slotId="public-chatroom-body-bottom"'),
-    '3.10 All chatroom ad placement IDs including status-above, status-below, message-inline, and body-bottom are present'
+    '3.10 Approved chatroom ad placement IDs are present and public-chatroom-status-below is removed'
+  );
+  assert(
+    !appSource.includes('<MonetagScript') &&
+      resolveEffectiveUnitId({
+        provider: 'monetag',
+        position: 'body-bottom',
+        slotId: 'some-other-slot',
+        containerWidth: 728,
+        isLiveChatScreen: true,
+      }) === null &&
+      resolveEffectiveUnitId({
+        provider: 'monetag',
+        position: 'content-gap',
+        slotId: 'public-chatroom-body-bottom',
+        containerWidth: 728,
+        isLiveChatScreen: true,
+      }) === MONETAG_CONFIG.zoneId,
+    '3.10b Monetag executes strictly on the single dedicated public-chatroom-body-bottom slot (no global script or wildcard position)'
   );
   assert(
     publicChatPageSource.includes('h-[calc(100vh-5.5rem)] min-h-[580px]'),
@@ -800,13 +831,23 @@ async function runAdRenderingTests() {
   );
   assert(
     publicChatPageSource.includes('slotId="public-chatroom-status-above"') &&
-      publicChatPageSource.includes('slotId="public-chatroom-status-below"') &&
+      !publicChatPageSource.includes('public-chatroom-status-below') &&
       publicChatPageSource.includes('slotId="public-chatroom-message-inline"'),
-    '10.3 All internal chatroom placements (status-above, status-below, and message-inline) remain intact'
+    '10.3 Status-above and message-inline remain intact while public-chatroom-status-below is cleanly removed'
   );
   assert(
     !composerCode.includes('AdPlacementBox'),
     '10.4 Chat message composer remains strictly free of ad placements'
+  );
+  assert(
+    publicChatPageSource.includes('totalChatMsgs < 5 && inlineAdBlock') &&
+      publicChatPageSource.includes('totalChatMsgs >= 5 && chatMsgCount === 5') &&
+      publicChatPageSource.includes('showMessageInlineAdAfterFifth && inlineAdBlock'),
+    '10.5 public-chatroom-message-inline persists reliably for 0, 1-4, and >=5 chat messages with zero duplicate mounts'
+  );
+  assert(
+    adPlacementBoxSource.includes("getProviderRotation(position || '', effectiveIsLiveChatScreen, slotId)"),
+    '10.6 AdPlacementBox forwards slotId to getProviderRotation for slot-specific policy enforcement'
   );
 
   // --- Task 11: Phase 1 Orientation Guard, Dimension Targets & Creative Bounds ---
@@ -814,11 +855,11 @@ async function runAdRenderingTests() {
 
   assert(
     isInternalHorizontalPlacement('public-chatroom-status-above') &&
-      isInternalHorizontalPlacement('public-chatroom-status-below') &&
+      !isInternalHorizontalPlacement('public-chatroom-status-below') &&
       isInternalHorizontalPlacement('public-chatroom-message-inline') &&
       !isInternalHorizontalPlacement('public-chatroom-left') &&
       !isInternalHorizontalPlacement('public-chatroom-top'),
-    '11.1 isInternalHorizontalPlacement accurately identifies all internal chatroom placements'
+    '11.1 isInternalHorizontalPlacement accurately identifies approved internal chatroom placements'
   );
 
   assert(

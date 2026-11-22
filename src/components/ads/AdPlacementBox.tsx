@@ -845,8 +845,8 @@ export function resolveEffectiveUnitId({
   if (provider === 'adsterra' && position !== 'footer' && !slotId?.includes('footer')) {
     return null;
   }
-  // Monetag is strictly body-bottom-only
-  if (provider === 'monetag' && slotId !== 'public-chatroom-body-bottom' && position !== 'body-bottom') {
+  // Monetag is strictly restricted to the single dedicated public-chatroom-body-bottom slot
+  if (provider === 'monetag' && slotId !== 'public-chatroom-body-bottom') {
     return null;
   }
 
@@ -1099,8 +1099,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
   const rotationKey = effectiveIsLiveChatScreen ? 'chat' : 'public';
   const rotation = useMemo(
-    () => getProviderRotation(position || '', effectiveIsLiveChatScreen),
-    [position, rotationKey]
+    () => getProviderRotation(position || '', effectiveIsLiveChatScreen, slotId),
+    [position, rotationKey, slotId]
   );
   const currentProvider = explicitProvider || rotation[providerIndex] || rotation[0];
 

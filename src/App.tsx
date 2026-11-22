@@ -7,7 +7,6 @@ import { ThemeProvider } from './context/ThemeContext';
 import { PrivateChatProvider } from './context/PrivateChatContext';
 import { ConsentProvider } from './context/ConsentContext';
 import { CookieConsent } from './components/ads/CookieConsent';
-import { MonetagScript } from './components/ads/MonetagScript';
 import { AdSenseScriptLoader } from './components/ads/AdSenseScriptLoader';
 import { FloatingChatManager } from './components/chat/FloatingChatManager';
 import { Navbar } from './components/layout/Navbar';
@@ -169,7 +168,6 @@ export default function App() {
                 <ConsentProvider>
                   <AppRoutes />
                   <FloatingChatManager />
-                  <MonetagScript />
                   <AdSenseScriptLoader />
                 </ConsentProvider>
               </PrivateChatProvider>

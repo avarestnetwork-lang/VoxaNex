@@ -243,19 +243,20 @@ export const isAdSenseExcludedRoute = (currentRoute: string): boolean => {
  * CRITICAL POLICY: Google AdSense is STRICTLY EXCLUDED from live-chat screens (/chat).
  */
 export const getProviderRotation = (position: string, isLiveChatScreen: boolean = true, slotId?: string): AdProvider[] => {
+  if (slotId === 'public-chatroom-body-bottom') {
+    return ['monetag'];
+  }
+  if (position === 'footer' || slotId === 'global-footer-responsive' || Boolean(slotId?.includes('footer'))) {
+    return ['adsterra'];
+  }
   if (isLiveChatScreen) {
-    if (position === 'footer' || slotId?.includes('footer')) {
-      return ['adsterra'];
-    }
-    if (slotId === 'public-chatroom-body-bottom' || position === 'body-bottom') {
-      return ['monetag'];
-    }
     // Chatroom regular placements: ExoClick and JuicyAds only
     return ['juicyads', 'exoclick'];
   }
 
-  // Non-chat pages: all 5 networks (adsense, adsterra, juicyads, exoclick, monetag)
-  return ['adsense', 'adsterra', 'juicyads', 'exoclick', 'monetag'];
+  // Non-chat, non-footer public pages: AdSense, JuicyAds, and ExoClick only
+  // (Adsterra is strictly Footer-only; Monetag is strictly public-chatroom-body-bottom-only)
+  return ['adsense', 'juicyads', 'exoclick'];
 };
 
 export const FOOTER_EXCLUDED_ROUTES = [
@@ -415,7 +416,6 @@ export const getVerifiedVerticalUnitForProvider = (
 export const isInternalHorizontalPlacement = (slotId: string): boolean => {
   return (
     slotId === 'public-chatroom-status-above' ||
-    slotId === 'public-chatroom-status-below' ||
     slotId === 'public-chatroom-status-inline' ||
     slotId === 'public-chatroom-message-inline'
   );

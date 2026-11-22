@@ -497,23 +497,23 @@ async function runPhase12Tests() {
   );
 
   // -------------------------------------------------------------------------
-  // 5. Trustpilot Review Collector Verification
+  // 5. Trustpilot Complete Removal Verification
   // -------------------------------------------------------------------------
-  console.log('\n--- 5. Trustpilot Review Collector Script & Footer Widget ---');
+  console.log('\n--- 5. Trustpilot Complete Removal Verification ---');
 
   const indexHtml = fs.readFileSync(path.resolve('index.html'), 'utf-8');
-  const headSection = indexHtml.slice(indexHtml.indexOf('<head>'), indexHtml.indexOf('</head>'));
-  const tpScriptOccurrences = headSection.match(/widget\.trustpilot\.com\/bootstrap\/v5\/tp\.widget\.bootstrap\.min\.js/g) || [];
-  assert(tpScriptOccurrences.length === 1, '5.1 TrustBox bootstrap script appears in <head> exactly once');
   assert(
-    headSection.includes('<script type="text/javascript" src="//widget.trustpilot.com/bootstrap/v5/tp.widget.bootstrap.min.js" async></script>'),
-    '5.2 TrustBox bootstrap script matches exact required snippet'
+    !indexHtml.includes('trustpilot') && !indexHtml.includes('TrustBox'),
+    '5.1 index.html contains zero Trustpilot / TrustBox bootstrap scripts'
   );
 
   const footerSource = fs.readFileSync(path.resolve('src/components/layout/Footer.tsx'), 'utf-8');
   assert(
-    footerSource.includes('loadFromElement(trustBoxRef.current, true)'),
-    '5.3 Footer triggers Trustpilot.loadFromElement on mount/route navigation'
+    !footerSource.includes('trustpilot') &&
+      !footerSource.includes('Trustpilot') &&
+      !footerSource.includes('trustBoxRef') &&
+      !footerSource.includes('showTrustpilotWidget'),
+    '5.2 Footer.tsx contains zero Trustpilot refs, timers, or widget markup'
   );
 
   const renderFooterForRoute = (route: string): string => {
@@ -539,31 +539,13 @@ async function runPhase12Tests() {
     );
   };
 
-  const homeFooterHtml = renderFooterForRoute('/');
-  assert(
-    homeFooterHtml.includes('trustpilot-widget') &&
-      homeFooterHtml.includes('data-locale="en-US"') &&
-      homeFooterHtml.includes('data-template-id="56278e9abfbbba0bdcd568bc"') &&
-      homeFooterHtml.includes('data-businessunit-id="6afc185ca7dbf30ad4d2897c"') &&
-      homeFooterHtml.includes('data-style-height="52px"') &&
-      homeFooterHtml.includes('data-style-width="100%"') &&
-      homeFooterHtml.includes('href="https://www.trustpilot.com/review/chatlustora.com"') &&
-      homeFooterHtml.includes('target="_blank"') &&
-      homeFooterHtml.includes('rel="noopener"'),
-    '5.4 Public route Footer renders exact TrustBox widget attributes and link'
-  );
-
-  const adminFooterHtml = renderFooterForRoute('/admin/dashboard');
-  assert(!adminFooterHtml.includes('trustpilot-widget'), '5.5 /admin/dashboard strictly excludes TrustBox widget');
-
-  const modFooterHtml = renderFooterForRoute('/moderator/dashboard');
-  assert(!modFooterHtml.includes('trustpilot-widget'), '5.6 /moderator/dashboard strictly excludes TrustBox widget');
-
-  const chatFooterHtml = renderFooterForRoute('/chat/bangla');
-  assert(!chatFooterHtml.includes('trustpilot-widget'), '5.7 Live chat routes strictly exclude TrustBox widget');
-
-  const dmFooterHtml = renderFooterForRoute('/messages');
-  assert(!dmFooterHtml.includes('trustpilot-widget'), '5.8 Private messages route strictly excludes TrustBox widget');
+  for (const [idx, route] of ['/', '/rooms', '/admin/dashboard', '/moderator/dashboard', '/chat/bangla', '/messages'].entries()) {
+    const renderedFooter = renderFooterForRoute(route);
+    assert(
+      !renderedFooter.includes('trustpilot-widget') && !renderedFooter.includes('trustpilot.com'),
+      `5.${idx + 3} Route ${route} Footer excludes TrustBox widget and Trustpilot links`
+    );
+  }
 
   // -------------------------------------------------------------------------
   // 6. Security Remediation: Same-Origin Auth Boundary & Token Leakage Prevention

@@ -12,6 +12,8 @@
  * 7. Media Metadata Validation Endpoint
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import worker from '../src/worker';
 import { databaseService } from '../src/services/databaseService';
 import { EXTERNAL_PROVIDERS_DOCUMENTATION } from '../src/server/mediaAndEmbedManager';
@@ -2218,6 +2220,20 @@ async function runSuite() {
       );
       assert(apiOptionsRes.status === 204, 'K2: Trusted /api/* OPTIONS preflight succeeds with 204');
       assert(apiOptionsRes.headers.get('Access-Control-Allow-Origin') === 'https://chatlustora.com', 'K2.1: API preflight emits exact allowed origin');
+    }
+
+    // -------------------------------------------------------------------------
+    // CATEGORY L: Wrangler R2 Binding Verification
+    // -------------------------------------------------------------------------
+    console.log('\n--- Category L: Wrangler R2 Bucket Binding Verification ---');
+    {
+      const wranglerToml = fs.readFileSync(path.resolve('wrangler.toml'), 'utf-8');
+      assert(
+        wranglerToml.includes('[[r2_buckets]]') &&
+          /binding\s*=\s*["']CHAT_MEDIA["']/.test(wranglerToml) &&
+          /bucket_name\s*=\s*["']chatlustora-media["']/.test(wranglerToml),
+        'L1: wrangler.toml explicitly binds CHAT_MEDIA R2 binding to chatlustora-media bucket'
+      );
     }
 
     console.log('\n================================================================');

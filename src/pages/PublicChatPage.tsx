@@ -31,7 +31,6 @@ import { Button } from '../components/ui/Button';
 import { SEOHead } from '../components/common/SEOHead';
 import { PrivateChatPane } from '../components/chat/PrivateChatPane';
 import { AdPlacementBox } from '../components/ads/AdPlacementBox';
-import { ADSTERRA_CONFIG } from '../config/adsConfig';
 import {
   messagingService,
   RealtimePresenceMember,
@@ -1225,7 +1224,6 @@ export const PublicChatPage: React.FC = () => {
       <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 my-2 shrink-0 flex justify-center">
         <AdPlacementBox
           slotId="public-chatroom-top"
-          adUnitId={ADSTERRA_CONFIG.banner728x90}
           position="top"
         />
       </div>
@@ -1434,7 +1432,6 @@ export const PublicChatPage: React.FC = () => {
             >
               <AdPlacementBox
                 slotId="public-chatroom-status-above"
-                adUnitId={ADSTERRA_CONFIG.banner320x50}
                 position="sidebar-horizontal"
                 className="px-0 shrink-0"
               />
@@ -1449,19 +1446,6 @@ export const PublicChatPage: React.FC = () => {
                 </span>
               </div>
               <span className="text-slate-500 hidden md:inline shrink-0">Asia/Dhaka</span>
-            </div>
-
-            {/* Placement — Status-strip below advertisement */}
-            <div
-              aria-label="Sponsored advertisement"
-              className="px-0 sm:px-3 py-1 bg-[#0a0f1d] border-b border-slate-800/80 shrink-0 flex justify-center overflow-hidden"
-            >
-              <AdPlacementBox
-                slotId="public-chatroom-status-below"
-                adUnitId={ADSTERRA_CONFIG.banner320x50}
-                position="sidebar-horizontal"
-                className="px-0 shrink-0"
-              />
             </div>
 
             {/* Load Older Messages Banner */}
@@ -1488,7 +1472,27 @@ export const PublicChatPage: React.FC = () => {
                 const totalChatMsgs = messages.filter((m) => !m.isSystem).length;
                 let chatMsgCount = 0;
 
-                return messages.map((msg, idx) => {
+                const inlineAdBlock = (
+                  <div
+                    key="public-chatroom-message-inline-container"
+                    data-testid="public-chatroom-message-inline-container"
+                    aria-label="Sponsored advertisement"
+                    className="my-2 -mx-2 sm:mx-0 py-1.5 px-0 sm:rounded-xl border-y sm:border border-slate-800/70 bg-[#080d19]/90 flex flex-col items-center gap-1 select-none overflow-hidden"
+                  >
+                    <span className="text-[9px] uppercase tracking-widest text-slate-500 font-mono leading-none">
+                      Sponsored
+                    </span>
+                    <AdPlacementBox
+                      slotId="public-chatroom-message-inline"
+                      position="sidebar-horizontal"
+                      className="px-0 shrink-0"
+                    />
+                  </div>
+                );
+
+                return (
+                  <>
+                    {messages.map((msg, idx) => {
                   const isMe = msg.senderId === user.id;
                   const isMentioned =
                     user.nickname &&
@@ -1516,7 +1520,7 @@ export const PublicChatPage: React.FC = () => {
                   }
 
                   chatMsgCount++;
-                  const showMessageInlineAd = chatMsgCount === 5 && totalChatMsgs >= 6;
+                  const showMessageInlineAdAfterFifth = totalChatMsgs >= 5 && chatMsgCount === 5;
 
                   // Normal message row with alternating subtle background
                   return (
@@ -1630,27 +1634,13 @@ export const PublicChatPage: React.FC = () => {
                           )}
                         </div>
                       </div>
-                      {showMessageInlineAd && (
-                        <div
-                          key={`${msg.id}-inline-ad`}
-                          data-testid="public-chatroom-message-inline-container"
-                          aria-label="Sponsored advertisement"
-                          className="my-2 -mx-2 sm:mx-0 py-1.5 px-0 sm:rounded-xl border-y sm:border border-slate-800/70 bg-[#080d19]/90 flex flex-col items-center gap-1 select-none overflow-hidden"
-                        >
-                          <span className="text-[9px] uppercase tracking-widest text-slate-500 font-mono leading-none">
-                            Sponsored
-                          </span>
-                          <AdPlacementBox
-                            slotId="public-chatroom-message-inline"
-                            adUnitId={ADSTERRA_CONFIG.banner320x50}
-                            position="sidebar-horizontal"
-                            className="px-0 shrink-0"
-                          />
-                        </div>
-                      )}
+                      {showMessageInlineAdAfterFifth && inlineAdBlock}
                     </React.Fragment>
                   );
-                });
+                    })}
+                    {totalChatMsgs < 5 && inlineAdBlock}
+                  </>
+                );
               })()}
               <div ref={messagesEndRef} />
             </div>
@@ -2128,7 +2118,6 @@ export const PublicChatPage: React.FC = () => {
           {/* Ad 4 — External Participant-Side Ad (50px) - OUTSIDE and BELOW the participant panel's border */}
           <AdPlacementBox
             slotId="participant-box-horizontal"
-            adUnitId={ADSTERRA_CONFIG.banner320x50}
             position="sidebar-horizontal"
             className="px-0 shrink-0"
           />
@@ -2160,7 +2149,6 @@ export const PublicChatPage: React.FC = () => {
       <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 mb-4 shrink-0 flex justify-center">
         <AdPlacementBox
           slotId="public-chatroom-bottom"
-          adUnitId={ADSTERRA_CONFIG.banner728x90}
           position="bottom"
         />
       </div>
