@@ -1,10 +1,16 @@
 -- ============================================================================
 -- Migration: Repair & Expand public.media_uploads Schema for All Chat Media
+-- File: supabase/migrations/20261122000001_repair_media_uploads_schema.sql
 -- Forward-only, idempotent migration:
 --   1. Ensures public.media_uploads exists with all expected columns
 --   2. Repairs/updates CHECK constraints on file_size_bytes (1..10MB) & mime_type
 --      to allow Images, Video (MP4/WebM/MOV), Audio, and Documents (PDF/TXT/CSV/DOCX/XLSX/PPTX)
---   3. Preserves Row Level Security & safe read policy
+--   3. Hardens table security:
+--      - Enables Row Level Security (RLS)
+--      - Drops legacy public-facing policy ("Users can view valid media")
+--      - Creates no replacement public SELECT policy
+--      - Revokes all privileges from PUBLIC, anon, and authenticated
+--      - Grants only SELECT and INSERT to service_role (Cloudflare Worker backend)
 --   4. Prompts PostgREST to reload its schema cache
 -- ============================================================================
 
@@ -86,22 +92,26 @@ CREATE INDEX IF NOT EXISTS idx_media_uploads_uploader
 CREATE INDEX IF NOT EXISTS idx_media_uploads_created_at
     ON public.media_uploads(created_at DESC);
 
+-- ----------------------------------------------------------------------------
+-- Row Level Security & Explicit Privilege Hardening
+-- ----------------------------------------------------------------------------
+-- 1. Ensure Row Level Security is enabled on public.media_uploads
 ALTER TABLE public.media_uploads ENABLE ROW LEVEL SECURITY;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_policies
-        WHERE schemaname = 'public'
-          AND tablename = 'media_uploads'
-          AND policyname = 'Users can view valid media'
-    ) THEN
-        CREATE POLICY "Users can view valid media" ON public.media_uploads
-            FOR SELECT USING (is_flagged = FALSE);
-    END IF;
-END
-$$;
+-- 2. Drop the legacy public-facing policy if previously applied
+--    Browser clients MUST NOT have direct access to media metadata.
+DROP POLICY IF EXISTS "Users can view valid media" ON public.media_uploads;
 
--- Instruct PostgREST to reload schema cache immediately after applying migration
+-- 3. Revoke all table privileges from PUBLIC, anon, and authenticated roles
+REVOKE ALL PRIVILEGES ON TABLE public.media_uploads FROM PUBLIC, anon, authenticated;
+
+-- 4. Grant only SELECT and INSERT privileges exclusively to service_role
+--    Used by the Cloudflare Worker server-side backend for upload insertion,
+--    metadata retrieval verification, and moderation-status lookup.
+GRANT SELECT, INSERT ON TABLE public.media_uploads TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- PostgREST Schema Cache Reload
+-- ----------------------------------------------------------------------------
+-- Instruct PostgREST to reload its schema cache immediately after applying migration
 NOTIFY pgrst, 'reload schema';
