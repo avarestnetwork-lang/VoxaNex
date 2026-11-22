@@ -2312,6 +2312,28 @@ export const PublicChatPage: React.FC = () => {
         );
       })()}
 
+      {/* JuicyAds Advertisement Placement (Immediately below Explore Other Chatrooms) */}
+      <section
+        aria-label="JuicyAds advertisement"
+        data-testid="chatroom-juicyads-bottom-section"
+        className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 shrink-0"
+      >
+        <div
+          data-testid="chatroom-juicyads-container"
+          className="bg-[#0c1324] border border-slate-800 rounded-2xl p-3 sm:p-4 shadow-md flex flex-col items-center gap-1.5"
+        >
+          <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
+            Advertisement
+          </span>
+          <AdPlacementBox
+            slotId="chatroom-juicyads-bottom"
+            provider="juicyads"
+            position="bottom"
+            className="!my-0"
+          />
+        </div>
+      </section>
+
       {/* Contextual User Action Menu */}
       {userActionMenu && (
         <UserActionMenu
