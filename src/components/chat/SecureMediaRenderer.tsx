@@ -1,15 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getAuthToken } from '../../services/messagingService';
 import {
+  ChatMediaType,
   classifyMediaUrl,
+  extractSafeFileExtension,
   MediaUrlClassification,
   normalizeMimeType,
+  sanitizeDisplayFileName,
 } from '../../lib/mediaValidation';
-import { Loader2, AlertCircle, Music, RefreshCw } from 'lucide-react';
+import {
+  Loader2,
+  AlertCircle,
+  Music,
+  Film,
+  FileText,
+  Download,
+  RefreshCw,
+} from 'lucide-react';
+
+export type RenderableMediaKind = 'image' | 'audio' | 'video' | 'document';
 
 interface SecureMediaRendererProps {
   mediaUrl: string;
-  mediaType?: 'gif' | 'image' | 'audio';
+  mediaType?: ChatMediaType;
   alt?: string;
   className?: string;
   isGuest?: boolean;
@@ -17,13 +30,83 @@ interface SecureMediaRendererProps {
 }
 
 export type SecureMediaLoadResult =
-  | { kind: 'external'; src: string; detectedType: 'image' | 'audio' }
-  | { kind: 'blob'; blobUrl: string; detectedType: 'image' | 'audio' }
+  | {
+      kind: 'external';
+      src: string;
+      detectedType: RenderableMediaKind;
+      fileName?: string;
+      mimeType?: string;
+    }
+  | {
+      kind: 'blob';
+      blobUrl: string;
+      detectedType: RenderableMediaKind;
+      fileName?: string;
+      mimeType?: string;
+    }
   | { kind: 'error'; error: string; retryable: boolean };
+
+const ALLOWED_VIDEO_MIMES = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
+const ALLOWED_DOCUMENT_MIMES = new Set([
+  'application/pdf',
+  'text/plain',
+  'text/csv',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
+
+const DOCUMENT_MIME_TO_LABEL: Record<string, { badge: string; defaultExt: string }> = {
+  'application/pdf': { badge: 'PDF', defaultExt: 'pdf' },
+  'text/plain': { badge: 'TXT', defaultExt: 'txt' },
+  'text/csv': { badge: 'CSV', defaultExt: 'csv' },
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {
+    badge: 'DOCX',
+    defaultExt: 'docx',
+  },
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
+    badge: 'XLSX',
+    defaultExt: 'xlsx',
+  },
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': {
+    badge: 'PPTX',
+    defaultExt: 'pptx',
+  },
+};
+
+function normalizeInitialRenderKind(mediaType?: ChatMediaType): RenderableMediaKind {
+  if (mediaType === 'audio') return 'audio';
+  if (mediaType === 'video') return 'video';
+  if (mediaType === 'document') return 'document';
+  return 'image';
+}
+
+export function extractFileNameFromContentDisposition(
+  headerValue?: string | null
+): string | undefined {
+  if (!headerValue || typeof headerValue !== 'string') return undefined;
+  const starMatch = headerValue.match(/filename\*\s*=\s*(?:utf-8''|)([^;]+)/i);
+  if (starMatch && starMatch[1]) {
+    try {
+      const decoded = decodeURIComponent(starMatch[1].trim().replace(/^["']|["']$/g, ''));
+      const clean = sanitizeDisplayFileName(decoded);
+      if (clean) return clean;
+    } catch {
+      // fallback below
+    }
+  }
+  const plainMatch = headerValue.match(/filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i);
+  const raw = plainMatch?.[1] || plainMatch?.[2];
+  if (raw) {
+    const clean = sanitizeDisplayFileName(raw.trim().replace(/^["']|["']$/g, ''));
+    if (clean) return clean;
+  }
+  return undefined;
+}
 
 export async function loadSecureMediaAsset(params: {
   mediaUrl: string;
-  mediaType?: 'gif' | 'image' | 'audio';
+  mediaType?: ChatMediaType;
   currentOrigin?: string | null;
   isGuest?: boolean;
   userId?: string;
@@ -45,7 +128,7 @@ export async function loadSecureMediaAsset(params: {
     return {
       kind: 'external',
       src: classified.resolvedUrl,
-      detectedType: mediaType === 'audio' ? 'audio' : 'image',
+      detectedType: normalizeInitialRenderKind(mediaType),
     };
   }
 
@@ -123,11 +206,25 @@ export async function loadSecureMediaAsset(params: {
   const normalizedCt = normalizeMimeType(rawContentType);
   const isAllowedImage =
     normalizedCt.startsWith('image/') && normalizedCt !== 'image/svg+xml';
+  const isAllowedVideo = ALLOWED_VIDEO_MIMES.has(normalizedCt);
   const isAllowedAudio = normalizedCt.startsWith('audio/');
+  const isAllowedDocument = ALLOWED_DOCUMENT_MIMES.has(normalizedCt);
 
-  if (!isAllowedImage && !isAllowedAudio) {
+  if (!isAllowedImage && !isAllowedVideo && !isAllowedAudio && !isAllowedDocument) {
     return { kind: 'error', error: 'Blocked unsupported or unsafe media content type.', retryable: false };
   }
+
+  let detectedType: RenderableMediaKind = 'image';
+  if (isAllowedVideo || (normalizedCt === 'audio/webm' && mediaType === 'video')) {
+    detectedType = 'video';
+  } else if (isAllowedAudio) {
+    detectedType = 'audio';
+  } else if (isAllowedDocument) {
+    detectedType = 'document';
+  }
+
+  const contentDisposition = res.headers?.get?.('content-disposition');
+  const fileName = extractFileNameFromContentDisposition(contentDisposition);
 
   const blob = await res.blob();
   const createdUrl = URL.createObjectURL(blob);
@@ -135,7 +232,9 @@ export async function loadSecureMediaAsset(params: {
   return {
     kind: 'blob',
     blobUrl: createdUrl,
-    detectedType: isAllowedAudio || mediaType === 'audio' ? 'audio' : 'image',
+    detectedType,
+    fileName,
+    mimeType: normalizedCt,
   };
 }
 
@@ -152,9 +251,11 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
   const [renderSrc, setRenderSrc] = useState<string | null>(() =>
     initialClassification.status === 'external' ? initialClassification.resolvedUrl : null
   );
-  const [detectedType, setDetectedType] = useState<'image' | 'audio'>(
-    mediaType === 'audio' ? 'audio' : 'image'
+  const [detectedType, setDetectedType] = useState<RenderableMediaKind>(
+    normalizeInitialRenderKind(mediaType)
   );
+  const [resolvedFileName, setResolvedFileName] = useState<string | undefined>(undefined);
+  const [resolvedMimeType, setResolvedMimeType] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState<boolean>(
     initialClassification.status === 'internal'
   );
@@ -185,6 +286,8 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
     if (classification.status === 'rejected') {
       revokeActiveBlob();
       setRenderSrc(null);
+      setResolvedFileName(undefined);
+      setResolvedMimeType(undefined);
       setError('Blocked unsafe or invalid media URL.');
       setLoading(false);
       return;
@@ -194,7 +297,9 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
     if (classification.status === 'external') {
       revokeActiveBlob();
       setRenderSrc(classification.resolvedUrl);
-      setDetectedType(mediaType === 'audio' ? 'audio' : 'image');
+      setDetectedType(normalizeInitialRenderKind(mediaType));
+      setResolvedFileName(undefined);
+      setResolvedMimeType(undefined);
       setLoading(false);
       setError(null);
       return;
@@ -233,6 +338,8 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
           activeBlobUrlRef.current = result.blobUrl;
           setRenderSrc(result.blobUrl);
           setDetectedType(result.detectedType);
+          setResolvedFileName(result.fileName);
+          setResolvedMimeType(result.mimeType);
           setLoading(false);
           return;
         }
@@ -240,6 +347,8 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
         if (result.kind === 'external') {
           setRenderSrc(result.src);
           setDetectedType(result.detectedType);
+          setResolvedFileName(result.fileName);
+          setResolvedMimeType(result.mimeType);
           setLoading(false);
           return;
         }
@@ -302,7 +411,7 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
       <div className="p-2.5 bg-[#0b101e] border border-slate-700/60 rounded-xl shadow-md max-w-sm flex flex-col gap-1.5">
         <div className="flex items-center gap-2 text-[11px] text-cyan-400 font-medium">
           <Music className="w-3.5 h-3.5 shrink-0" />
-          <span className="truncate">{alt || 'Audio Clip'}</span>
+          <span className="truncate">{resolvedFileName || alt || 'Audio Clip'}</span>
         </div>
         <audio
           controls
@@ -312,6 +421,72 @@ const SecureMediaRendererInner: React.FC<SecureMediaRendererProps> = ({
         >
           Your browser does not support the audio element.
         </audio>
+      </div>
+    );
+  }
+
+  if (detectedType === 'video') {
+    return (
+      <div className="p-2 bg-[#0b101e] border border-slate-700/60 rounded-xl shadow-md max-w-md flex flex-col gap-1.5">
+        <div className="flex items-center gap-2 text-[11px] text-violet-300 font-medium px-1">
+          <Film className="w-3.5 h-3.5 shrink-0 text-violet-400" />
+          <span className="truncate">{resolvedFileName || alt || 'Video Clip'}</span>
+        </div>
+        <video
+          controls
+          playsInline
+          src={renderSrc}
+          preload="metadata"
+          className={className || 'w-full max-h-64 rounded-lg bg-black/60'}
+          onError={() => setError('Video failed to play in this browser.')}
+        >
+          Your browser does not support video playback.
+        </video>
+      </div>
+    );
+  }
+
+  if (detectedType === 'document') {
+    const docMeta = resolvedMimeType ? DOCUMENT_MIME_TO_LABEL[resolvedMimeType] : undefined;
+    const extBadge =
+      (resolvedFileName ? extractSafeFileExtension(resolvedFileName) : '').toUpperCase() ||
+      docMeta?.badge ||
+      'DOC';
+    const downloadName =
+      resolvedFileName ||
+      `attachment.${docMeta?.defaultExt || extBadge.toLowerCase()}`;
+    const displayName = resolvedFileName || (alt !== 'Shared attachment' && alt !== 'Shared media' ? alt : downloadName);
+
+    return (
+      <div
+        data-testid="secure-document-card"
+        className="p-3 bg-[#0b101e] border border-slate-700/70 rounded-xl shadow-md max-w-sm flex items-center justify-between gap-3"
+      >
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
+            <FileText className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-semibold text-slate-100 truncate">
+              {displayName}
+            </div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                {extBadge}
+              </span>
+              <span className="text-[10px] text-slate-400">Document</span>
+            </div>
+          </div>
+        </div>
+        <a
+          href={renderSrc}
+          download={downloadName}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/35 border border-cyan-500/40 text-[11px] font-semibold text-cyan-300 hover:text-white transition-colors shrink-0"
+          title={`Download ${downloadName}`}
+        >
+          <Download className="w-3.5 h-3.5" />
+          <span>Download</span>
+        </a>
       </div>
     );
   }

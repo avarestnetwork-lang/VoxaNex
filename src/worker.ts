@@ -3,6 +3,7 @@ import { getSupabaseClientFromEnv } from './lib/supabaseClient';
 import { ROOMS_CONFIG } from './config/voxanexConfig';
 import bcrypt from 'bcryptjs';
 import {
+  ChatMediaType,
   validateMediaBinary,
   validateMediaFileMetadata,
   ALLOWED_MEDIA_SPECS,
@@ -29,7 +30,7 @@ interface HubMessage {
   content: string;
   rawContent?: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image' | 'audio';
+  mediaType?: ChatMediaType;
   linkPreview?: {
     url: string;
     title?: string;
@@ -660,10 +661,15 @@ function checkAndConsumeUploadRateLimit(rateKey: string): { allowed: boolean; re
   return { allowed: true };
 }
 
-function buildSafeContentDisposition(rawFileName: string, fallbackExt: string): string {
+function buildSafeContentDisposition(
+  rawFileName: string,
+  fallbackExt: string,
+  category?: 'image' | 'audio' | 'video' | 'document'
+): string {
   const cleaned = sanitizeDisplayFileName(rawFileName || `media.${fallbackExt}`)
     .replace(/["\\;\r\n]/g, '_');
-  return `inline; filename="${cleaned}"`;
+  const dispositionType = category === 'document' ? 'attachment' : 'inline';
+  return `${dispositionType}; filename="${cleaned}"`;
 }
 
 // Active SSE client streams per room & conversation (using ReadableStreamDefaultController for synchronous non-promise enqueuing)
@@ -764,6 +770,7 @@ function isWorkerNativeEndpoint(pathname: string): boolean {
     pathname === '/api/admin/logout' ||
     pathname === '/api/media/upload' ||
     pathname === '/api/media/upload/validate' ||
+    pathname === '/api/media/schema-status' ||
     pathname === '/api/chat/conversations'
   ) {
     return true;
@@ -1239,6 +1246,7 @@ interface MediaDbErrorClassification {
   status: 400 | 409 | 502 | 503;
   code: string;
   pgCode?: string;
+  diagnosticReason: string;
   userMessage: string;
 }
 
@@ -1254,6 +1262,25 @@ function classifyMediaDbInsertError(httpStatus: number, rawBodyText: string): Me
   const pgCode = typeof parsed?.code === 'string' ? parsed.code.trim() : '';
   const msgLower = String(parsed?.message || rawBodyText || '').toLowerCase();
 
+  // 1. Invalid / expired / malformed Supabase credentials
+  if (
+    msgLower.includes('invalid api key') ||
+    msgLower.includes('no api key found') ||
+    msgLower.includes('jwt expired') ||
+    msgLower.includes('invalid jwt') ||
+    msgLower.includes('bad_jwt') ||
+    (httpStatus === 401 && !msgLower.includes('row-level security') && !msgLower.includes('permission'))
+  ) {
+    return {
+      status: 503,
+      code: 'MEDIA_DB_CREDENTIALS_INVALID',
+      pgCode: pgCode || undefined,
+      diagnosticReason: 'supabase_credentials_invalid_or_expired',
+      userMessage: 'Media metadata service credentials are invalid or expired; uploaded object was cleaned up.',
+    };
+  }
+
+  // 2. Database authorization / RLS denial
   if (
     httpStatus === 401 ||
     httpStatus === 403 ||
@@ -1265,10 +1292,27 @@ function classifyMediaDbInsertError(httpStatus: number, rawBodyText: string): Me
       status: 503,
       code: 'MEDIA_DB_PERMISSION_DENIED',
       pgCode: pgCode || undefined,
+      diagnosticReason: 'rls_or_role_permission_denied',
       userMessage: 'Failed to persist media metadata due to database authorization policy; uploaded object was cleaned up.',
     };
   }
 
+  // 3. Missing column / schema drift (distinguished clearly from missing table)
+  if (
+    pgCode === 'PGRST204' ||
+    pgCode === '42703' ||
+    (msgLower.includes('could not find') && msgLower.includes('column'))
+  ) {
+    return {
+      status: 503,
+      code: 'MEDIA_DB_COLUMN_MISSING',
+      pgCode: pgCode || undefined,
+      diagnosticReason: 'media_uploads_column_missing_or_schema_cache_stale',
+      userMessage: 'Media metadata storage schema column is missing or outdated; uploaded object was cleaned up.',
+    };
+  }
+
+  // 4. Missing table or unrefreshed PostgREST schema cache (preserves exact code/message on 404/PGRST205/42P01)
   if (
     httpStatus === 404 ||
     pgCode === 'PGRST205' ||
@@ -1280,25 +1324,41 @@ function classifyMediaDbInsertError(httpStatus: number, rawBodyText: string): Me
       status: 503,
       code: 'MEDIA_DB_SCHEMA_MISSING',
       pgCode: pgCode || undefined,
+      diagnosticReason: msgLower.includes('schema cache')
+        ? 'postgrest_schema_cache_missing_media_uploads'
+        : 'media_uploads_table_missing_or_404',
       userMessage: 'Media metadata storage schema is unavailable or missing migration; uploaded object was cleaned up.',
     };
   }
 
+  // 5. Duplicate / conflict
   if (httpStatus === 409 || pgCode === '23505' || msgLower.includes('duplicate key')) {
     return {
       status: 409,
       code: 'MEDIA_DB_CONFLICT',
       pgCode: pgCode || undefined,
+      diagnosticReason: 'duplicate_media_id',
       userMessage: 'Media metadata record conflict occurred; uploaded object was cleaned up.',
     };
   }
 
+  // 6. Invalid input syntax / type mismatch (e.g. non-integer size, invalid text)
+  if (pgCode === '22P02' || msgLower.includes('invalid input syntax')) {
+    return {
+      status: 400,
+      code: 'MEDIA_DB_INVALID_TYPE',
+      pgCode: pgCode || undefined,
+      diagnosticReason: 'postgres_invalid_input_syntax',
+      userMessage: 'Media metadata payload contained an invalid column data type; uploaded object was cleaned up.',
+    };
+  }
+
+  // 7. Check constraint / NOT NULL violation (e.g. legacy mime_type or file_size_bytes constraint)
   if (
     httpStatus === 400 ||
     httpStatus === 422 ||
     pgCode === '23514' ||
     pgCode === '23502' ||
-    pgCode === '22P02' ||
     msgLower.includes('check constraint') ||
     msgLower.includes('violates')
   ) {
@@ -1306,6 +1366,11 @@ function classifyMediaDbInsertError(httpStatus: number, rawBodyText: string): Me
       status: 400,
       code: 'MEDIA_DB_CONSTRAINT_FAILED',
       pgCode: pgCode || undefined,
+      diagnosticReason: msgLower.includes('mime_type')
+        ? 'mime_type_check_constraint_outdated_or_rejected'
+        : msgLower.includes('file_size')
+        ? 'file_size_check_constraint_rejected'
+        : 'check_or_not_null_constraint_failed',
       userMessage: 'Media metadata failed database schema validation; uploaded object was cleaned up.',
     };
   }
@@ -1314,8 +1379,96 @@ function classifyMediaDbInsertError(httpStatus: number, rawBodyText: string): Me
     status: 502,
     code: 'MEDIA_DB_UPSTREAM_FAILURE',
     pgCode: pgCode || undefined,
+    diagnosticReason: 'supabase_upstream_error',
     userMessage: 'Failed to persist media metadata; uploaded object was cleaned up.',
   };
+}
+
+export interface MediaSchemaStatusResult {
+  schemaReady: boolean;
+  statusCode: 200 | 400 | 409 | 502 | 503;
+  code: string;
+  pgCode?: string;
+  diagnosticReason: string;
+  checkedColumns: string[];
+}
+
+export async function verifyMediaMetadataSchema(
+  baseSupabaseUrl: string,
+  supabaseServiceKey: string
+): Promise<MediaSchemaStatusResult> {
+  const expectedColumns = [
+    'id',
+    'uploader_id',
+    'file_name',
+    'file_size_bytes',
+    'mime_type',
+    'media_url',
+    'is_flagged',
+    'created_at',
+  ];
+
+  if (!baseSupabaseUrl || !supabaseServiceKey) {
+    return {
+      schemaReady: false,
+      statusCode: 503,
+      code: 'MEDIA_DB_BINDINGS_MISSING',
+      diagnosticReason: 'missing_supabase_worker_bindings',
+      checkedColumns: expectedColumns,
+    };
+  }
+
+  const serviceJwtRole = inspectJwtRoleSafe(supabaseServiceKey);
+  if (serviceJwtRole === 'anon' || serviceJwtRole === 'authenticated') {
+    return {
+      schemaReady: false,
+      statusCode: 503,
+      code: 'MEDIA_DB_ROLE_MISCONFIGURED',
+      diagnosticReason: `service_key_has_${serviceJwtRole}_role`,
+      checkedColumns: expectedColumns,
+    };
+  }
+
+  try {
+    const probeUrl = `${baseSupabaseUrl}/rest/v1/media_uploads?select=${expectedColumns.join(',')}&limit=0`;
+    const probeRes = await fetch(probeUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'apikey': supabaseServiceKey,
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+      },
+    });
+
+    if (probeRes.ok) {
+      return {
+        schemaReady: true,
+        statusCode: 200,
+        code: 'MEDIA_DB_SCHEMA_READY',
+        diagnosticReason: 'media_uploads_table_and_columns_verified',
+        checkedColumns: expectedColumns,
+      };
+    }
+
+    const bodyText = await probeRes.text().catch(() => '');
+    const classified = classifyMediaDbInsertError(probeRes.status, bodyText);
+    return {
+      schemaReady: false,
+      statusCode: classified.status,
+      code: classified.code,
+      pgCode: classified.pgCode,
+      diagnosticReason: classified.diagnosticReason,
+      checkedColumns: expectedColumns,
+    };
+  } catch {
+    return {
+      schemaReady: false,
+      statusCode: 503,
+      code: 'MEDIA_DB_NETWORK_EXCEPTION',
+      diagnosticReason: 'supabase_schema_probe_network_error',
+      checkedColumns: expectedColumns,
+    };
+  }
 }
 
 async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: any): Promise<Response> {
@@ -1498,6 +1651,41 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
     // -------------------------------------------------------------------------
     // R2 MEDIA UPLOAD, VALIDATION & SECURE RETRIEVAL ENDPOINTS (PHASE 1.1 REMEDIATION)
     // -------------------------------------------------------------------------
+
+    // GET /api/media/schema-status (Read-only authenticated schema verification & diagnostics)
+    if (url.pathname === '/api/media/schema-status' && request.method === 'GET') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) {
+        return authResult.errorResponse;
+      }
+
+      if (!env?.CHAT_MEDIA) {
+        return jsonResponse({
+          success: false,
+          schemaReady: false,
+          r2Bound: false,
+          code: 'MEDIA_R2_BINDING_MISSING',
+          diagnosticReason: 'missing_r2_binding',
+        }, 503);
+      }
+
+      const schemaCheck = await verifyMediaMetadataSchema(baseSupabaseUrl, supabaseServiceKey);
+      return jsonResponse({
+        success: schemaCheck.schemaReady,
+        schemaReady: schemaCheck.schemaReady,
+        r2Bound: true,
+        code: schemaCheck.code,
+        pgCode: schemaCheck.pgCode || null,
+        diagnosticReason: schemaCheck.diagnosticReason,
+        checkedColumns: schemaCheck.checkedColumns,
+      }, schemaCheck.schemaReady ? 200 : schemaCheck.statusCode);
+    }
 
     // POST /api/media/upload/validate
     if (url.pathname === '/api/media/upload/validate' && request.method === 'POST') {
@@ -1735,7 +1923,8 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
         const sanitizedFileName = (binValidation.sanitizedOriginalName || `media.${binValidation.extension}`)
           .trim()
           .slice(0, 255) || `media.${binValidation.extension}`;
-        if (!Number.isInteger(fileBytes.byteLength) || fileBytes.byteLength <= 0 || fileBytes.byteLength > 10485760) {
+        const maxAllowedFileBytes = Math.min(binValidation.maxSizeBytes || 10485760, 10485760);
+        if (!Number.isInteger(fileBytes.byteLength) || fileBytes.byteLength <= 0 || fileBytes.byteLength > maxAllowedFileBytes) {
           return jsonResponse({
             success: false,
             error: 'Invalid media payload size for metadata persistence.',
@@ -1758,7 +1947,11 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
           : `med_${crypto.randomUUID()}`;
         const objectKey = `media/objects/${uploadId}`;
         const sanitizedUrl = `/api/media/${uploadId}`;
-        const contentDisposition = buildSafeContentDisposition(sanitizedFileName, binValidation.extension);
+        const contentDisposition = buildSafeContentDisposition(
+          sanitizedFileName,
+          binValidation.extension,
+          binValidation.category
+        );
 
         // Idempotent replay pre-check: if caller retries with same X-Idempotency-Key and record + R2 object already exist cleanly, return it without duplicate insert
         if (validIdempotencyKey && baseSupabaseUrl && supabaseServiceKey) {
@@ -1859,6 +2052,7 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
           let failureClassification: MediaDbErrorClassification = {
             status: 502,
             code: 'MEDIA_DB_UPSTREAM_FAILURE',
+            diagnosticReason: 'unknown_upstream_failure',
             userMessage: 'Failed to persist media metadata; uploaded object was cleaned up.',
           };
 
@@ -1920,6 +2114,7 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
                   failureClassification = {
                     status: 502,
                     code: 'MEDIA_DB_INVALID_RESPONSE',
+                    diagnosticReason: 'postgrest_empty_insert_readback_not_found',
                     userMessage: 'Failed to confirm media metadata persistence; uploaded object was cleaned up.',
                   };
                   console.error('[Worker][media-upload] Unexpected Supabase insert response shape:', {
@@ -1967,6 +2162,7 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
                   httpStatus: dbRes.status,
                   code: failureClassification.code,
                   pgCode: failureClassification.pgCode || null,
+                  diagnosticReason: failureClassification.diagnosticReason,
                 });
               }
             }
@@ -1974,6 +2170,7 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
             failureClassification = {
               status: 502,
               code: 'MEDIA_DB_NETWORK_EXCEPTION',
+              diagnosticReason: 'supabase_insert_network_exception',
               userMessage: 'Failed to persist media metadata due to database connection error; uploaded object was cleaned up.',
             };
             console.error('[Worker][media-upload] Supabase media_uploads insert exception:', {
@@ -2010,6 +2207,8 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
               success: false,
               error: errorMsg,
               code: failureClassification.code,
+              pgCode: failureClassification.pgCode || undefined,
+              diagnosticReason: failureClassification.diagnosticReason,
               stage: 'db_insert',
               requestId,
               cleanupAttempted: !existingRowPreserved,
@@ -2211,13 +2410,15 @@ async function handleApiFetch(request: Request, url: URL, env: WorkerEnv, ctx: a
           typeof meta.originalFileName === 'string' && meta.originalFileName.trim()
             ? meta.originalFileName
             : `${cleanId}.${allowedSpec.allowedExts[0]}`,
-          allowedSpec.allowedExts[0]
+          allowedSpec.allowedExts[0],
+          allowedSpec.category
         );
 
         const headers = new Headers();
         headers.set('Content-Type', safeContentType);
         headers.set('Content-Disposition', safeDisposition);
         headers.set('X-Content-Type-Options', 'nosniff');
+        headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
 
         if (contextType === 'conversation' || isAdultContext) {
           headers.set('Cache-Control', 'private, no-store');

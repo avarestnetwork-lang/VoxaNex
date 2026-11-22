@@ -31,7 +31,7 @@ interface PrivateChatContextType {
   closeChat: (conversationId: string) => void;
   minimizeChat: (conversationId: string) => void;
   maximizeChat: (conversationId: string) => void;
-  sendMessage: (conversationId: string, content: string, media?: { url: string; type: 'gif' | 'image' | 'audio' }) => Promise<boolean>;
+  sendMessage: (conversationId: string, content: string, media?: { url: string; type: 'gif' | 'image' | 'audio' | 'video' | 'document' }) => Promise<boolean>;
   markAsRead: (conversationId: string) => void;
   totalUnreadCount: number;
   latestToast: { id: string; title: string; message: string; avatar: string; conversationId: string; partnerId: string } | null;
@@ -354,7 +354,7 @@ export const PrivateChatProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   // Rule 2 & 3: Sending a message must never automatically create a large private-chat tab,
   // and send-success callback must not change the window mode to maximized.
-  const sendMessage = useCallback(async (conversationId: string, content: string, media?: { url: string; type: 'gif' | 'image' | 'audio' }) => {
+  const sendMessage = useCallback(async (conversationId: string, content: string, media?: { url: string; type: 'gif' | 'image' | 'audio' | 'video' | 'document' }) => {
     const clean = content.trim();
     if ((!clean && !media) || !user.id) return false;
     trackConversation(conversationId);

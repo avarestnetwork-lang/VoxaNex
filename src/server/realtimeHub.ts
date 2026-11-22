@@ -25,7 +25,7 @@ export interface HubMessage {
   content: string;
   rawContent: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image' | 'audio';
+  mediaType?: 'gif' | 'image' | 'audio' | 'video' | 'document';
   linkPreview?: {
     url: string;
     title?: string;
@@ -253,7 +253,7 @@ export function postRoomMessage(params: {
   senderType: 'registered' | 'guest';
   rawContent?: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image' | 'audio';
+  mediaType?: 'gif' | 'image' | 'audio' | 'video' | 'document';
   linkPreview?: any;
   clientNonce?: string;
 }): { success: boolean; message?: HubMessage; error?: string } {
@@ -522,7 +522,7 @@ export async function postConversationMessage(params: {
   senderAvatar: string;
   rawContent?: string;
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image' | 'audio';
+  mediaType?: 'gif' | 'image' | 'audio' | 'video' | 'document';
   linkPreview?: any;
   clientNonce?: string;
 }): Promise<{ success: boolean; message?: HubMessage; error?: string }> {

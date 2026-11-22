@@ -21,10 +21,11 @@ import { SecureMediaRenderer } from '../components/chat/SecureMediaRenderer';
 import { ComposerAttachmentPreview } from '../components/chat/ComposerAttachmentPreview';
 import { useChatMediaAttachment } from '../hooks/useChatMediaAttachment';
 import {
+  ChatMediaType,
   IMAGE_ACCEPT_ATTRIBUTE,
-  AUDIO_ACCEPT_ATTRIBUTE,
+  ATTACHMENT_ACCEPT_ATTRIBUTE,
   SUPPORTED_IMAGE_FORMATS_TEXT,
-  SUPPORTED_AUDIO_FORMATS_TEXT,
+  SUPPORTED_ALL_FORMATS_TEXT,
 } from '../lib/mediaValidation';
 import { safetyService } from '../services/safetyService';
 import { Button } from '../components/ui/Button';
@@ -71,7 +72,7 @@ import {
 interface ExtendedChatMessage extends ChatMessage {
   status?: 'sending' | 'delivered' | 'failed';
   mediaUrl?: string;
-  mediaType?: 'gif' | 'image' | 'audio';
+  mediaType?: ChatMediaType;
   linkPreview?: LinkPreviewData;
   errorReason?: string;
   clientNonce?: string;
@@ -650,7 +651,7 @@ export const PublicChatPage: React.FC = () => {
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const audioInputRef = useRef<HTMLInputElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const isNearBottomRef = useRef(true);
 
   const {
@@ -1683,16 +1684,16 @@ export const PublicChatPage: React.FC = () => {
                 }}
               />
               <input
-                ref={audioInputRef}
+                ref={attachmentInputRef}
                 type="file"
-                accept={AUDIO_ACCEPT_ATTRIBUTE}
+                accept={ATTACHMENT_ACCEPT_ATTRIBUTE}
                 className="hidden"
-                data-testid="public-audio-input"
+                data-testid="public-attachment-input"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   e.target.value = '';
                   if (file) {
-                    selectFile(file, 'audio');
+                    selectFile(file, 'attachment');
                   }
                 }}
               />
@@ -1807,19 +1808,18 @@ export const PublicChatPage: React.FC = () => {
                     <ImageIcon className="w-4 h-4" />
                   </button>
 
-                  {/* 3. New Attachment (Audio upload) */}
+                  {/* 3. Unified Attachment Picker (Images, Video, Audio, Documents) */}
                   <button
                     type="button"
-                    disabled={isAttachmentBusy}
                     onClick={() => {
                       setShowEmojiPicker(false);
                       setShowImageMenu(false);
                       setShowGifPicker(false);
-                      audioInputRef.current?.click();
+                      attachmentInputRef.current?.click();
                     }}
-                    className="p-2 rounded-xl border border-slate-800 bg-[#101729] text-slate-400 hover:text-cyan-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={`Attach Audio (${SUPPORTED_AUDIO_FORMATS_TEXT})`}
-                    aria-label="Attach audio file"
+                    className="p-2 rounded-xl border border-slate-800 bg-[#101729] text-slate-400 hover:text-cyan-300 transition-colors cursor-pointer"
+                    title={`Attach file (${SUPPORTED_ALL_FORMATS_TEXT})`}
+                    aria-label="Attach file"
                   >
                     <Paperclip className="w-4 h-4" />
                   </button>

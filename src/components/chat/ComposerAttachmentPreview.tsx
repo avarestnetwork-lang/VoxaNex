@@ -1,9 +1,11 @@
 import React from 'react';
 import { ComposerAttachmentSnapshot } from '../../hooks/useChatMediaAttachment';
-import { formatBytes } from '../../lib/mediaValidation';
+import { extractSafeFileExtension, formatBytes } from '../../lib/mediaValidation';
 import {
   AlertCircle,
   CheckCircle2,
+  FileText,
+  Film,
   Loader2,
   Music,
   RefreshCw,
@@ -37,7 +39,14 @@ export const ComposerAttachmentPreview: React.FC<ComposerAttachmentPreviewProps>
   const isCancelled = attachment.status === 'cancelled';
 
   const isAudio = attachment.mediaType === 'audio';
+  const isVideo = attachment.mediaType === 'video';
+  const isDocument = attachment.mediaType === 'document';
   const isGif = attachment.source === 'gif' || attachment.mediaType === 'gif';
+  const isImage = !isAudio && !isVideo && !isDocument && !isGif;
+
+  const docBadge = isDocument
+    ? (extractSafeFileExtension(attachment.fileName || '') || 'DOC').toUpperCase()
+    : '';
 
   return (
     <div
@@ -51,7 +60,7 @@ export const ComposerAttachmentPreview: React.FC<ComposerAttachmentPreviewProps>
         {/* Left: Preview & Metadata */}
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           {/* Thumbnail / Icon */}
-          {!isAudio && attachment.previewUrl ? (
+          {(isImage || isGif) && attachment.previewUrl ? (
             <img
               src={attachment.previewUrl}
               alt={attachment.fileName || 'Attachment preview'}
@@ -59,13 +68,26 @@ export const ComposerAttachmentPreview: React.FC<ComposerAttachmentPreviewProps>
             />
           ) : (
             <div className="w-10 h-10 rounded-lg border border-slate-700 bg-slate-900/90 flex items-center justify-center shrink-0 text-cyan-400">
-              {isAudio ? <Music className="w-5 h-5" /> : <ImageIcon className="w-5 h-5" />}
+              {isAudio ? (
+                <Music className="w-5 h-5 text-cyan-400" />
+              ) : isVideo ? (
+                <Film className="w-5 h-5 text-violet-400" />
+              ) : isDocument ? (
+                <FileText className="w-5 h-5 text-amber-400" />
+              ) : (
+                <ImageIcon className="w-5 h-5" />
+              )}
             </div>
           )}
 
           {/* File details + Status */}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 min-w-0">
+              {docBadge && (
+                <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 shrink-0">
+                  {docBadge}
+                </span>
+              )}
               <span className="text-xs font-semibold text-slate-200 truncate">
                 {attachment.fileName || (isGif ? 'Animated GIF' : 'Attachment')}
               </span>
@@ -98,6 +120,10 @@ export const ComposerAttachmentPreview: React.FC<ComposerAttachmentPreviewProps>
                       ? 'GIF ready to send'
                       : isAudio
                       ? 'Audio uploaded (100%)'
+                      : isVideo
+                      ? 'Video uploaded (100%)'
+                      : isDocument
+                      ? 'Document uploaded (100%)'
                       : 'Image uploaded (100%)'}
                   </span>
                 </>
@@ -171,6 +197,19 @@ export const ComposerAttachmentPreview: React.FC<ComposerAttachmentPreviewProps>
         >
           Your browser does not support audio playback.
         </audio>
+      )}
+
+      {/* Local Video Preview Player */}
+      {isVideo && attachment.previewUrl && !isFailed && (
+        <video
+          controls
+          playsInline
+          src={attachment.previewUrl}
+          preload="metadata"
+          className="w-full max-h-40 max-w-sm rounded-lg bg-black/60 border border-slate-700/60"
+        >
+          Your browser does not support video playback.
+        </video>
       )}
     </div>
   );

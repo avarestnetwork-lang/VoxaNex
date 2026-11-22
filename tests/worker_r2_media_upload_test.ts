@@ -966,20 +966,20 @@ async function runSuite() {
       assert(res.status === 400, 'D4: Executable masquerading as PNG strictly rejected (400)');
     }
 
-    // D4b: Disallowed MIME types & dangerous/double extensions (.exe, .svg, application/pdf) rejected with 400
+    // D4b: Disallowed MIME types & dangerous/double extensions (text/html, .svg, .exe) rejected with 400
     {
-      const formPdf = new FormData();
-      formPdf.append('file', new File([new TextEncoder().encode('%PDF-1.4')], 'doc.pdf', { type: 'application/pdf' }));
-      const resPdf = await worker.fetch(
+      const formHtml = new FormData();
+      formHtml.append('file', new File([HTML_SCRIPT_BYTES], 'page.html', { type: 'text/html' }));
+      const resHtml = await worker.fetch(
         new Request('https://chatlustora.com/api/media/upload', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer jwt_bob' },
-          body: formPdf,
+          body: formHtml,
         }),
         defaultEnv,
         {}
       );
-      assert(resPdf.status === 400, 'D4b.1: Disallowed MIME (application/pdf) rejected with HTTP 400');
+      assert(resHtml.status === 400, 'D4b.1: Disallowed MIME (text/html) rejected with HTTP 400');
 
       const formSvg = new FormData();
       formSvg.append('file', new File([SVG_BYTES], 'vector.svg', { type: 'image/svg+xml' }));
@@ -2589,6 +2589,395 @@ async function runSuite() {
       } finally {
         console.error = origErr;
       }
+    }
+
+    // -------------------------------------------------------------------------
+    // CATEGORY N: Multi-Category Attachments (Video/Docs), Error Diagnostics & /api/media/schema-status
+    // -------------------------------------------------------------------------
+    console.log('\n--- Category N: Video & Document Attachments, Error Classification & Schema Status ---');
+
+    // N1: Upload and retrieve MP4, QuickTime MOV, and WebM video attachments
+    const mp4VideoBytes = new Uint8Array([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d,
+      0x00, 0x00, 0x02, 0x00, 0x69, 0x73, 0x6f, 0x6d, 0x6d, 0x70, 0x34, 0x31,
+    ]);
+    const movVideoBytes = new Uint8Array([
+      0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70, 0x71, 0x74, 0x20, 0x20,
+      0x20, 0x05, 0x03, 0x00, 0x71, 0x74, 0x20, 0x20,
+    ]);
+    const webmVideoBytes = new Uint8Array([
+      0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01,
+      ...new TextEncoder().encode('webmV_VP9'),
+    ]);
+
+    let uploadedMp4Id = '';
+    {
+      for (const tc of [
+        { name: 'intro.mp4', mime: 'video/mp4', bytes: mp4VideoBytes },
+        { name: 'camera.mov', mime: 'video/quicktime', bytes: movVideoBytes },
+        { name: 'stream.webm', mime: 'video/webm', bytes: webmVideoBytes },
+      ]) {
+        const fd = new FormData();
+        fd.append('file', new File([tc.bytes], tc.name, { type: tc.mime }));
+        fd.append('contextType', 'room');
+        fd.append('contextId', 'general');
+        const res = await worker.fetch(
+          new Request('https://chatlustora.com/api/media/upload', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer jwt_media_m1' },
+            body: fd,
+          }),
+          defaultEnv,
+          {}
+        );
+        const body: any = await res.json();
+        assert(
+          res.status === 200 && body.media?.mediaType === 'video' && body.media?.mimeType === tc.mime,
+          `N1: Video upload ${tc.name} (${tc.mime}) persisted & classified as mediaType=video`
+        );
+        if (tc.name === 'intro.mp4') uploadedMp4Id = body.media.uploadId;
+
+        const getRes = await worker.fetch(
+          new Request(`https://chatlustora.com/api/media/${body.media.uploadId}`, {
+            method: 'GET',
+            headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          }),
+          defaultEnv,
+          {}
+        );
+        assert(
+          getRes.status === 200 &&
+            getRes.headers.get('Content-Type') === tc.mime &&
+            (getRes.headers.get('Content-Disposition') || '').startsWith('inline;') &&
+            getRes.headers.get('Content-Security-Policy') === "default-src 'none'; sandbox",
+          `N1a: Retrieved ${tc.name} with safe Content-Type, inline disposition, and strict CSP`
+        );
+      }
+    }
+
+    // N2: Upload and retrieve PDF, TXT, CSV, DOCX, XLSX, PPTX documents
+    const buildZipDoc = (entries: Array<{ name: string; content: string }>): Uint8Array => {
+      const enc = new TextEncoder();
+      const parts: number[] = [];
+      const cd: number[] = [];
+      let offset = 0;
+      for (const entry of entries) {
+        const nameB = enc.encode(entry.name);
+        const dataB = enc.encode(entry.content);
+        const lfh = [
+          0x50, 0x4b, 0x03, 0x04, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          dataB.length & 0xff, (dataB.length >> 8) & 0xff, (dataB.length >> 16) & 0xff, (dataB.length >> 24) & 0xff,
+          dataB.length & 0xff, (dataB.length >> 8) & 0xff, (dataB.length >> 16) & 0xff, (dataB.length >> 24) & 0xff,
+          nameB.length & 0xff, (nameB.length >> 8) & 0xff, 0, 0,
+        ];
+        parts.push(...lfh, ...nameB, ...dataB);
+        const cdh = [
+          0x50, 0x4b, 0x01, 0x02, 20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          dataB.length & 0xff, (dataB.length >> 8) & 0xff, (dataB.length >> 16) & 0xff, (dataB.length >> 24) & 0xff,
+          dataB.length & 0xff, (dataB.length >> 8) & 0xff, (dataB.length >> 16) & 0xff, (dataB.length >> 24) & 0xff,
+          nameB.length & 0xff, (nameB.length >> 8) & 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          offset & 0xff, (offset >> 8) & 0xff, (offset >> 16) & 0xff, (offset >> 24) & 0xff,
+        ];
+        cd.push(...cdh, ...nameB);
+        offset += lfh.length + nameB.length + dataB.length;
+      }
+      const cdOffset = parts.length;
+      parts.push(...cd);
+      parts.push(
+        0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0,
+        entries.length & 0xff, (entries.length >> 8) & 0xff,
+        entries.length & 0xff, (entries.length >> 8) & 0xff,
+        cd.length & 0xff, (cd.length >> 8) & 0xff, (cd.length >> 16) & 0xff, (cd.length >> 24) & 0xff,
+        cdOffset & 0xff, (cdOffset >> 8) & 0xff, (cdOffset >> 16) & 0xff, (cdOffset >> 24) & 0xff,
+        0, 0
+      );
+      return new Uint8Array(parts);
+    };
+
+    let uploadedPdfId = '';
+    {
+      const docCases = [
+        {
+          name: 'contract.pdf',
+          mime: 'application/pdf',
+          bytes: new TextEncoder().encode('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF'),
+        },
+        {
+          name: 'notes.txt',
+          mime: 'text/plain',
+          bytes: new TextEncoder().encode('ChatLustora permanent attachment verification log.'),
+        },
+        {
+          name: 'metrics.csv',
+          mime: 'text/csv',
+          bytes: new TextEncoder().encode('room,messages\ngeneral,125\n'),
+        },
+        {
+          name: 'brief.docx',
+          mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          bytes: buildZipDoc([
+            { name: '[Content_Types].xml', content: '<Types/>' },
+            { name: 'word/document.xml', content: '<w:document/>' },
+          ]),
+        },
+        {
+          name: 'budget.xlsx',
+          mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          bytes: buildZipDoc([
+            { name: '[Content_Types].xml', content: '<Types/>' },
+            { name: 'xl/workbook.xml', content: '<workbook/>' },
+          ]),
+        },
+        {
+          name: 'slides.pptx',
+          mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          bytes: buildZipDoc([
+            { name: '[Content_Types].xml', content: '<Types/>' },
+            { name: 'ppt/presentation.xml', content: '<presentation/>' },
+          ]),
+        },
+      ];
+
+      for (const tc of docCases) {
+        const fd = new FormData();
+        fd.append('file', new File([tc.bytes], tc.name, { type: tc.mime }));
+        fd.append('contextType', 'conversation');
+        fd.append('contextId', conversationId);
+        const res = await worker.fetch(
+          new Request('https://chatlustora.com/api/media/upload', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer jwt_alice' },
+            body: fd,
+          }),
+          defaultEnv,
+          {}
+        );
+        const body: any = await res.json();
+        assert(
+          res.status === 200 && body.media?.mediaType === 'document' && body.media?.mimeType === tc.mime,
+          `N2: Document upload ${tc.name} persisted in public.media_uploads & classified as document`
+        );
+        if (tc.name === 'contract.pdf') uploadedPdfId = body.media.uploadId;
+
+        const getRes = await worker.fetch(
+          new Request(`https://chatlustora.com/api/media/${body.media.uploadId}`, {
+            method: 'GET',
+            headers: { 'Authorization': 'Bearer jwt_alice' },
+          }),
+          defaultEnv,
+          {}
+        );
+        assert(
+          getRes.status === 200 &&
+            (getRes.headers.get('Content-Disposition') || '').startsWith('attachment;') &&
+            getRes.headers.get('Content-Security-Policy') === "default-src 'none'; sandbox" &&
+            getRes.headers.get('Cache-Control') === 'private, no-store',
+          `N2a: Retrieved ${tc.name} with Content-Disposition: attachment, CSP sandbox, and private no-store`
+        );
+      }
+    }
+
+    // N3: Reject spoofed ZIP-as-DOCX, macro DOCX, and HTML-inside-TXT with HTTP 400
+    {
+      const spoofedDocx = buildZipDoc([{ name: 'readme.txt', content: 'not a real docx' }]);
+      const macroDocx = buildZipDoc([
+        { name: '[Content_Types].xml', content: '<Types/>' },
+        { name: 'word/document.xml', content: '<w:document/>' },
+        { name: 'word/vbaProject.bin', content: 'macro' },
+      ]);
+      for (const badCase of [
+        { name: 'spoof.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', bytes: spoofedDocx },
+        { name: 'macro.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', bytes: macroDocx },
+        { name: 'xss.txt', mime: 'text/plain', bytes: HTML_SCRIPT_BYTES },
+        { name: 'xss.csv', mime: 'text/csv', bytes: HTML_SCRIPT_BYTES },
+      ]) {
+        const fd = new FormData();
+        fd.append('file', new File([badCase.bytes], badCase.name, { type: badCase.mime }));
+        const res = await worker.fetch(
+          new Request('https://chatlustora.com/api/media/upload', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer jwt_bob' },
+            body: fd,
+          }),
+          defaultEnv,
+          {}
+        );
+        assert(res.status === 400, `N3: Unsafe/spoofed attachment ${badCase.name} rejected with HTTP 400`);
+      }
+    }
+
+    // N4: Send room video message & private DM document message
+    {
+      const vidMsgRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/chat/rooms/general/messages', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_alice', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            senderId: memberAliceId,
+            senderType: 'registered',
+            content: 'Video intro attached',
+            mediaUrl: `/api/media/${uploadedMp4Id}`,
+            mediaType: 'video',
+            clientNonce: 'nonce_vid_msg_1',
+          }),
+        }),
+        nativeChatEnv,
+        nonBlockingCtx
+      );
+      const vidMsgData: any = await vidMsgRes.json();
+      assert(vidMsgRes.status === 200 && vidMsgData.message?.mediaType === 'video', 'N4a: Room message accepts video mediaType');
+
+      const docMsgRes = await worker.fetch(
+        new Request(`https://chatlustora.com/api/chat/conversations/${deterministicAliceCharlieConvId}/messages`, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_alice', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            senderId: memberAliceId,
+            senderType: 'registered',
+            recipientId: guestCharlieId,
+            content: 'Please review the PDF',
+            mediaUrl: `/api/media/${uploadedPdfId}`,
+            mediaType: 'document',
+            clientNonce: 'nonce_doc_msg_1',
+          }),
+        }),
+        nativeChatEnv,
+        nonBlockingCtx
+      );
+      const docMsgData: any = await docMsgRes.json();
+      assert(docMsgRes.status === 200 && docMsgData.message?.mediaType === 'document', 'N4b: DM message accepts document mediaType');
+    }
+
+    // N5: Distinguish PGRST204 column missing, 22P02 invalid input syntax, and 401 invalid API key on insert
+    {
+      const r2Snapshot = mockR2.store.size;
+      nextMediaPostOverride = () =>
+        new Response(JSON.stringify({ code: 'PGRST204', message: "Could not find the 'is_flagged' column of 'media_uploads' in the schema cache" }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const fdCol = new FormData();
+      fdCol.append('file', new File([VALID_PNG_BYTES], 'col_miss.png', { type: 'image/png' }));
+      const resCol = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fdCol,
+        }),
+        defaultEnv,
+        {}
+      );
+      const bodyCol: any = await resCol.json();
+      assert(
+        resCol.status === 503 && bodyCol.code === 'MEDIA_DB_COLUMN_MISSING' && mockR2.store.size === r2Snapshot,
+        'N5a: PGRST204 missing column returns 503 MEDIA_DB_COLUMN_MISSING with R2 cleanup'
+      );
+
+      nextMediaPostOverride = () =>
+        new Response(JSON.stringify({ code: '22P02', message: 'invalid input syntax for type integer' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const fdType = new FormData();
+      fdType.append('file', new File([VALID_PNG_BYTES], 'bad_type.png', { type: 'image/png' }));
+      const resType = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fdType,
+        }),
+        defaultEnv,
+        {}
+      );
+      const bodyType: any = await resType.json();
+      assert(
+        resType.status === 400 && bodyType.code === 'MEDIA_DB_INVALID_TYPE' && mockR2.store.size === r2Snapshot,
+        'N5b: 22P02 invalid type returns 400 MEDIA_DB_INVALID_TYPE with R2 cleanup'
+      );
+
+      nextMediaPostOverride = () =>
+        new Response(JSON.stringify({ message: 'Invalid API key' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const fdKey = new FormData();
+      fdKey.append('file', new File([VALID_PNG_BYTES], 'bad_key.png', { type: 'image/png' }));
+      const resKey = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/upload', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer jwt_media_m1' },
+          body: fdKey,
+        }),
+        defaultEnv,
+        {}
+      );
+      const bodyKey: any = await resKey.json();
+      assert(
+        resKey.status === 503 && bodyKey.code === 'MEDIA_DB_CREDENTIALS_INVALID' && mockR2.store.size === r2Snapshot,
+        'N5c: Supabase 401 Invalid API key returns 503 MEDIA_DB_CREDENTIALS_INVALID with R2 cleanup'
+      );
+    }
+
+    // N6: Authenticated GET /api/media/schema-status endpoint diagnostics
+    {
+      const unauthStatus = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/schema-status', { method: 'GET' }),
+        defaultEnv,
+        {}
+      );
+      assert(unauthStatus.status === 401, 'N6a: Unauthenticated /api/media/schema-status rejected with HTTP 401');
+
+      const readyRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/schema-status', {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      const readyBody: any = await readyRes.json();
+      assert(
+        readyRes.status === 200 && readyBody.schemaReady === true && readyBody.code === 'MEDIA_DB_SCHEMA_READY',
+        'N6b: Healthy media_uploads schema returns HTTP 200 MEDIA_DB_SCHEMA_READY'
+      );
+
+      nextMediaGetOverride = () =>
+        new Response(JSON.stringify({ code: 'PGRST205', message: "Could not find the table 'public.media_uploads' in the schema cache" }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const missingTableRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/schema-status', {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      const missingTableBody: any = await missingTableRes.json();
+      assert(
+        missingTableRes.status === 503 && missingTableBody.schemaReady === false && missingTableBody.code === 'MEDIA_DB_SCHEMA_MISSING',
+        'N6c: Schema status reports 503 MEDIA_DB_SCHEMA_MISSING on PGRST205'
+      );
+
+      nextMediaGetOverride = () =>
+        new Response(JSON.stringify({ code: 'PGRST204', message: "Could not find the 'file_name' column of 'media_uploads'" }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const missingColRes = await worker.fetch(
+        new Request('https://chatlustora.com/api/media/schema-status', {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer jwt_alice' },
+        }),
+        defaultEnv,
+        {}
+      );
+      const missingColBody: any = await missingColRes.json();
+      assert(
+        missingColRes.status === 503 && missingColBody.schemaReady === false && missingColBody.code === 'MEDIA_DB_COLUMN_MISSING',
+        'N6d: Schema status reports 503 MEDIA_DB_COLUMN_MISSING on PGRST204'
+      );
     }
 
     console.log('\n================================================================');

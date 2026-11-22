@@ -9,15 +9,24 @@ import {
   isSafeMediaUrl,
   IMAGE_ACCEPT_ATTRIBUTE,
   AUDIO_ACCEPT_ATTRIBUTE,
+  VIDEO_ACCEPT_ATTRIBUTE,
+  DOCUMENT_ACCEPT_ATTRIBUTE,
+  ATTACHMENT_ACCEPT_ATTRIBUTE,
   MAX_IMAGE_SIZE_BYTES,
   MAX_AUDIO_SIZE_BYTES,
+  MAX_VIDEO_SIZE_BYTES,
+  MAX_DOCUMENT_SIZE_BYTES,
 } from '../src/lib/mediaValidation';
 import {
   messagingService,
   setTestAuthTokenResolver,
 } from '../src/services/messagingService';
 import { ComposerAttachmentPreview } from '../src/components/chat/ComposerAttachmentPreview';
-import { SecureMediaRenderer, loadSecureMediaAsset } from '../src/components/chat/SecureMediaRenderer';
+import {
+  SecureMediaRenderer,
+  loadSecureMediaAsset,
+  extractFileNameFromContentDisposition,
+} from '../src/components/chat/SecureMediaRenderer';
 import { Footer } from '../src/components/layout/Footer';
 import { RouterProvider } from '../src/context/RouterContext';
 import { LanguageProvider } from '../src/context/LanguageContext';
@@ -156,6 +165,184 @@ async function runPhase12Tests() {
     imageOnly: true,
   });
   assert(!spoofCheck.valid, '1.10 Rejects spoofed binary payload disguised as PNG');
+
+  // Helper to construct minimal valid ZIP container for OOXML tests
+  const buildMinimalZip = (entries: Array<{ name: string; content: string }>): Uint8Array => {
+    const encoder = new TextEncoder();
+    const parts: number[] = [];
+    const centralDir: number[] = [];
+    let offset = 0;
+
+    for (const entry of entries) {
+      const nameBytes = encoder.encode(entry.name);
+      const dataBytes = encoder.encode(entry.content);
+      const localOffset = offset;
+      // Local file header (30 bytes + name)
+      const lfh = [
+        0x50, 0x4b, 0x03, 0x04,
+        20, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0,
+        dataBytes.length & 0xff, (dataBytes.length >> 8) & 0xff, (dataBytes.length >> 16) & 0xff, (dataBytes.length >> 24) & 0xff,
+        dataBytes.length & 0xff, (dataBytes.length >> 8) & 0xff, (dataBytes.length >> 16) & 0xff, (dataBytes.length >> 24) & 0xff,
+        nameBytes.length & 0xff, (nameBytes.length >> 8) & 0xff,
+        0, 0,
+      ];
+      for (const b of lfh) parts.push(b);
+      for (const b of nameBytes) parts.push(b);
+      for (const b of dataBytes) parts.push(b);
+      offset += lfh.length + nameBytes.length + dataBytes.length;
+
+      // Central directory header (46 bytes + name)
+      const cdh = [
+        0x50, 0x4b, 0x01, 0x02,
+        20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0,
+        dataBytes.length & 0xff, (dataBytes.length >> 8) & 0xff, (dataBytes.length >> 16) & 0xff, (dataBytes.length >> 24) & 0xff,
+        dataBytes.length & 0xff, (dataBytes.length >> 8) & 0xff, (dataBytes.length >> 16) & 0xff, (dataBytes.length >> 24) & 0xff,
+        nameBytes.length & 0xff, (nameBytes.length >> 8) & 0xff,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0,
+        localOffset & 0xff, (localOffset >> 8) & 0xff, (localOffset >> 16) & 0xff, (localOffset >> 24) & 0xff,
+      ];
+      for (const b of cdh) centralDir.push(b);
+      for (const b of nameBytes) centralDir.push(b);
+    }
+
+    const cdOffset = parts.length;
+    const cdSize = centralDir.length;
+    for (const b of centralDir) parts.push(b);
+    // EOCD (22 bytes)
+    const eocd = [
+      0x50, 0x4b, 0x05, 0x06,
+      0, 0, 0, 0,
+      entries.length & 0xff, (entries.length >> 8) & 0xff,
+      entries.length & 0xff, (entries.length >> 8) & 0xff,
+      cdSize & 0xff, (cdSize >> 8) & 0xff, (cdSize >> 16) & 0xff, (cdSize >> 24) & 0xff,
+      cdOffset & 0xff, (cdOffset >> 8) & 0xff, (cdOffset >> 16) & 0xff, (cdOffset >> 24) & 0xff,
+      0, 0,
+    ];
+    for (const b of eocd) parts.push(b);
+    return new Uint8Array(parts);
+  };
+
+  assert(
+    ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.jpg') &&
+      ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.mp4') &&
+      ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.mov') &&
+      ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.mp3') &&
+      ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.pdf') &&
+      ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.txt') &&
+      ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.csv') &&
+      ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.docx') &&
+      ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.xlsx') &&
+      ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.pptx') &&
+      VIDEO_ACCEPT_ATTRIBUTE.includes('video/mp4') &&
+      DOCUMENT_ACCEPT_ATTRIBUTE.includes('application/pdf') &&
+      !ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.svg') &&
+      !ATTACHMENT_ACCEPT_ATTRIBUTE.includes('.exe') &&
+      !ATTACHMENT_ACCEPT_ATTRIBUTE.includes('text/html'),
+    '1.11 Unified ATTACHMENT_ACCEPT_ATTRIBUTE includes Image/Video/Audio/Document formats and excludes unsafe types'
+  );
+
+  // Video binary validation (MP4, MOV, WebM video)
+  const validMp4Bytes = new Uint8Array([
+    0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d,
+    0x00, 0x00, 0x02, 0x00, 0x69, 0x73, 0x6f, 0x6d, 0x6d, 0x70, 0x34, 0x31,
+  ]);
+  const mp4Bin = validateMediaBinary({ fileName: 'clip.mp4', mimeType: 'video/mp4', bytes: validMp4Bytes });
+  assert(mp4Bin.valid && mp4Bin.chatMediaType === 'video' && mp4Bin.canonicalMime === 'video/mp4', '1.12 Accepts valid MP4 video');
+
+  const validMovBytes = new Uint8Array([
+    0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70, 0x71, 0x74, 0x20, 0x20,
+    0x20, 0x05, 0x03, 0x00, 0x71, 0x74, 0x20, 0x20,
+  ]);
+  const movBin = validateMediaBinary({ fileName: 'movie.mov', mimeType: 'video/quicktime', bytes: validMovBytes });
+  assert(movBin.valid && movBin.chatMediaType === 'video' && movBin.canonicalMime === 'video/quicktime', '1.13 Accepts valid QuickTime MOV video');
+
+  const validWebmVideo = new Uint8Array([
+    0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01,
+    ...new TextEncoder().encode('webmV_VP9'),
+  ]);
+  const webmVidBin = validateMediaBinary({ fileName: 'stream.webm', mimeType: 'video/webm', bytes: validWebmVideo });
+  assert(webmVidBin.valid && webmVidBin.chatMediaType === 'video' && webmVidBin.canonicalMime === 'video/webm', '1.14 Accepts valid WebM video');
+
+  const oversizedVideo = validateMediaFileMetadata({
+    fileName: 'big.mp4',
+    fileSize: MAX_VIDEO_SIZE_BYTES + 1,
+    mimeType: 'video/mp4',
+  });
+  assert(!oversizedVideo.valid, '1.15 Rejects video exceeding 10 MB');
+
+  // Document validation (PDF, TXT, CSV, DOCX, XLSX, PPTX)
+  const pdfBin = validateMediaBinary({
+    fileName: 'guide.pdf',
+    mimeType: 'application/pdf',
+    bytes: new TextEncoder().encode('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF'),
+  });
+  assert(pdfBin.valid && pdfBin.chatMediaType === 'document' && pdfBin.canonicalMime === 'application/pdf', '1.16 Accepts valid PDF document');
+
+  const oversizedDoc = validateMediaFileMetadata({
+    fileName: 'huge.pdf',
+    fileSize: MAX_DOCUMENT_SIZE_BYTES + 1,
+    mimeType: 'application/pdf',
+  });
+  assert(!oversizedDoc.valid, '1.17 Rejects document exceeding 10 MB');
+
+  const txtOk = validateMediaBinary({
+    fileName: 'notes.txt',
+    mimeType: 'text/plain',
+    bytes: new TextEncoder().encode('Meeting notes for ChatLustora release.\nAll checks clean.'),
+  });
+  const csvOk = validateMediaBinary({
+    fileName: 'data.csv',
+    mimeType: 'text/csv',
+    bytes: new TextEncoder().encode('id,name,count\n1,general,42\n'),
+  });
+  const htmlInsideTxt = validateMediaBinary({
+    fileName: 'xss.txt',
+    mimeType: 'text/plain',
+    bytes: new TextEncoder().encode('<script>alert(document.cookie)</script>'),
+  });
+  const nulInsideTxt = validateMediaBinary({
+    fileName: 'binary.txt',
+    mimeType: 'text/plain',
+    bytes: new Uint8Array([0x41, 0x42, 0x00, 0x43]),
+  });
+  assert(
+    txtOk.valid && txtOk.chatMediaType === 'document' && csvOk.valid && csvOk.chatMediaType === 'document' && !htmlInsideTxt.valid && !nulInsideTxt.valid,
+    '1.18 Accepts safe UTF-8 TXT/CSV and rejects HTML/script/binary control payloads inside TXT'
+  );
+
+  const docxBytes = buildMinimalZip([
+    { name: '[Content_Types].xml', content: '<Types/>' },
+    { name: 'word/document.xml', content: '<w:document/>' },
+  ]);
+  const xlsxBytes = buildMinimalZip([
+    { name: '[Content_Types].xml', content: '<Types/>' },
+    { name: 'xl/workbook.xml', content: '<workbook/>' },
+  ]);
+  const pptxBytes = buildMinimalZip([
+    { name: '[Content_Types].xml', content: '<Types/>' },
+    { name: 'ppt/presentation.xml', content: '<presentation/>' },
+  ]);
+  const genericZipAsDocx = buildMinimalZip([
+    { name: 'payload.txt', content: 'not a word doc' },
+  ]);
+  const macroDocx = buildMinimalZip([
+    { name: '[Content_Types].xml', content: '<Types/>' },
+    { name: 'word/document.xml', content: '<w:document/>' },
+    { name: 'word/vbaProject.bin', content: 'macro' },
+  ]);
+
+  assert(
+    validateMediaBinary({ fileName: 'report.docx', bytes: docxBytes }).valid &&
+      validateMediaBinary({ fileName: 'sheet.xlsx', bytes: xlsxBytes }).valid &&
+      validateMediaBinary({ fileName: 'deck.pptx', bytes: pptxBytes }).valid &&
+      !validateMediaBinary({ fileName: 'fake.docx', bytes: genericZipAsDocx }).valid &&
+      !validateMediaBinary({ fileName: 'macro.docx', bytes: macroDocx }).valid &&
+      !validateMediaFileMetadata({ fileName: 'macro.docm', fileSize: 512, mimeType: 'application/vnd.ms-word.document.macroEnabled.12' }).valid,
+    '1.19 Validates DOCX/XLSX/PPTX internal OOXML structure and rejects spoofed ZIP / macro payloads'
+  );
 
   // -------------------------------------------------------------------------
   // 2. messagingService.uploadChatMedia (Room & Conversation, Progress, Abort, Fail-Closed)
@@ -423,8 +610,87 @@ async function runPhase12Tests() {
       secureRendererSource.includes('res.status === 403') &&
       secureRendererSource.includes('res.status === 404') &&
       secureRendererSource.includes("normalizedCt !== 'image/svg+xml'") &&
-      secureRendererSource.includes('<audio'),
-    '3.8 SecureMediaRenderer enforces strict same-origin URL classification, fetches internal media with Bearer auth + redirect error, enforces Content-Type, renders audio/img, handles 401/403/404, and revokes Blob URLs'
+      secureRendererSource.includes('<audio') &&
+      secureRendererSource.includes('<video') &&
+      secureRendererSource.includes('data-testid="secure-document-card"'),
+    '3.8 SecureMediaRenderer enforces strict same-origin URL classification, fetches internal media with Bearer auth + redirect error, enforces Content-Type, renders img/audio/video/document card, handles 401/403/404, and revokes Blob URLs'
+  );
+
+  // SSR render ComposerAttachmentPreview for completed Video and Document attachments
+  const videoPreviewHtml = renderToString(
+    React.createElement(ComposerAttachmentPreview, {
+      attachment: {
+        status: 'completed',
+        source: 'upload',
+        file: null,
+        fileName: 'demo_clip.mp4',
+        fileSize: 3145728,
+        mimeType: 'video/mp4',
+        mediaType: 'video',
+        previewUrl: 'blob:test-video-preview',
+        uploadedAsset: {
+          uploadId: 'med_vid_1',
+          url: '/api/media/med_vid_1',
+          mediaType: 'video',
+          mimeType: 'video/mp4',
+          fileName: 'demo_clip.mp4',
+          fileSize: 3145728,
+        },
+        progress: 100,
+        error: null,
+        canRetry: false,
+      },
+      onCancel: () => {},
+      onRetry: () => {},
+      onRemove: () => {},
+    })
+  );
+  assert(
+    videoPreviewHtml.includes('demo_clip.mp4') &&
+      videoPreviewHtml.includes('Video uploaded (100%)') &&
+      videoPreviewHtml.includes('<video'),
+    '3.9 ComposerAttachmentPreview renders Video uploaded status and video preview element'
+  );
+
+  const docPreviewHtml = renderToString(
+    React.createElement(ComposerAttachmentPreview, {
+      attachment: {
+        status: 'completed',
+        source: 'upload',
+        file: null,
+        fileName: 'handbook.pdf',
+        fileSize: 1048576,
+        mimeType: 'application/pdf',
+        mediaType: 'document',
+        previewUrl: null,
+        uploadedAsset: {
+          uploadId: 'med_doc_1',
+          url: '/api/media/med_doc_1',
+          mediaType: 'document',
+          mimeType: 'application/pdf',
+          fileName: 'handbook.pdf',
+          fileSize: 1048576,
+        },
+        progress: 100,
+        error: null,
+        canRetry: false,
+      },
+      onCancel: () => {},
+      onRetry: () => {},
+      onRemove: () => {},
+    })
+  );
+  assert(
+    docPreviewHtml.includes('handbook.pdf') &&
+      docPreviewHtml.includes('PDF') &&
+      docPreviewHtml.includes('Document uploaded (100%)'),
+    '3.10 ComposerAttachmentPreview renders Document uploaded status and format badge'
+  );
+
+  assert(
+    extractFileNameFromContentDisposition('attachment; filename="q1_report.pdf"') === 'q1_report.pdf' &&
+      extractFileNameFromContentDisposition(`attachment; filename*=UTF-8''my%20notes.docx`) === 'my notes.docx',
+    '3.11 extractFileNameFromContentDisposition safely parses ASCII and UTF-8 Content-Disposition filenames'
   );
 
   // -------------------------------------------------------------------------
@@ -439,7 +705,7 @@ async function runPhase12Tests() {
 
   const pubEmojiIdx = pubForm.indexOf('aria-label="Emoji picker"');
   const pubImageIdx = pubForm.indexOf('aria-label="Image or GIF attachment"');
-  const pubAttachIdx = pubForm.indexOf('aria-label="Attach audio file"');
+  const pubAttachIdx = pubForm.indexOf('aria-label="Attach file"');
   const pubInputIdx = pubForm.indexOf('ref={inputRef}');
   const pubSendIdx = pubForm.indexOf('type="submit"');
 
@@ -448,8 +714,10 @@ async function runPhase12Tests() {
       pubEmojiIdx < pubImageIdx &&
       pubImageIdx < pubAttachIdx &&
       pubAttachIdx < pubInputIdx &&
-      pubInputIdx < pubSendIdx,
-    '4.1 PublicChatPage composer order is strictly Emoji -> Image -> New Attachment -> Message Input -> Send'
+      pubInputIdx < pubSendIdx &&
+      publicChatSource.includes('accept={ATTACHMENT_ACCEPT_ATTRIBUTE}') &&
+      publicChatSource.includes("selectFile(file, 'attachment')"),
+    '4.1 PublicChatPage composer order is Emoji -> Image -> Unified Attach file -> Message Input -> Send'
   );
   assert(
     publicChatSource.includes("contextType: 'room'") &&
@@ -470,7 +738,7 @@ async function runPhase12Tests() {
 
   const privEmojiIdx = privForm.indexOf('aria-label="Pick emoji"');
   const privImageIdx = privForm.indexOf('aria-label="Image or GIF attachment"');
-  const privAttachIdx = privForm.indexOf('aria-label="Attach audio file"');
+  const privAttachIdx = privForm.indexOf('aria-label="Attach file"');
   const privInputIdx = privForm.indexOf('<input');
   const privSendIdx = privForm.indexOf('type="submit"');
 
@@ -479,8 +747,10 @@ async function runPhase12Tests() {
       privEmojiIdx < privImageIdx &&
       privImageIdx < privAttachIdx &&
       privAttachIdx < privInputIdx &&
-      privInputIdx < privSendIdx,
-    '4.4 PrivateChatPane composer order is strictly Emoji -> Image -> New Attachment -> Message Input -> Send'
+      privInputIdx < privSendIdx &&
+      privatePaneSource.includes('accept={ATTACHMENT_ACCEPT_ATTRIBUTE}') &&
+      privatePaneSource.includes("selectFile(file, 'attachment')"),
+    '4.4 PrivateChatPane composer order is Emoji -> Image -> Unified Attach file -> Message Input -> Send'
   );
   assert(
     privatePaneSource.includes("contextType: 'conversation'") &&
@@ -492,8 +762,9 @@ async function runPhase12Tests() {
 
   const privateContextSource = fs.readFileSync(path.resolve('src/context/PrivateChatContext.tsx'), 'utf-8');
   assert(
-    privateContextSource.includes("type: 'gif' | 'image' | 'audio'"),
-    '4.6 PrivateChatContext supports gif | image | audio media types'
+    privateContextSource.includes("type: 'gif' | 'image' | 'audio' | 'video' | 'document'") ||
+      privateContextSource.includes('type: ChatMediaType'),
+    '4.6 PrivateChatContext supports gif | image | audio | video | document media types'
   );
 
   // -------------------------------------------------------------------------
@@ -752,6 +1023,60 @@ async function runPhase12Tests() {
       new Response('<svg onload="alert(1)"/>', { status: 200, headers: { 'content-type': 'image/svg+xml' } });
     const resSvg = await loadSecureMediaAsset({ mediaUrl: '/api/media/asset-svg', currentOrigin: APP_ORIGIN });
     assert(resSvg.kind === 'error' && resSvg.error.includes('Blocked unsupported'), '6.25e SVG Content-Type strictly blocked');
+
+    // 6.26 Video and Document retrieval via loadSecureMediaAsset
+    nextMockResponse = () =>
+      new Response(new Uint8Array([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]), {
+        status: 200,
+        headers: {
+          'content-type': 'video/mp4',
+          'content-disposition': 'inline; filename="clip.mp4"',
+        },
+      });
+    const resVideo = await loadSecureMediaAsset({
+      mediaUrl: '/api/media/vid-1',
+      mediaType: 'video',
+      currentOrigin: APP_ORIGIN,
+    });
+    assert(
+      resVideo.kind === 'blob' && resVideo.detectedType === 'video' && resVideo.fileName === 'clip.mp4',
+      '6.26a Authenticated video/mp4 resolved with detectedType=video and sanitized fileName'
+    );
+    if (resVideo.kind === 'blob') URL.revokeObjectURL(resVideo.blobUrl);
+
+    nextMockResponse = () =>
+      new Response(new TextEncoder().encode('%PDF-1.4'), {
+        status: 200,
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': 'attachment; filename="terms.pdf"',
+        },
+      });
+    const resDoc = await loadSecureMediaAsset({
+      mediaUrl: '/api/media/doc-1',
+      mediaType: 'document',
+      currentOrigin: APP_ORIGIN,
+    });
+    assert(
+      resDoc.kind === 'blob' && resDoc.detectedType === 'document' && resDoc.fileName === 'terms.pdf',
+      '6.26b Authenticated application/pdf resolved with detectedType=document and filename=terms.pdf'
+    );
+    if (resDoc.kind === 'blob') URL.revokeObjectURL(resDoc.blobUrl);
+
+    nextMockResponse = () =>
+      new Response('<script>alert(1)</script>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      });
+    const resHtml = await loadSecureMediaAsset({
+      mediaUrl: '/api/media/html-bad',
+      mediaType: 'document',
+      currentOrigin: APP_ORIGIN,
+    });
+    assert(
+      resHtml.kind === 'error' && resHtml.error.includes('Blocked unsupported'),
+      '6.26c text/html media response strictly blocked by SecureMediaRenderer'
+    );
   } finally {
     setTestAuthTokenResolver(null);
     (globalThis as any).fetch = originalFetch;

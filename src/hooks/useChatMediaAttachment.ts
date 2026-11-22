@@ -65,7 +65,7 @@ export function useChatMediaAttachment({
   const activeAttemptIdRef = useRef<number>(0);
   const uploadingLockRef = useRef<boolean>(false);
   const isUnmountedRef = useRef<boolean>(false);
-  const lastModeRef = useRef<'image' | 'audio'>('image');
+  const lastModeRef = useRef<'image' | 'audio' | 'attachment'>('attachment');
   const activeIdempotencyKeyRef = useRef<string | null>(null);
 
   const createIdempotencyKey = useCallback((): string => {
@@ -211,11 +211,11 @@ export function useChatMediaAttachment({
         canRetry: true,
       }));
     },
-    [contextType, contextId, isGuest, userId]
+    [contextType, contextId, isGuest, userId, createIdempotencyKey]
   );
 
   const selectFile = useCallback(
-    async (file: File, mode: 'image' | 'audio') => {
+    async (file: File, mode: 'image' | 'audio' | 'attachment' = 'attachment') => {
       if (!file) return;
 
       // Cancel any prior upload attempt cleanly before starting a new selection
@@ -227,6 +227,8 @@ export function useChatMediaAttachment({
       lastModeRef.current = mode;
 
       const cleanName = sanitizeDisplayFileName(file.name);
+      const initialMediaType: ChatMediaType =
+        mode === 'audio' ? 'audio' : mode === 'image' ? 'image' : 'document';
 
       // 1. file_selected -> 2. validating
       setState({
@@ -236,7 +238,7 @@ export function useChatMediaAttachment({
         fileName: cleanName,
         fileSize: file.size,
         mimeType: file.type || '',
-        mediaType: mode === 'audio' ? 'audio' : 'image',
+        mediaType: initialMediaType,
         previewUrl: null,
         uploadedAsset: null,
         progress: 0,
@@ -266,7 +268,7 @@ export function useChatMediaAttachment({
           fileName: cleanName,
           fileSize: file.size,
           mimeType: file.type || '',
-          mediaType: mode === 'audio' ? 'audio' : 'image',
+          mediaType: initialMediaType,
           previewUrl: null,
           uploadedAsset: null,
           progress: 0,
@@ -276,9 +278,18 @@ export function useChatMediaAttachment({
         return;
       }
 
-      // Create safe local object URL preview with guaranteed cleanup
+      // Create safe local object URL preview for visual/audio/video media with guaranteed cleanup
       let objectUrl: string | null = null;
-      if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+      const shouldCreatePreviewUrl =
+        meta.chatMediaType === 'image' ||
+        meta.chatMediaType === 'gif' ||
+        meta.chatMediaType === 'audio' ||
+        meta.chatMediaType === 'video';
+      if (
+        shouldCreatePreviewUrl &&
+        typeof URL !== 'undefined' &&
+        typeof URL.createObjectURL === 'function'
+      ) {
         try {
           objectUrl = URL.createObjectURL(file);
           localBlobUrlRef.current = objectUrl;
@@ -296,7 +307,7 @@ export function useChatMediaAttachment({
 
       await executeUpload(file, attemptId, meta.chatMediaType);
     },
-    [abortActiveUpload, revokePreviewBlob, executeUpload]
+    [abortActiveUpload, revokePreviewBlob, executeUpload, createIdempotencyKey]
   );
 
   const selectGif = useCallback(
@@ -355,7 +366,12 @@ export function useChatMediaAttachment({
     activeAttemptIdRef.current += 1;
     const attemptId = activeAttemptIdRef.current;
     const targetType: ChatMediaType =
-      state.mediaType || (lastModeRef.current === 'audio' ? 'audio' : 'image');
+      state.mediaType ||
+      (lastModeRef.current === 'audio'
+        ? 'audio'
+        : lastModeRef.current === 'image'
+        ? 'image'
+        : 'document');
 
     await executeUpload(state.file, attemptId, targetType);
   }, [state.file, state.status, state.mediaType, executeUpload]);

@@ -11,9 +11,9 @@ import { ComposerAttachmentPreview } from './ComposerAttachmentPreview';
 import { useChatMediaAttachment } from '../../hooks/useChatMediaAttachment';
 import {
   IMAGE_ACCEPT_ATTRIBUTE,
-  AUDIO_ACCEPT_ATTRIBUTE,
+  ATTACHMENT_ACCEPT_ATTRIBUTE,
   SUPPORTED_IMAGE_FORMATS_TEXT,
-  SUPPORTED_AUDIO_FORMATS_TEXT,
+  SUPPORTED_ALL_FORMATS_TEXT,
 } from '../../lib/mediaValidation';
 import { Button } from '../ui/Button';
 import {
@@ -77,7 +77,7 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const audioInputRef = useRef<HTMLInputElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
 
   const {
     attachment,
@@ -527,16 +527,16 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
           }}
         />
         <input
-          ref={audioInputRef}
+          ref={attachmentInputRef}
           type="file"
-          accept={AUDIO_ACCEPT_ATTRIBUTE}
+          accept={ATTACHMENT_ACCEPT_ATTRIBUTE}
           className="hidden"
-          data-testid="private-audio-input"
+          data-testid="private-attachment-input"
           onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = '';
             if (file) {
-              selectFile(file, 'audio');
+              selectFile(file, 'attachment');
             }
           }}
         />
@@ -636,19 +636,19 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
               <ImageIcon className="w-4 h-4" />
             </button>
 
-            {/* 3. New Attachment (Audio clip upload) */}
+            {/* 3. Unified Attachment Picker (Images, Video, Audio, Documents) */}
             <button
               type="button"
-              disabled={isComposerDisabled || isAttachmentBusy}
+              disabled={isComposerDisabled}
               onClick={() => {
                 setShowEmojiPicker(false);
                 setShowImageMenu(false);
                 setShowGifPicker(false);
-                audioInputRef.current?.click();
+                attachmentInputRef.current?.click();
               }}
               className="p-2 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-cyan-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-              aria-label="Attach audio file"
-              title={`Attach Audio (${SUPPORTED_AUDIO_FORMATS_TEXT})`}
+              aria-label="Attach file"
+              title={`Attach file (${SUPPORTED_ALL_FORMATS_TEXT})`}
             >
               <Paperclip className="w-4 h-4" />
             </button>

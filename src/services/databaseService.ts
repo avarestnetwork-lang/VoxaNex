@@ -462,7 +462,7 @@ export const databaseService = {
     content: string;
     clientNonce?: string;
     mediaUrl?: string;
-    mediaType?: 'gif' | 'image' | 'audio';
+    mediaType?: 'gif' | 'image' | 'audio' | 'video' | 'document';
     linkPreview?: any;
   }, overrideClient?: any): Promise<{ success: boolean; inserted: boolean; message?: ChatMessage; error?: string }> {
     const supabase = overrideClient || getSupabaseClient();
@@ -538,7 +538,7 @@ export const databaseService = {
     senderAvatar: string;
     content: string;
     mediaUrl?: string;
-    mediaType?: 'gif' | 'image' | 'audio';
+    mediaType?: 'gif' | 'image' | 'audio' | 'video' | 'document';
     clientNonce?: string;
   }): Promise<ChatMessage | null> {
     const supabase = getSupabaseClient();
