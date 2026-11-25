@@ -13,12 +13,12 @@ export const ADSTERRA_CONFIG = {
 
 export const EXOCLICK_CONFIG = {
   zoneId: '6087300',
-  videoSliderZoneId: '6102494',
+  videoSliderZoneId: '6102500',
   horizontalVastZoneId: '6102492',
   horizontalVastUrl: 'https://s.magsrv.com/v1/vast.php?idz=6102492',
   scriptUrl: 'https://a.magsrv.com/ad-provider.js',
   elementClass: 'eas6a97888e2',
-  videoSliderElementClass: 'eas6a97888e31',
+  videoSliderElementClass: 'eas6a97888e38',
   verificationFile: '28befc4532cb8837aa59edffca607a5a.html',
   integrationType: 'async' as const,
   // ExoClick native Ad Refresh supports 30, 60, 90, 120s (max 10 session rotations) on async zones
@@ -222,18 +222,25 @@ export const ADSENSE_EXCLUDED_ROUTES = [
   '/guest-entry',
   '/age-gate',
   '/register',
+  '/login',
   '/auth',
   '/user/guest-entry',
   '/user/register',
   '/user/login',
+  '/user/reset-password',
+  '/user/password-reset',
+  '/user/account-recovery',
   '/admin',
   '/moderator',
+  '/checkout',
+  '/payment',
 ];
 
 export const isAdSenseExcludedRoute = (currentRoute: string): boolean => {
-  const normalized = (currentRoute || '').toLowerCase();
-  if (!normalized) return false;
-  
+  const raw = (currentRoute || '').trim().toLowerCase().split(/[?#]/)[0];
+  if (!raw) return false;
+  const normalized = raw.replace(/\/+$/, '') || '/';
+
   return ADSENSE_EXCLUDED_ROUTES.some((route) =>
     normalized === route ||
     normalized.startsWith(`${route}/`) ||
@@ -322,21 +329,29 @@ export const getProviderRotation = (
 };
 
 export const FOOTER_EXCLUDED_ROUTES = [
+  '/age-gate',
+  '/guest-entry',
+  '/register',
+  '/login',
   '/user/login',
   '/user/register',
   '/user/guest-entry',
+  '/user/reset-password',
   '/user/password-reset',
   '/user/account-recovery',
   '/auth',
+  '/admin',
   '/admin/login',
+  '/moderator',
   '/moderator/login',
   '/checkout',
   '/payment',
 ];
 
 export const isRouteExcludedFromFooterAds = (currentRoute: string): boolean => {
-  const normalized = (currentRoute || '').toLowerCase().split(/[?#]/)[0];
-  if (!normalized) return false;
+  const raw = (currentRoute || '').trim().toLowerCase().split(/[?#]/)[0];
+  if (!raw) return false;
+  const normalized = raw.replace(/\/+$/, '') || '/';
   return FOOTER_EXCLUDED_ROUTES.some((route) =>
     normalized === route ||
     normalized.startsWith(`${route}/`) ||
@@ -349,6 +364,10 @@ export const isRouteExcludedFromFooterAds = (currentRoute: string): boolean => {
 };
 
 export const GLOBAL_ADS_INELIGIBLE_ROUTES = [
+  '/age-gate',
+  '/guest-entry',
+  '/register',
+  '/login',
   '/user/login',
   '/user/register',
   '/user/guest-entry',
@@ -363,17 +382,26 @@ export const GLOBAL_ADS_INELIGIBLE_ROUTES = [
 ];
 
 export const isEligibleRouteForGlobalAds = (currentRoute: string): boolean => {
-  const normalized = (currentRoute || '').toLowerCase().split(/[?#]/)[0];
-  if (!normalized) return true;
+  const raw = (currentRoute || '').trim().toLowerCase().split(/[?#]/)[0];
+  if (!raw) return true;
+  const normalized = raw.replace(/\/+$/, '') || '/';
   return !GLOBAL_ADS_INELIGIBLE_ROUTES.some(
     (route) =>
       normalized === route ||
       normalized.startsWith(`${route}/`) ||
-      normalized.startsWith('/admin') ||
-      normalized.startsWith('/moderator') ||
-      normalized.includes('/auth') ||
-      normalized.includes('/checkout') ||
-      normalized.includes('/payment')
+      normalized === '/admin' ||
+      normalized.startsWith('/admin/') ||
+      normalized === '/moderator' ||
+      normalized.startsWith('/moderator/') ||
+      normalized === '/auth' ||
+      normalized.startsWith('/auth/') ||
+      normalized.includes('/auth/') ||
+      normalized === '/checkout' ||
+      normalized.startsWith('/checkout/') ||
+      normalized.includes('/checkout/') ||
+      normalized === '/payment' ||
+      normalized.startsWith('/payment/') ||
+      normalized.includes('/payment/')
   );
 };
 

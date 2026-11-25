@@ -639,3 +639,7 @@ export const usePrivateChat = () => {
   }
   return context;
 };
+
+export const useOptionalPrivateChat = (): PrivateChatContextType | undefined => {
+  return useContext(PrivateChatContext);
+};

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { EXOCLICK_CONFIG } from '../../config/adsConfig';
+import { useOptionalConsent } from '../../context/ConsentContext';
 import { Volume2, VolumeX, Play, Pause, ExternalLink, Video } from 'lucide-react';
 
 interface HorizontalVastVideoAdProps {
@@ -14,10 +15,23 @@ interface ParsedVastAd {
   trackingUrls: Record<string, string[]>;
 }
 
+export function isSafeHttpUrl(rawUrl: string | undefined | null): rawUrl is string {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 export const HorizontalVastVideoAd: React.FC<HorizontalVastVideoAdProps> = ({
   className = '',
   onStatusChange,
 }) => {
+  const consent = useOptionalConsent();
+  const hasAcceptedConsent = consent?.consentStatus === 'accepted';
+
   const [adData, setAdData] = useState<ParsedVastAd | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'filled' | 'unfilled' | 'error'>('idle');
   const [isMuted, setIsMuted] = useState<boolean>(true);
@@ -27,9 +41,17 @@ export const HorizontalVastVideoAd: React.FC<HorizontalVastVideoAdProps> = ({
   const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    if (!hasAcceptedConsent) {
+      abortControllerRef.current?.abort();
+      setAdData(null);
+      setStatus('idle');
+      return;
+    }
+
     let isCurrent = true;
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    firedEventsRef.current = new Set();
 
     const fetchVastAd = async () => {
       setStatus('loading');
@@ -83,24 +105,33 @@ export const HorizontalVastVideoAd: React.FC<HorizontalVastVideoAdProps> = ({
           return;
         }
 
-        // Extract MediaFiles (prefer MP4 or WebM progressive files)
+        // Extract MediaFiles (prefer safe http(s) MP4 or WebM progressive files)
         const mediaFiles = Array.from(xmlDoc.querySelectorAll('MediaFile'));
         let selectedUrl = '';
 
         for (const mf of mediaFiles) {
           const type = (mf.getAttribute('type') || '').toLowerCase();
           const url = (mf.textContent || '').trim();
-          if (url && (type.includes('mp4') || type.includes('webm') || url.endsWith('.mp4') || url.endsWith('.webm'))) {
+          if (
+            isSafeHttpUrl(url) &&
+            (type.includes('mp4') || type.includes('webm') || url.endsWith('.mp4') || url.endsWith('.webm'))
+          ) {
             selectedUrl = url;
             break;
           }
         }
 
-        if (!selectedUrl && mediaFiles.length > 0) {
-          selectedUrl = (mediaFiles[0].textContent || '').trim();
+        if (!selectedUrl) {
+          for (const mf of mediaFiles) {
+            const fallbackUrl = (mf.textContent || '').trim();
+            if (isSafeHttpUrl(fallbackUrl)) {
+              selectedUrl = fallbackUrl;
+              break;
+            }
+          }
         }
 
-        if (!selectedUrl) {
+        if (!isSafeHttpUrl(selectedUrl)) {
           if (isCurrent) {
             setStatus('unfilled');
             onStatusChange?.('unfilled');
@@ -108,21 +139,22 @@ export const HorizontalVastVideoAd: React.FC<HorizontalVastVideoAdProps> = ({
           return;
         }
 
-        // Extract ClickThrough
+        // Extract and validate ClickThrough
         const clickThroughEl = xmlDoc.querySelector('ClickThrough');
-        const clickThroughUrl = clickThroughEl ? (clickThroughEl.textContent || '').trim() : undefined;
+        const rawClickThrough = clickThroughEl ? (clickThroughEl.textContent || '').trim() : undefined;
+        const clickThroughUrl = isSafeHttpUrl(rawClickThrough) ? rawClickThrough : undefined;
 
-        // Extract Impressions
+        // Extract and validate Impressions
         const impressionUrls = Array.from(xmlDoc.querySelectorAll('Impression'))
           .map((el) => (el.textContent || '').trim())
-          .filter(Boolean);
+          .filter(isSafeHttpUrl);
 
-        // Extract TrackingEvents
+        // Extract and validate TrackingEvents
         const trackingUrls: Record<string, string[]> = {};
         Array.from(xmlDoc.querySelectorAll('Tracking')).forEach((el) => {
           const eventName = el.getAttribute('event');
           const url = (el.textContent || '').trim();
-          if (eventName && url) {
+          if (eventName && isSafeHttpUrl(url)) {
             if (!trackingUrls[eventName]) trackingUrls[eventName] = [];
             trackingUrls[eventName].push(url);
           }
@@ -138,7 +170,7 @@ export const HorizontalVastVideoAd: React.FC<HorizontalVastVideoAdProps> = ({
           setStatus('filled');
           onStatusChange?.('filled');
 
-          // Fire impressions
+          // Fire impressions once
           impressionUrls.forEach((impUrl) => {
             try {
               new Image().src = impUrl;
@@ -163,7 +195,7 @@ export const HorizontalVastVideoAd: React.FC<HorizontalVastVideoAdProps> = ({
       isCurrent = false;
       controller.abort();
     };
-  }, []);
+  }, [hasAcceptedConsent]);
 
   const fireTrackingEvent = (eventName: string) => {
     if (!adData || firedEventsRef.current.has(eventName)) return;
@@ -172,7 +204,9 @@ export const HorizontalVastVideoAd: React.FC<HorizontalVastVideoAdProps> = ({
     const urls = adData.trackingUrls[eventName] || [];
     urls.forEach((url) => {
       try {
-        new Image().src = url;
+        if (isSafeHttpUrl(url)) {
+          new Image().src = url;
+        }
       } catch {
         // Ignore
       }
@@ -217,7 +251,7 @@ export const HorizontalVastVideoAd: React.FC<HorizontalVastVideoAdProps> = ({
     }
   };
 
-  if (status !== 'filled' || !adData) {
+  if (!hasAcceptedConsent || status !== 'filled' || !adData) {
     return null;
   }
 
@@ -259,6 +293,10 @@ export const HorizontalVastVideoAd: React.FC<HorizontalVastVideoAdProps> = ({
           }}
           onTimeUpdate={handleTimeUpdate}
           onEnded={handleEnded}
+          onError={() => {
+            setStatus('unfilled');
+            onStatusChange?.('unfilled');
+          }}
           className="w-full h-full object-contain cursor-pointer"
           onClick={togglePlay}
         />

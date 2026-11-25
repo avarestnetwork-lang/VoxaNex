@@ -25,3 +25,28 @@
     background: #334155;
   }
 }
+
+/* JuicyAds Floating Video Ad (Zone 1133907 via jfc.js -> #fadeinbox).
+   Overrides fadeinbox.js inline centered coordinates so the ad sits bottom-left on desktop
+   opposite the bottom-right ExoClick video slider, without altering native visibility close state. */
+html[data-vx-juicy-float="left"] #fadeinbox {
+  position: fixed !important;
+  left: 16px !important;
+  right: auto !important;
+  top: auto !important;
+  bottom: max(16px, env(safe-area-inset-bottom, 16px)) !important;
+  margin: 0 !important;
+  z-index: 40 !important;
+  max-width: min(320px, calc(100vw - 32px)) !important;
+}
+
+html:not([data-vx-juicy-float="left"]) #fadeinbox {
+  display: none !important;
+}
+
+@media (max-width: 1023px), (max-height: 519px) {
+  html[data-vx-juicy-float="left"] #fadeinbox {
+    display: none !important;
+  }
+}
+

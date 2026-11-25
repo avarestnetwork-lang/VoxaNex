@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from '../../context/RouterContext';
+import { useOptionalConsent } from '../../context/ConsentContext';
 import {
   ADSTERRA_CONFIG,
   EXOCLICK_CONFIG,
@@ -1070,6 +1071,8 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   isLiveChatScreen: isLiveChatScreenProp,
 }) => {
   const { currentRoute } = useRouter();
+  const consent = useOptionalConsent();
+  const isConsentAccepted = consent?.consentStatus === 'accepted';
 
   // Non-Overridable AdSense Route Exclusion Policy
   const isExcludedByRoute = isAdSenseExcludedRoute(currentRoute);
@@ -1421,8 +1424,24 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     cleanupSlotRuntime,
   ]);
 
+  // Clean up runtime if consent is unset or rejected
+  useEffect(() => {
+    if (!isConsentAccepted) {
+      cleanupSlotRuntime();
+      settledUnitSignatureRef.current = null;
+      settledRequiredWidthRef.current = null;
+      if (imperativeHostRef.current && !renderAd) {
+        imperativeHostRef.current.innerHTML = '';
+      }
+      if (adStatusRef.current !== 'idle') {
+        setAdStatus('idle');
+      }
+    }
+  }, [isConsentAccepted, cleanupSlotRuntime, renderAd]);
+
   // 3. Orchestration Effect
   useEffect(() => {
+    if (!isConsentAccepted) return;
     if (adStatus !== 'idle') return;
     if (containerWidth === null || containerWidth <= 0) return;
     if (
@@ -1826,6 +1845,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       updateStatus('unfilled', attemptId);
     }
   }, [
+    isConsentAccepted,
     currentProvider,
     effectiveUnitId,
     renderAd,
@@ -1882,6 +1902,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   };
 
   const showAdSenseIns =
+    isConsentAccepted &&
     !renderAd &&
     currentProvider === 'adsense' &&
     !effectiveIsLiveChatScreen &&

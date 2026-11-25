@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
-type ConsentStatus = 'unset' | 'accepted' | 'rejected';
+export type ConsentStatus = 'unset' | 'accepted' | 'rejected';
 
 interface ConsentContextType {
   consentStatus: ConsentStatus;
@@ -84,4 +84,8 @@ export const useConsent = () => {
   const context = useContext(ConsentContext);
   if (!context) throw new Error('useConsent must be used within a ConsentProvider');
   return context;
+};
+
+export const useOptionalConsent = (): ConsentContextType | undefined => {
+  return useContext(ConsentContext);
 };
