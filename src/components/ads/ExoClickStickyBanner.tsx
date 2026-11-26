@@ -122,12 +122,17 @@ export const ExoClickStickyBanner: React.FC<ExoClickStickyBannerProps> = ({ clas
       const domId = `exoclick-sticky-${zoneId}`;
       host.innerHTML = `<ins id="${domId}" class="${elementClass}" data-zoneid="${zoneId}"></ins>`;
       initializedZoneRef.current = zoneId;
+      const insElement = host.querySelector?.(
+        `ins.${elementClass}[data-zoneid="${zoneId}"]`
+      ) as HTMLElement | null;
 
-      serveExoClickZones({
+      void serveExoClickZones({
+        element: insElement,
         isStillValid: () => isMountedRef.current && !isDismissed && isEligible,
         onScriptError: () => {
           if (isMountedRef.current) {
             setHasFilledCreative(false);
+            setHasNativeCloseButton(false);
           }
         },
       });

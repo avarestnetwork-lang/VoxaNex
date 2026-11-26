@@ -286,7 +286,61 @@ const processAdsterraQueue = async () => {
   isAdsterraProcessing = false;
 };
 
-// Track single script injection per URL to prevent duplicate <script> tags
+const scriptLoadOutcomes = new WeakMap<
+  HTMLScriptElement,
+  { promise: Promise<'loaded' | 'error'> }
+>();
+
+function getSingleScriptLoadPromise(script: HTMLScriptElement): Promise<'loaded' | 'error'> {
+  const existing = scriptLoadOutcomes.get(script);
+  if (existing) {
+    return existing.promise;
+  }
+
+  let settled = false;
+  const promise = new Promise<'loaded' | 'error'>((resolve) => {
+    const finish = (outcome: 'loaded' | 'error') => {
+      if (settled) return;
+      settled = true;
+      script.setAttribute(
+        outcome === 'loaded' ? 'data-ad-script-loaded' : 'data-ad-script-error',
+        'true'
+      );
+      resolve(outcome);
+    };
+
+    if (typeof script.addEventListener === 'function') {
+      script.addEventListener('load', () => finish('loaded'), { once: true });
+      script.addEventListener('error', () => finish('error'), { once: true });
+    } else {
+      const prevOnLoad = (script as any).onload;
+      const prevOnError = (script as any).onerror;
+      (script as any).onload = (...args: any[]) => {
+        if (typeof prevOnLoad === 'function') prevOnLoad(...args);
+        finish('loaded');
+      };
+      (script as any).onerror = (...args: any[]) => {
+        if (typeof prevOnError === 'function') prevOnError(...args);
+        finish('error');
+      };
+    }
+  });
+
+  scriptLoadOutcomes.set(script, { promise });
+  return promise;
+}
+
+export function isExoClickRuntimeReady(win: any = typeof window !== 'undefined' ? window : null): boolean {
+  return Boolean(
+    win &&
+      typeof win.AdProvider === 'object' &&
+      win.AdProvider !== null &&
+      !Array.isArray(win.AdProvider) &&
+      typeof win.AdProvider.push === 'function'
+  );
+}
+
+// Track single script injection per URL to prevent duplicate <script> tags and duplicate listeners
 export function ensureHeadScriptOnce(
   src: string,
   options?: {
@@ -304,30 +358,27 @@ export function ensureHeadScriptOnce(
     existing = null;
   }
 
+  const notifyOutcome = (outcome: 'loaded' | 'error') => {
+    if (options?.isStillValid && !options.isStillValid()) return;
+    if (outcome === 'loaded') {
+      options?.onReady?.();
+    } else {
+      options?.onError?.();
+    }
+  };
+
   if (existing) {
     const win = typeof window !== 'undefined' ? (window as any) : null;
     const isAdProviderRuntimeReady =
-      src === EXOCLICK_CONFIG.scriptUrl &&
-      win?.AdProvider &&
-      !Array.isArray(win.AdProvider) &&
-      typeof win.AdProvider.push === 'function';
+      src === EXOCLICK_CONFIG.scriptUrl && isExoClickRuntimeReady(win);
 
     if (existing.getAttribute('data-ad-script-loaded') === 'true' || isAdProviderRuntimeReady) {
       if (isAdProviderRuntimeReady) {
         existing.setAttribute('data-ad-script-loaded', 'true');
       }
-      options?.onReady?.();
+      notifyOutcome('loaded');
     } else {
-      const handleLoad = () => {
-        existing?.setAttribute('data-ad-script-loaded', 'true');
-        if (!options?.isStillValid || options.isStillValid()) options?.onReady?.();
-      };
-      const handleErr = () => {
-        existing?.setAttribute('data-ad-script-error', 'true');
-        if (!options?.isStillValid || options.isStillValid()) options?.onError?.();
-      };
-      existing.addEventListener?.('load', handleLoad, { once: true });
-      existing.addEventListener?.('error', handleErr, { once: true });
+      void getSingleScriptLoadPromise(existing).then(notifyOutcome);
     }
     return existing;
   }
@@ -340,95 +391,247 @@ export function ensureHeadScriptOnce(
       script.setAttribute(k, v);
     }
   }
-  script.addEventListener?.(
-    'load',
-    () => {
-      script.setAttribute('data-ad-script-loaded', 'true');
-      if (!options?.isStillValid || options.isStillValid()) options?.onReady?.();
-    },
-    { once: true }
-  );
-  script.addEventListener?.(
-    'error',
-    () => {
-      script.setAttribute('data-ad-script-error', 'true');
-      if (!options?.isStillValid || options.isStillValid()) options?.onError?.();
-    },
-    { once: true }
-  );
+  const loadPromise = getSingleScriptLoadPromise(script);
+  void loadPromise.then(notifyOutcome);
   document.head.appendChild(script);
   return script;
 }
 
-let exoClickPendingServeOnScriptLoad = false;
-
-/**
- * Shared single-script ExoClick initialization helper.
- * Ensures https://a.magsrv.com/ad-provider.js is injected once, avoids duplicate
- * pre-load { serve: {} } pushes during concurrent component/StrictMode mounts,
- * and ensures late-mounting slots still execute AdProvider.push({ serve: {} }).
- */
-export function serveExoClickZones(options?: {
+export interface ServeExoClickOptions {
+  element?: HTMLElement | null;
   isStillValid?: () => boolean;
   onScriptError?: () => void;
-}): void {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+}
+
+interface PendingExoClickServeRequest extends ServeExoClickOptions {
+  resolve: (served: boolean) => void;
+}
+
+let exoClickTrackedDoc: Document | null = null;
+let exoClickTrackedScript: HTMLScriptElement | null = null;
+let exoClickInFlightLoadPromise: Promise<boolean> | null = null;
+let pendingExoClickServeRequests: PendingExoClickServeRequest[] = [];
+let exoClickBatchFlushScheduled = false;
+let servedExoClickElements = new WeakSet<HTMLElement>();
+
+export function resetExoClickLoaderForTesting(): void {
+  exoClickTrackedDoc = null;
+  exoClickTrackedScript = null;
+  exoClickInFlightLoadPromise = null;
+  pendingExoClickServeRequests = [];
+  exoClickBatchFlushScheduled = false;
+  servedExoClickElements = new WeakSet<HTMLElement>();
+}
+
+function syncExoClickTrackerWithDocument(): void {
+  if (typeof document === 'undefined') return;
+  const currentScript = document.querySelector?.(
+    `script[src="${EXOCLICK_CONFIG.scriptUrl}"]`
+  ) as HTMLScriptElement | null;
+  if (
+    exoClickTrackedDoc !== document ||
+    (exoClickTrackedScript !== null && currentScript !== exoClickTrackedScript)
+  ) {
+    exoClickTrackedDoc = document;
+    exoClickTrackedScript = currentScript;
+    exoClickInFlightLoadPromise = null;
+    pendingExoClickServeRequests = [];
+    exoClickBatchFlushScheduled = false;
+    servedExoClickElements = new WeakSet<HTMLElement>();
+  }
+}
+
+function isExoClickElementEligibleForServe(el: HTMLElement): boolean {
+  if (typeof el.isConnected === 'boolean' && !el.isConnected) {
+    return false;
+  }
+  const processedAttr = el.getAttribute?.('data-processed');
+  if (processedAttr === 'true' || processedAttr === 'domain-restricted') {
+    return false;
+  }
+  if (servedExoClickElements.has(el)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Shared single-flight script loader for https://a.magsrv.com/ad-provider.js.
+ * Concurrent components share the exact same in-flight Promise and single script tag/listeners.
+ */
+export function loadExoClickProviderScript(): Promise<boolean> {
+  if (typeof window === 'undefined' || typeof document === 'undefined' || !document.head) {
+    return Promise.resolve(false);
+  }
+
+  syncExoClickTrackerWithDocument();
   const win = window as any;
 
-  const isRuntimeLoaded =
-    typeof win.AdProvider === 'object' &&
-    win.AdProvider !== null &&
-    !Array.isArray(win.AdProvider) &&
-    typeof win.AdProvider.push === 'function';
+  if (isExoClickRuntimeReady(win)) {
+    const existing = document.querySelector?.(
+      `script[src="${EXOCLICK_CONFIG.scriptUrl}"]`
+    ) as HTMLScriptElement | null;
+    existing?.setAttribute?.('data-ad-script-loaded', 'true');
+    return Promise.resolve(true);
+  }
 
-  const pushServeIfValid = () => {
-    if (options?.isStillValid && !options.isStillValid()) return;
-    win.AdProvider = win.AdProvider || [];
-    if (typeof win.AdProvider.push === 'function') {
-      win.AdProvider.push({ serve: {} });
-    }
-  };
+  const existing = document.querySelector?.(
+    `script[src="${EXOCLICK_CONFIG.scriptUrl}"]`
+  ) as HTMLScriptElement | null;
 
-  if (isRuntimeLoaded) {
-    ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl, {
-      attrs: { type: 'application/javascript' },
-      isStillValid: options?.isStillValid,
-      onError: options?.onScriptError,
-    });
-    pushServeIfValid();
-    return;
+  if (exoClickInFlightLoadPromise && existing === exoClickTrackedScript) {
+    return exoClickInFlightLoadPromise;
+  }
+
+  if (existing && existing.getAttribute?.('data-ad-script-error') === 'true') {
+    existing.remove();
   }
 
   const scriptEl = ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl, {
     attrs: { type: 'application/javascript' },
-    isStillValid: options?.isStillValid,
-    onReady: () => {
-      exoClickPendingServeOnScriptLoad = false;
-      if (
-        typeof win.AdProvider === 'object' &&
-        win.AdProvider !== null &&
-        !Array.isArray(win.AdProvider) &&
-        typeof win.AdProvider.push === 'function'
-      ) {
-        pushServeIfValid();
-      }
-    },
-    onError: () => {
-      exoClickPendingServeOnScriptLoad = false;
-      options?.onScriptError?.();
-    },
   });
 
-  if (scriptEl && scriptEl.getAttribute('data-ad-script-loaded') === 'true') {
-    pushServeIfValid();
+  if (!scriptEl) {
+    return Promise.resolve(false);
+  }
+
+  exoClickTrackedDoc = document;
+  exoClickTrackedScript = scriptEl;
+
+  if (scriptEl.getAttribute?.('data-ad-script-loaded') === 'true') {
+    if (isExoClickRuntimeReady(win)) {
+      return Promise.resolve(true);
+    }
+    scriptEl.setAttribute?.('data-ad-script-error', 'true');
+    return Promise.resolve(false);
+  }
+
+  exoClickInFlightLoadPromise = getSingleScriptLoadPromise(scriptEl).then((outcome) => {
+    const ready = outcome === 'loaded' && isExoClickRuntimeReady(win);
+    if (!ready) {
+      scriptEl.setAttribute?.('data-ad-script-error', 'true');
+    }
+    exoClickInFlightLoadPromise = null;
+    return ready;
+  });
+
+  return exoClickInFlightLoadPromise;
+}
+
+function flushPendingExoClickServeBatch(loaded: boolean): void {
+  exoClickBatchFlushScheduled = false;
+  const batch = pendingExoClickServeRequests.splice(0);
+  if (batch.length === 0) return;
+
+  const validRequests = batch.filter((req) => !req.isStillValid || req.isStillValid());
+  const win = typeof window !== 'undefined' ? (window as any) : null;
+
+  if (!loaded || !isExoClickRuntimeReady(win)) {
+    for (const req of validRequests) {
+      try {
+        req.onScriptError?.();
+      } catch {
+        // Ignore callback failure
+      }
+    }
+    for (const req of batch) {
+      req.resolve(false);
+    }
     return;
   }
 
-  win.AdProvider = win.AdProvider || [];
-  if (Array.isArray(win.AdProvider) && !exoClickPendingServeOnScriptLoad) {
-    win.AdProvider.push({ serve: {} });
-    exoClickPendingServeOnScriptLoad = true;
+  const eligibleRequests: PendingExoClickServeRequest[] = [];
+  const docQueryAll =
+    typeof document !== 'undefined' && typeof document.querySelectorAll === 'function'
+      ? document.querySelectorAll.bind(document)
+      : null;
+
+  for (const req of validRequests) {
+    if (req.element) {
+      if (isExoClickElementEligibleForServe(req.element)) {
+        eligibleRequests.push(req);
+      }
+    } else if (docQueryAll) {
+      const domNodes = Array.from(
+        docQueryAll('ins[data-zoneid]') || []
+      ) as HTMLElement[];
+      if (domNodes.length === 0 || domNodes.some((node) => isExoClickElementEligibleForServe(node))) {
+        eligibleRequests.push(req);
+      }
+    } else {
+      eligibleRequests.push(req);
+    }
   }
+
+  if (eligibleRequests.length === 0) {
+    for (const req of batch) {
+      req.resolve(false);
+    }
+    return;
+  }
+
+  for (const req of eligibleRequests) {
+    if (req.element) {
+      servedExoClickElements.add(req.element);
+    }
+  }
+
+  try {
+    win.AdProvider.push({ serve: {} });
+  } catch {
+    for (const req of eligibleRequests) {
+      if (req.element) {
+        servedExoClickElements.delete(req.element);
+      }
+      try {
+        req.onScriptError?.();
+      } catch {
+        // Ignore callback failure
+      }
+    }
+    for (const req of batch) {
+      req.resolve(false);
+    }
+    return;
+  }
+
+  const eligibleSet = new Set(eligibleRequests);
+  for (const req of batch) {
+    req.resolve(eligibleSet.has(req));
+  }
+}
+
+/**
+ * Shared single-flight ExoClick zone initialization helper.
+ * Ensures https://a.magsrv.com/ad-provider.js loads once, never duplicates listeners
+ * or blind pre+post-load { serve: {} } pushes, coalesces concurrent mounts into a single
+ * serve batch, and preserves already-processed zones on subsequent legitimate mounts.
+ */
+export function serveExoClickZones(options?: ServeExoClickOptions): Promise<boolean> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.resolve(false);
+  }
+
+  syncExoClickTrackerWithDocument();
+
+  return new Promise<boolean>((resolve) => {
+    pendingExoClickServeRequests.push({
+      element: options?.element,
+      isStillValid: options?.isStillValid,
+      onScriptError: options?.onScriptError,
+      resolve,
+    });
+
+    void loadExoClickProviderScript().then((loaded) => {
+      if (exoClickBatchFlushScheduled) return;
+      exoClickBatchFlushScheduled = true;
+      const schedule =
+        typeof queueMicrotask === 'function'
+          ? queueMicrotask
+          : (cb: () => void) => void Promise.resolve().then(cb);
+      schedule(() => flushPendingExoClickServeBatch(loaded));
+    });
+  });
 }
 
 function violatesCreativeBounds(
@@ -1303,6 +1506,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     isMountedRef.current = true;
     const token = slotInstanceTokenRef.current;
     isSlotOwnerRef.current = claimSlotInstance(slotId, token);
+    if (adStatusRef.current === 'loading') {
+      setAdStatus('idle');
+    }
     const container = adRef.current;
 
     const handleCaptureLoad = (e: Event) => {
@@ -1793,8 +1999,10 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
             : EXOCLICK_CONFIG.responsiveBannerElementClass;
         const domId = `exoclick-ins-${zoneId}-${slotId}`;
         imperativeHostRef.current.innerHTML = `<ins id="${domId}" class="${elementClass}" data-zoneid="${zoneId}" data-keywords="chat,bangla,desi,dating,social,friendship,community,online,international,south-asia,bangladesh,india,usa,united-states,uk,united-kingdom,canada,australia,new-zealand,ireland,germany,france,netherlands,sweden,norway,denmark,switzerland"></ins>`;
+        const insElement = imperativeHostRef.current.querySelector?.('ins') as HTMLElement | null;
 
-        serveExoClickZones({
+        void serveExoClickZones({
+          element: insElement,
           isStillValid: () => isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current),
           onScriptError: () => updateStatus('error', attemptId),
         });

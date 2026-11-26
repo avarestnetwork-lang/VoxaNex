@@ -282,8 +282,12 @@ export const ExoClickVideoSlider: React.FC<ExoClickVideoSliderProps> = ({ classN
       const domId = `exoclick-slider-${zoneId}`;
       host.innerHTML = `<ins class="${elementClass}" data-zoneid="${zoneId}" id="${domId}"></ins>`;
       initializedZoneRef.current = zoneId;
+      const insElement = host.querySelector?.(
+        `ins.${elementClass}[data-zoneid="${zoneId}"]`
+      ) as HTMLElement | null;
 
-      serveExoClickZones({
+      void serveExoClickZones({
+        element: insElement,
         isStillValid: () => isMountedRef.current && !isDismissed && isEligible,
         onScriptError: () => {
           if (isMountedRef.current) {

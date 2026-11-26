@@ -14,7 +14,13 @@ import {
   isRouteExcludedFromFooterAds,
 } from '../src/config/adsConfig';
 import { isSafeHttpUrl } from '../src/components/ads/HorizontalVastVideoAd';
-import { ensureHeadScriptOnce, resolveEffectiveUnitId, serveExoClickZones } from '../src/components/ads/AdPlacementBox';
+import {
+  ensureHeadScriptOnce,
+  loadExoClickProviderScript,
+  resetExoClickLoaderForTesting,
+  resolveEffectiveUnitId,
+  serveExoClickZones,
+} from '../src/components/ads/AdPlacementBox';
 import { CentralizedAdCoordinator } from '../src/components/ads/CentralizedAdCoordinator';
 import { ConsentProvider } from '../src/context/ConsentContext';
 import { RouterProvider } from '../src/context/RouterContext';
@@ -69,7 +75,7 @@ function collectFilesRecursive(dir: string): string[] {
   return results;
 }
 
-function runTests() {
+async function runTests() {
   const adsConfigSource = fs.readFileSync(path.resolve('src/config/adsConfig.ts'), 'utf-8');
   const vastSource = fs.readFileSync(path.resolve('src/components/ads/HorizontalVastVideoAd.tsx'), 'utf-8');
   const coordinatorSource = fs.readFileSync(path.resolve('src/components/ads/CentralizedAdCoordinator.tsx'), 'utf-8');
@@ -398,43 +404,257 @@ function runTests() {
     'CallContext elevates live WebRTC call modal above ads and broadcasts data-vx-call-active'
   );
 
-  // Single-injection & deduplicated serve test for ensureHeadScriptOnce + serveExoClickZones
-  (() => {
-    const prevDoc = (global as any).document;
-    const prevWin = (global as any).window;
+  // -------------------------------------------------------------------------
+  // 6. Single-Flight ExoClick Loader Concurrency, Multi-Zone & Error Tests
+  // -------------------------------------------------------------------------
+  console.log('\n--- 6. ExoClick Single-Flight Loader Concurrency & Remount Safety ---');
+
+  const createMockDomHarness = (initialAdProvider: any = []) => {
     const appendedScripts: any[] = [];
-    (global as any).window = { AdProvider: [] };
-    (global as any).document = {
-      head: { appendChild: (node: any) => (appendedScripts.push(node), node) },
-      querySelector: (selector: string) => appendedScripts.find((s) => `script[src="${s.src}"]` === selector) || null,
-      createElement: (tag: string) => ({
-        tagName: tag.toUpperCase(),
-        async: false,
-        src: '',
-        attrs: {} as Record<string, string>,
+    const registeredIns: any[] = [];
+    const listenerCounts = new WeakMap<any, Record<string, number>>();
+    const dispatchedPayloads: any[] = [];
+
+    const createIns = (zoneId: string, elementClass: string, connected = true) => {
+      const attrs: Record<string, string> = {
+        class: elementClass,
+        'data-zoneid': zoneId,
+      };
+      const node: any = {
+        tagName: 'INS',
+        isConnected: connected,
         setAttribute(k: string, v: string) {
-          this.attrs[k] = v;
+          attrs[k] = String(v);
         },
         getAttribute(k: string) {
-          return this.attrs[k] ?? null;
+          return attrs[k] ?? null;
         },
-        addEventListener() {},
-        remove() {},
-      }),
+        hasAttribute(k: string) {
+          return Object.prototype.hasOwnProperty.call(attrs, k);
+        },
+      };
+      registeredIns.push(node);
+      return node;
     };
+
+    const doc: any = {
+      head: {
+        appendChild(node: any) {
+          appendedScripts.push(node);
+          return node;
+        },
+      },
+      querySelector(selector: string) {
+        return appendedScripts.find((s) => `script[src="${s.src}"]` === selector) || null;
+      },
+      querySelectorAll(selector: string) {
+        if (selector === 'ins[data-zoneid]') {
+          return registeredIns.filter((n) => n.isConnected !== false);
+        }
+        return [];
+      },
+      createElement(tag: string) {
+        const attrs: Record<string, string> = {};
+        const listeners: Record<string, Array<() => void>> = {};
+        const counts: Record<string, number> = { load: 0, error: 0 };
+        const el: any = {
+          tagName: tag.toUpperCase(),
+          async: false,
+          src: '',
+          setAttribute(k: string, v: string) {
+            attrs[k] = String(v);
+          },
+          getAttribute(k: string) {
+            return attrs[k] ?? null;
+          },
+          addEventListener(type: string, cb: () => void) {
+            listeners[type] = listeners[type] || [];
+            listeners[type].push(cb);
+            counts[type] = (counts[type] || 0) + 1;
+          },
+          trigger(type: 'load' | 'error') {
+            for (const cb of listeners[type] || []) cb();
+          },
+          remove() {
+            const idx = appendedScripts.indexOf(el);
+            if (idx !== -1) appendedScripts.splice(idx, 1);
+          },
+        };
+        listenerCounts.set(el, counts);
+        return el;
+      },
+    };
+
+    const win: any = {
+      AdProvider: initialAdProvider,
+    };
+
+    const installExoClickRuntimeOnWindow = () => {
+      win.AdProvider = {
+        push(payload: any) {
+          dispatchedPayloads.push(payload);
+          for (const node of registeredIns) {
+            if (node.isConnected !== false && !node.hasAttribute('data-processed')) {
+              node.setAttribute('data-processed', 'true');
+            }
+          }
+        },
+      };
+    };
+
+    return {
+      win,
+      doc,
+      appendedScripts,
+      registeredIns,
+      listenerCounts,
+      dispatchedPayloads,
+      createIns,
+      installExoClickRuntimeOnWindow,
+    };
+  };
+
+  // 6.1 Concurrent cold-load mounts share ONE <script>, ONE load/error listener pair,
+  //     NEVER double-push before+after load, and coalesce into ONE serve batch for multiple zones
+  {
+    const prevDoc = (global as any).document;
+    const prevWin = (global as any).window;
+    const h = createMockDomHarness([]);
+    (global as any).window = h.win;
+    (global as any).document = h.doc;
+    resetExoClickLoaderForTesting();
+
     try {
+      const insSlider = h.createIns('6102494', 'eas6a97888e31');
+      const insSticky = h.createIns('6110028', 'eas6a97888e17');
+      const insTopBanner = h.createIns('6109952', 'eas6a97888e38');
+
+      // Concurrent shared script loader promises must be the exact same in-flight promise
+      const pLoad1 = loadExoClickProviderScript();
+      const pLoad2 = loadExoClickProviderScript();
+      assert.strictEqual(pLoad1, pLoad2, 'Concurrent callers share identical in-flight script Promise');
+      assert.strictEqual(h.appendedScripts.length, 1, 'Provider script inserted only once');
+
+      // Nothing blindly pushed to pre-load array before script load completes
+      assert.strictEqual(h.win.AdProvider.length, 0, 'Zero blind pre-load { serve: {} } pushes queued before load');
+
       const s1 = ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl);
       const s2 = ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl);
-      assert.strictEqual(appendedScripts.length, 1);
       assert.strictEqual(s1, s2);
-      serveExoClickZones();
-      serveExoClickZones();
-      assert.strictEqual((global as any).window.AdProvider.length, 1);
+      assert.strictEqual(h.appendedScripts.length, 1);
+
+      const pServe1 = serveExoClickZones({ element: insSlider, isStillValid: () => true });
+      const pServe2 = serveExoClickZones({ element: insSticky, isStillValid: () => true });
+      const pServe3 = serveExoClickZones({ element: insTopBanner, isStillValid: () => true });
+
+      const counts = h.listenerCounts.get(h.appendedScripts[0])!;
+      assert.strictEqual(counts.load, 1, 'Only ONE load listener attached to provider script');
+      assert.strictEqual(counts.error, 1, 'Only ONE error listener attached to provider script');
+
+      h.installExoClickRuntimeOnWindow();
+      h.appendedScripts[0].trigger('load');
+
+      const results = await Promise.all([pLoad1, pLoad2, pServe1, pServe2, pServe3]);
+      assert.deepStrictEqual(results, [true, true, true, true, true]);
+      assert.strictEqual(h.dispatchedPayloads.length, 1, 'Concurrent batch served cleanly in ONE AdProvider.push call');
+      assert.strictEqual(insSlider.getAttribute('data-processed'), 'true');
+      assert.strictEqual(insSticky.getAttribute('data-processed'), 'true');
+      assert.strictEqual(insTopBanner.getAttribute('data-processed'), 'true');
+
+      // 6.2 Subsequent legitimate zone mounts later while earlier zones stay valid
+      const insMultiFormat = h.createIns('6102500', 'eas6a97888e38');
+      const lateServed = await serveExoClickZones({ element: insMultiFormat, isStillValid: () => true });
+      assert.strictEqual(lateServed, true);
+      assert.strictEqual(h.dispatchedPayloads.length, 2, 'Subsequent legitimate zone initializes cleanly');
+      assert.strictEqual(insMultiFormat.getAttribute('data-processed'), 'true');
+      assert.strictEqual(h.appendedScripts.length, 1, 'Script tag still appears only once');
+
+      // 6.3 Duplicate serve call on already-processed zone does not re-fire
+      const dupServed = await serveExoClickZones({ element: insSlider, isStillValid: () => true });
+      assert.strictEqual(dupServed, false);
+      assert.strictEqual(h.dispatchedPayloads.length, 2, 'Already-processed zone is not re-served');
     } finally {
+      resetExoClickLoaderForTesting();
       (global as any).document = prevDoc;
       (global as any).window = prevWin;
     }
-  })();
+  }
+
+  // 6.4 React StrictMode / unmounted & remounted safety
+  {
+    const prevDoc = (global as any).document;
+    const prevWin = (global as any).window;
+    const h = createMockDomHarness();
+    h.installExoClickRuntimeOnWindow();
+    (global as any).window = h.win;
+    (global as any).document = h.doc;
+    resetExoClickLoaderForTesting();
+
+    try {
+      // Pre-loaded runtime before component mounts -> zero <script> insertion
+      const staleIns = h.createIns('6109952', 'eas6a97888e38', false); // detached on StrictMode cleanup
+      let attemptValid1 = false;
+      const freshIns = h.createIns('6109952', 'eas6a97888e38', true);
+
+      const r1 = serveExoClickZones({ element: staleIns, isStillValid: () => attemptValid1 });
+      const r2 = serveExoClickZones({ element: freshIns, isStillValid: () => true });
+      const [res1, res2] = await Promise.all([r1, r2]);
+
+      assert.strictEqual(res1, false, 'Invalidated/detached StrictMode mount is skipped');
+      assert.strictEqual(res2, true, 'Active remount is served cleanly');
+      assert.strictEqual(h.appendedScripts.length, 0, 'Pre-loaded runtime does not insert redundant script');
+      assert.strictEqual(h.dispatchedPayloads.length, 1, 'Only ONE serve dispatched across StrictMode double-mount');
+    } finally {
+      resetExoClickLoaderForTesting();
+      (global as any).document = prevDoc;
+      (global as any).window = prevWin;
+    }
+  }
+
+  // 6.5 Script load failure & blocked AdProvider stub handling
+  {
+    const prevDoc = (global as any).document;
+    const prevWin = (global as any).window;
+    const h = createMockDomHarness([]);
+    (global as any).window = h.win;
+    (global as any).document = h.doc;
+    resetExoClickLoaderForTesting();
+
+    try {
+      const insEl = h.createIns('6102494', 'eas6a97888e31');
+      let errorCount = 0;
+      const pErr = serveExoClickZones({
+        element: insEl,
+        isStillValid: () => true,
+        onScriptError: () => {
+          errorCount += 1;
+        },
+      });
+      h.appendedScripts[0].trigger('error');
+      const servedAfterError = await pErr;
+      assert.strictEqual(servedAfterError, false);
+      assert.strictEqual(errorCount, 1, 'Script error invokes onScriptError safely once');
+      assert.strictEqual(h.dispatchedPayloads.length, 0);
+
+      // Simulate blocked/empty 200 script (load fires, but window.AdProvider remains an Array)
+      const pBlocked = serveExoClickZones({
+        element: insEl,
+        isStillValid: () => true,
+        onScriptError: () => {
+          errorCount += 1;
+        },
+      });
+      assert.strictEqual(h.appendedScripts.length, 1, 'Errored script replaced cleanly on explicit next mount');
+      h.appendedScripts[0].trigger('load'); // AdProvider still uninitialized Array!
+      const servedAfterBlock = await pBlocked;
+      assert.strictEqual(servedAfterBlock, false);
+      assert.strictEqual(errorCount, 2, 'Blocked/empty script stub triggers onScriptError instead of fake success');
+    } finally {
+      resetExoClickLoaderForTesting();
+      (global as any).document = prevDoc;
+      (global as any).window = prevWin;
+    }
+  }
 
   const dashboardSource = fs.readFileSync(path.resolve('src/pages/MemberDashboardPage.tsx'), 'utf-8');
   assert(dashboardSource.includes('<HorizontalVastVideoAd'), 'Member Dashboard retains explicit HorizontalVastVideoAd');
@@ -443,9 +663,13 @@ function runTests() {
   assert(appSource.includes('<CentralizedAdCoordinator />'), 'App.tsx mounts CentralizedAdCoordinator at root');
 
   console.log('✅ [PASSED] 5.1 Responsive slider/sticky rules, user video isolation, and script deduplication verified');
+  console.log('✅ [PASSED] 6.1 ExoClick single-flight concurrency, StrictMode remounts, multi-zone, and error tests verified');
   console.log('\n================================================================');
   console.log('  ALL EXOCLICK MIGRATION & RESPONSIVE SLIDER TESTS PASSED!');
   console.log('================================================================\n');
 }
 
-runTests();
+void runTests().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
