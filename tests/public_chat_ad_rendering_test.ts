@@ -24,14 +24,11 @@ import {
 import {
   ADSTERRA_CONFIG,
   EXOCLICK_CONFIG,
-  JUICYADS_CONFIG,
-  MONETAG_CONFIG,
   ADSENSE_CONFIG,
   TRAFFICSTARS_CONFIG,
   PROVIDER_REFRESH_POLICIES,
   getProviderRefreshPolicy,
   getProviderRotation,
-  getSessionAdRotationParity,
   isAdSenseExcludedRoute,
   isRouteExcludedFromFooterAds,
   getAdsterraUnitForWidth,
@@ -85,7 +82,7 @@ async function runAdRenderingTests() {
   assert(
     adPlacementBoxSource.includes('ticks >= baseTimeoutTicks') &&
       adPlacementBoxSource.includes("updateStatus('unfilled', attemptId)"),
-    '1.4 JuicyAds timeout without actual rendered content marks slot unfilled rather than erroneously filled'
+    '1.4 Ad polling timeout without actual rendered content marks slot unfilled rather than erroneously filled'
   );
 
   // --- Task 2: Non-Overridable Route Exclusion & AdSense Safety ---
@@ -142,42 +139,29 @@ async function runAdRenderingTests() {
 
   assert(ADSTERRA_CONFIG.publisherId === '6190760', '3.1 Adsterra Publisher ID is 6190760');
   assert(ADSTERRA_CONFIG.nativeUnitId === '4085ad0bb94688c1cdc0917f2df29137', '3.2 Adsterra Native Unit ID is intact');
-  assert(JUICYADS_CONFIG.zones.banner300x62 === '1131763', '3.3 JuicyAds 300x62 Zone ID is 1131763');
-  assert(JUICYADS_CONFIG.zones.banner728x102 === '1131766', '3.4 JuicyAds 728x102 Zone ID is 1131766');
-  assert(MONETAG_CONFIG.scriptUrl === 'https://nap5k.com/tag.min.js', '3.5 Monetag script URL is correct');
-  assert(MONETAG_CONFIG.enabled === true, '3.6 Monetag is enabled');
-  assert(EXOCLICK_CONFIG.enabled === true, '3.7 ExoClick is enabled');
-  assert(EXOCLICK_CONFIG.zoneId === '6087300', '3.7a ExoClick zone ID is 6087300');
-  assert(EXOCLICK_CONFIG.elementClass === 'eas6a97888e2', '3.7b ExoClick element class is eas6a97888e2');
-  assert(MONETAG_CONFIG.zoneId === '12241585', '3.7c Monetag zone ID is 12241585');
+  assert(EXOCLICK_CONFIG.enabled === true, '3.3 ExoClick is enabled');
+  assert(EXOCLICK_CONFIG.zoneId === '6087300', '3.4 ExoClick 300x250 zone ID is 6087300');
+  assert(EXOCLICK_CONFIG.elementClass === 'eas6a97888e2', '3.5 ExoClick 300x250 element class is eas6a97888e2');
+  assert(EXOCLICK_CONFIG.responsiveBannerZoneId === '6109952', '3.6 ExoClick multi-format banner zone ID is 6109952');
+  assert(EXOCLICK_CONFIG.responsiveBannerElementClass === 'eas6a97888e38', '3.7 ExoClick banner element class is eas6a97888e38');
+  assert(EXOCLICK_CONFIG.stickyBannerZoneId === '6110028', '3.7a ExoClick sticky banner zone ID is 6110028');
+  assert(EXOCLICK_CONFIG.stickyBannerElementClass === 'eas6a97888e17', '3.7b ExoClick sticky banner class is eas6a97888e17');
+  assert(EXOCLICK_CONFIG.horizontalVastZoneId === '6109970', '3.7c ExoClick VAST zone ID is 6109970');
+  assert(EXOCLICK_CONFIG.videoSliderZoneId === '6102500', '3.7d ExoClick Video Slider zone ID 6102500 is preserved');
 
   const chatroomRotation = getProviderRotation('top', true, 'public-chatroom-top');
   assert(
-    chatroomRotation.length === 2 &&
-      chatroomRotation.includes('juicyads') &&
-      chatroomRotation.includes('exoclick') &&
+    chatroomRotation.length === 1 &&
+      chatroomRotation[0] === 'exoclick' &&
       !chatroomRotation.includes('adsterra') &&
-      !chatroomRotation.includes('monetag') &&
       !chatroomRotation.includes('adsense'),
-    '3.8 Chatroom regular rotation strictly enforces ExoClick and JuicyAds only'
+    '3.8 Chatroom regular rotation strictly enforces ExoClick only'
   );
 
   const footerRotation = getProviderRotation('footer', true, 'global-footer-responsive');
   assert(
     footerRotation.length === 1 && footerRotation.includes('adsterra'),
     '3.8b Footer rotation strictly enforces Adsterra only'
-  );
-
-  const bodyBottomRotation = getProviderRotation('content-gap', true, 'public-chatroom-body-bottom');
-  assert(
-    bodyBottomRotation.length === 1 && bodyBottomRotation.includes('monetag'),
-    '3.8c Body-bottom rotation strictly enforces Monetag only for public-chatroom-body-bottom'
-  );
-
-  const wildcardBodyBottomRotation = getProviderRotation('body-bottom', true, 'unrelated-slot');
-  assert(
-    !wildcardBodyBottomRotation.includes('monetag'),
-    '3.8d Generic body-bottom position wildcard no longer enables Monetag on unrelated slots'
   );
 
   const publicFooterRotation = getProviderRotation('footer', false, 'global-footer-responsive');
@@ -188,13 +172,11 @@ async function runAdRenderingTests() {
 
   const nonChatroomRotation = getProviderRotation('top', false, 'public-content-top');
   assert(
-    nonChatroomRotation.length === 3 &&
+    nonChatroomRotation.length === 2 &&
       nonChatroomRotation.includes('adsense') &&
-      nonChatroomRotation.includes('juicyads') &&
       nonChatroomRotation.includes('exoclick') &&
-      !nonChatroomRotation.includes('adsterra') &&
-      !nonChatroomRotation.includes('monetag'),
-    '3.9 Non-chatroom non-footer rotation allows AdSense, JuicyAds, and ExoClick while excluding Footer-only Adsterra and slot-only Monetag'
+      !nonChatroomRotation.includes('adsterra'),
+    '3.9 Non-chatroom non-footer rotation allows AdSense and ExoClick while excluding Footer-only Adsterra'
   );
 
   const publicChatPageSource = fs.readFileSync(
@@ -211,26 +193,29 @@ async function runAdRenderingTests() {
       publicChatPageSource.includes('slotId="public-chatroom-status-above"') &&
       !publicChatPageSource.includes('public-chatroom-status-below') &&
       publicChatPageSource.includes('slotId="public-chatroom-message-inline"') &&
-      publicChatPageSource.includes('slotId="public-chatroom-body-bottom"'),
-    '3.10 Approved chatroom ad placement IDs are present, empty left/right rails removed, and public-chatroom-status-below is removed'
+      !publicChatPageSource.includes('public-chatroom-body-bottom') &&
+      !publicChatPageSource.includes('chatroom-juicyads-bottom') &&
+      publicChatPageSource.includes('slotId="chatroom-explore-bottom"'),
+    '3.10 Approved chatroom ExoClick placement IDs are present and Monetag/JuicyAds/vertical rails are completely removed'
   );
   assert(
     !appSource.includes('<MonetagScript') &&
+      !fs.existsSync(path.resolve('src/components/ads/MonetagScript.tsx')) &&
       resolveEffectiveUnitId({
-        provider: 'monetag',
-        position: 'body-bottom',
+        provider: 'adsterra',
+        position: 'content-gap',
         slotId: 'some-other-slot',
         containerWidth: 728,
-        isLiveChatScreen: true,
+        isLiveChatScreen: false,
       }) === null &&
       resolveEffectiveUnitId({
-        provider: 'monetag',
-        position: 'content-gap',
-        slotId: 'public-chatroom-body-bottom',
+        provider: 'exoclick',
+        position: 'top',
+        slotId: 'public-chatroom-top',
         containerWidth: 728,
         isLiveChatScreen: true,
-      }) === MONETAG_CONFIG.zoneId,
-    '3.10b Monetag executes strictly on the single dedicated public-chatroom-body-bottom slot (no global script or wildcard position)'
+      }) === EXOCLICK_CONFIG.responsiveBannerZoneId,
+    '3.10b Adsterra stays restricted to Footer, MonetagScript is removed, and chatroom banners resolve ExoClick 6109952'
   );
   assert(
     publicChatPageSource.includes('grid grid-cols-1 grid-rows-[minmax(0,1fr)]') &&
@@ -305,36 +290,46 @@ async function runAdRenderingTests() {
     '8.4 Insufficient width (<320px): Returns null to trigger fallback/clean collapse'
   );
 
-  // 8.5 JuicyAds horizontal mobile vs desktop
-  const juicyMobile = resolveEffectiveUnitId({
-    provider: 'juicyads',
+  // 8.5 ExoClick horizontal slots (6109952) & Explore bottom 300x250 (6087300)
+  const exoMobile = resolveEffectiveUnitId({
+    provider: 'exoclick',
     position: 'top',
     slotId: 'public-chatroom-top',
     containerWidth: 375,
     isLiveChatScreen: true,
   });
   assert(
-    juicyMobile === JUICYADS_CONFIG.zones.banner300x62,
-    '8.5 JuicyAds horizontal on mobile (375px) selects 300x62 zone (1131763)'
+    exoMobile === EXOCLICK_CONFIG.responsiveBannerZoneId,
+    '8.5 ExoClick horizontal on mobile (375px) selects multi-format zone (6109952)'
   );
 
-  const juicyDesktop = resolveEffectiveUnitId({
-    provider: 'juicyads',
+  const exoDesktop = resolveEffectiveUnitId({
+    provider: 'exoclick',
     position: 'top',
     slotId: 'public-chatroom-top',
     containerWidth: 1280,
     isLiveChatScreen: true,
   });
   assert(
-    juicyDesktop === JUICYADS_CONFIG.zones.banner728x102,
-    '8.6 JuicyAds horizontal on desktop (1280px) selects 728x102 zone (1131766)'
+    exoDesktop === EXOCLICK_CONFIG.responsiveBannerZoneId,
+    '8.6 ExoClick horizontal on desktop (1280px) selects multi-format zone (6109952)'
   );
 
+  const exoExploreBottom = resolveEffectiveUnitId({
+    provider: 'exoclick',
+    position: 'bottom',
+    slotId: 'chatroom-explore-bottom',
+    containerWidth: 320,
+    isLiveChatScreen: true,
+  });
+  assert(
+    exoExploreBottom === EXOCLICK_CONFIG.zoneId,
+    '8.7 Explore bottom (320px) resolves dedicated ExoClick 300x250 zone (6087300)'
+  );
 
-
-  // 8.9 JuicyAds vertical sidebar: narrow vs wide
-  const juicyVerticalNarrow = resolveEffectiveUnitId({
-    provider: 'juicyads',
+  // 8.9 ExoClick vertical sidebar: narrow vs wide (rejected cleanly)
+  const exoVerticalNarrow = resolveEffectiveUnitId({
+    provider: 'exoclick',
     position: 'left',
     slotId: 'public-chatroom-left',
     isVertical: true,
@@ -342,12 +337,12 @@ async function runAdRenderingTests() {
     isLiveChatScreen: true,
   });
   assert(
-    juicyVerticalNarrow === null,
-    '8.9 JuicyAds vertical on narrow rail (160px) returns null to prevent clipping'
+    exoVerticalNarrow === null,
+    '8.9 ExoClick vertical on narrow rail (160px) returns null to prevent clipping'
   );
 
-  const juicyVerticalWide = resolveEffectiveUnitId({
-    provider: 'juicyads',
+  const exoVerticalWide = resolveEffectiveUnitId({
+    provider: 'exoclick',
     position: 'left',
     slotId: 'public-chatroom-left',
     isVertical: true,
@@ -355,8 +350,8 @@ async function runAdRenderingTests() {
     isLiveChatScreen: true,
   });
   assert(
-    juicyVerticalWide === null,
-    '8.10 JuicyAds vertical on wide rail (300px) rejects landscape 300x262 zone (1131765) and returns null'
+    exoVerticalWide === null,
+    '8.10 ExoClick vertical on wide rail (300px) rejects landscape 300x250 zone (6087300) and returns null'
   );
 
   // --- Task 9: Behavioral Creative Verification & DOM Integrity Assertions ---
@@ -442,7 +437,7 @@ async function runAdRenderingTests() {
   // 9.3 Script-only container rejected as script_only
   const scriptOnly = createMockNode({
     tag: 'div',
-    children: [createMockNode({ tag: 'script', src: 'https://nap5k.com/tag.min.js' })],
+    children: [createMockNode({ tag: 'script', src: 'https://a.magsrv.com/ad-provider.js' })],
   });
   const scriptResult = validateCreative(scriptOnly);
   assert(scriptResult.status === 'script_only' && hasValidCreative(scriptOnly) === false, '9.3 Script-only container is strictly rejected as script_only');
@@ -804,17 +799,17 @@ async function runAdRenderingTests() {
   // --- Task 9B: Provider Rotation on No-Fill and Error via computeProviderTransition ---
   console.log('\n--- 9B. Provider Rotation Progression & Terminal Cleanup ---');
 
-  const rotationList = getProviderRotation('top', true, 'public-chatroom-top');
+  const rotationList = getProviderRotation('top', false, 'public-content-top');
   assert(
     rotationList.length === 2 &&
-      rotationList[0] === 'juicyads' &&
+      rotationList[0] === 'adsense' &&
       rotationList[1] === 'exoclick',
-    '9.22 Chatroom rotation enforces JuicyAds and ExoClick only'
+    '9.22 Public non-chat rotation enforces AdSense and ExoClick only'
   );
 
   // Test actual production computeProviderTransition
   const t1 = computeProviderTransition('unfilled', 0, rotationList);
-  assert(t1.shouldRotate && t1.nextIndex === 1 && t1.action === 'rotate', '9.23 JuicyAds no-fill -> ExoClick rotation decision');
+  assert(t1.shouldRotate && t1.nextIndex === 1 && t1.action === 'rotate', '9.23 AdSense no-fill -> ExoClick rotation decision');
 
   const t2 = computeProviderTransition('unfilled', 1, rotationList);
   assert(!t2.shouldRotate && t2.isTerminal && t2.action === 'settle', '9.24 ExoClick terminal no-fill terminates rotation without loop');
@@ -825,7 +820,7 @@ async function runAdRenderingTests() {
   const t6 = computeProviderTransition('filled', 0, rotationList);
   assert(!t6.shouldRotate && t6.isTerminal, '9.26 Confirmed filled status does not trigger rotation');
 
-  const t7 = computeProviderTransition('unfilled', 0, rotationList, 'juicyads');
+  const t7 = computeProviderTransition('unfilled', 0, rotationList, 'exoclick');
   assert(!t7.shouldRotate && t7.isTerminal, '9.27 Explicit provider behavior respects single provider without rotation');
 
   // --- Task 10: Strict Participant Sidebar & Composer Preservation ---
@@ -1020,7 +1015,7 @@ async function runAdRenderingTests() {
     '11.9 Landscape 320x50 and 300x62 creatives pass validation inside compact internal horizontal placements'
   );
 
-  // Accept 300x112 JuicyAds inside participant-box-horizontal (max 320x120)
+  // Accept 300x112 horizontal creative inside participant-box-horizontal (max 320x120)
   const valid300x112 = createMockNode({
     tag: 'div',
     children: [
@@ -1040,22 +1035,22 @@ async function runAdRenderingTests() {
       maxAllowedHeight: participantTarget.maxHeight,
       maxAllowedWidth: 320,
     }).isConfirmedFilled === true,
-    '11.10 JuicyAds 300x112 creative passes validation inside Participant Bar (<= 320x120)'
+    '11.10 Responsive 300x112 creative passes validation inside Participant Bar (<= 320x120)'
   );
 
   // --- Task 12: Phase 1 All-Device Unit Resolution (Participant Bar, Internal & Sidebars) ---
   console.log('\n--- 12. Phase 1 Multi-Viewport Unit Resolution (Desktop, Tablet, Mobile) ---');
 
-  // 12.1 Participant Bar uses 300x112 on JuicyAds and 320x50 only when container width >= 320
+  // 12.1 Participant Bar uses ExoClick 6109952 on mobile & desktop, never forcing 300x250 (6087300)
   assert(
     resolveEffectiveUnitId({
-      provider: 'juicyads',
+      provider: 'exoclick',
       position: 'sidebar-horizontal',
       slotId: 'participant-box-horizontal',
       containerWidth: 304,
       isLiveChatScreen: true,
-    }) === JUICYADS_CONFIG.zones.banner300x112,
-    '12.1 Participant Bar (304px mobile drawer): JuicyAds resolves dedicated 300x112 zone (1131767)'
+    }) === EXOCLICK_CONFIG.responsiveBannerZoneId,
+    '12.1 Participant Bar (304px mobile drawer): ExoClick resolves responsive zone (6109952) and avoids 300x250'
   );
   assert(
     resolveEffectiveUnitId({
@@ -1066,20 +1061,20 @@ async function runAdRenderingTests() {
       containerWidth: 304,
       isLiveChatScreen: true,
     }) === null,
-    '12.2 Participant Bar (304px mobile drawer): Adsterra 320x50 cleanly skips so JuicyAds 300x112 takes over without clipping'
+    '12.2 Participant Bar (304px mobile drawer): Adsterra strictly blocked outside footer'
   );
   assert(
     resolveEffectiveUnitId({
-      provider: 'juicyads',
+      provider: 'exoclick',
       position: 'sidebar-horizontal',
       slotId: 'participant-box-horizontal',
       containerWidth: 324,
       isLiveChatScreen: true,
-    }) === JUICYADS_CONFIG.zones.banner300x112,
-    '12.3 Participant Bar (324px desktop lg/xl): JuicyAds resolves 300x112 zone (1131767)'
+    }) === EXOCLICK_CONFIG.responsiveBannerZoneId,
+    '12.3 Participant Bar (324px desktop lg/xl): ExoClick resolves responsive zone (6109952)'
   );
 
-  // 12.4 Vertical sidebars reject landscape 300x250, 300x262, unverified nativeWidget, and unverified generic zones
+  // 12.4 Vertical sidebars reject landscape 300x250 and unverified native unit IDs
   assert(
     resolveEffectiveUnitId({
       provider: 'adsterra',
@@ -1100,18 +1095,18 @@ async function runAdRenderingTests() {
         isLiveChatScreen: true,
       }) === null &&
       resolveEffectiveUnitId({
-        provider: 'juicyads',
+        provider: 'exoclick',
         position: 'right',
         slotId: 'public-chatroom-right',
-        primaryAdUnitId: JUICYADS_CONFIG.zones.banner300x262,
+        primaryAdUnitId: EXOCLICK_CONFIG.zoneId,
         isVertical: true,
         containerWidth: 300,
         isLiveChatScreen: true,
       }) === null,
-    '12.4 Vertical sidebars strictly reject landscape 300x250, 300x262, and unverified native unit IDs even on 300px rails'
+    '12.4 Vertical sidebars strictly reject landscape 300x250 and unverified native unit IDs even on 300px rails'
   );
 
-  // 12.5 Un-dimensioned generic zones (ExoClick 6087300, Monetag 12241585) do not inject into vertical sidebars
+  // 12.5 Dynamic ExoClick zones without verified vertical portrait dimensions do not inject into vertical sidebars
   assert(
     resolveEffectiveUnitId({
       provider: 'exoclick',
@@ -1120,16 +1115,8 @@ async function runAdRenderingTests() {
       isVertical: true,
       containerWidth: 160,
       isLiveChatScreen: true,
-    }) === null &&
-      resolveEffectiveUnitId({
-        provider: 'monetag',
-        position: 'left',
-        slotId: 'public-chatroom-left',
-        isVertical: true,
-        containerWidth: 300,
-        isLiveChatScreen: true,
-      }) === null,
-    '12.5 ExoClick and Monetag generic zones without verified vertical dimensions return null for vertical sidebars'
+    }) === null,
+    '12.5 ExoClick zones without verified vertical dimensions return null for vertical sidebars'
   );
 
   // --- Task 13: Monotonic Attempt Token, Queue Cancel & Duplicate Script Protection ---
@@ -1179,8 +1166,8 @@ async function runAdRenderingTests() {
       };
     },
   };
-  const firstScript = ensureHeadScriptOnce('https://poweredby.jads.co/js/jads.js');
-  const secondScript = ensureHeadScriptOnce('https://poweredby.jads.co/js/jads.js');
+  const firstScript = ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl);
+  const secondScript = ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl);
   assert(
     appendedScripts.length === 1 && firstScript === secondScript,
     '13.3 ensureHeadScriptOnce injects only one <script> element per shared provider URL across concurrent slots'
@@ -1480,18 +1467,18 @@ async function runAdRenderingTests() {
     '16.7 Unknown/zero dimensions cannot bypass vertical or horizontal orientation validation'
   );
 
-  // 16.8 Provider format registry classifies 300x250 & 300x262 as horizontal and PublicChatPage sidebars do not pass them
+  // 16.8 Provider format registry classifies 300x250 as horizontal and PublicChatPage sidebars do not pass it
   const spec300x250 = getVerifiedAdUnitSpec(ADSTERRA_CONFIG.banner300x250, 'adsterra');
-  const spec300x262 = getVerifiedAdUnitSpec(JUICYADS_CONFIG.zones.banner300x262, 'juicyads');
+  const exoSpec300x250 = getVerifiedAdUnitSpec(EXOCLICK_CONFIG.zoneId, 'exoclick');
   assert(
     spec300x250?.orientation === 'horizontal' &&
-      spec300x262?.orientation === 'horizontal' &&
+      exoSpec300x250?.orientation === 'horizontal' &&
       VERIFIED_AD_UNITS.every((u) => (u.orientation === 'vertical' ? u.height > u.width : u.width >= u.height)) &&
       getVerifiedVerticalUnitForProvider('adsterra', 300) === null &&
-      getVerifiedVerticalUnitForProvider('juicyads', 300) === null &&
+      getVerifiedVerticalUnitForProvider('exoclick', 300) === null &&
       !publicChatPageSource.includes('adUnitId={ADSTERRA_CONFIG.nativeUnitId}') &&
       !publicChatPageSource.includes('adUnitId={ADSTERRA_CONFIG.banner300x250}'),
-    '16.8 Registry classifies 300x250 & 300x262 accurately as horizontal and PublicChatPage removes non-vertical unit IDs from sidebars'
+    '16.8 Registry classifies 300x250 accurately as horizontal and PublicChatPage excludes non-vertical unit IDs'
   );
 
   // 16.9 & 16.10 Right and left reserved vertical containers remain intact and uncollapsed in SSR
@@ -1555,17 +1542,13 @@ async function runAdRenderingTests() {
     '17.2 TrafficStars MasterSpot enforces 120s ONLY when both zone and account authorization are verified'
   );
 
-  // 17.3 Unsupported providers (Adsterra, JuicyAds, Monetag, AdSense) strictly disable auto-refresh & custom JS timers
+  // 17.3 Unsupported providers (Adsterra, AdSense) strictly disable auto-refresh & custom JS timers
   assert(
     PROVIDER_REFRESH_POLICIES.adsterra.chosenIntervalSec === null &&
       PROVIDER_REFRESH_POLICIES.adsterra.usesCustomJsTimer === false &&
-      PROVIDER_REFRESH_POLICIES.juicyads.chosenIntervalSec === null &&
-      PROVIDER_REFRESH_POLICIES.juicyads.usesCustomJsTimer === false &&
-      PROVIDER_REFRESH_POLICIES.monetag.chosenIntervalSec === null &&
-      PROVIDER_REFRESH_POLICIES.monetag.usesCustomJsTimer === false &&
       PROVIDER_REFRESH_POLICIES.adsense.chosenIntervalSec === null &&
       PROVIDER_REFRESH_POLICIES.adsense.usesCustomJsTimer === false,
-    '17.3 Adsterra, JuicyAds, Monetag, and AdSense have no forced/custom JS refresh timers'
+    '17.3 Adsterra and AdSense have no forced/custom JS refresh timers'
   );
 
   // 17.4 ExoClick 10-rotation session cap & visibility/pagehide/unmount refresh gating
@@ -1672,23 +1655,22 @@ async function runAdRenderingTests() {
   // 17.8 All 6 verification widths (1920, 1440, 1366, 768, 390, 320): maximum compatible creative selection & zero 320px clipping
   const desktopWidths = [1920, 1440, 1366, 768];
   for (const vw of desktopWidths) {
-    // At >=768px with sm:px-4 (32px), outer banner container >= 736px -> fits 728x90 & 728x102
     const availOuter = vw === 768 ? 736 : 728;
     assert(
       resolveEffectiveUnitId({
-        provider: 'juicyads',
+        provider: 'exoclick',
         position: 'top',
         slotId: 'public-chatroom-top',
         containerWidth: availOuter,
         isLiveChatScreen: true,
-      }) === JUICYADS_CONFIG.zones.banner728x102 &&
+      }) === EXOCLICK_CONFIG.responsiveBannerZoneId &&
         resolveEffectiveUnitId({
-          provider: 'juicyads',
+          provider: 'exoclick',
           position: 'bottom',
           slotId: 'public-chatroom-bottom',
           containerWidth: availOuter,
           isLiveChatScreen: true,
-        }) === JUICYADS_CONFIG.zones.banner728x102 &&
+        }) === EXOCLICK_CONFIG.responsiveBannerZoneId &&
         resolveEffectiveUnitId({
           provider: 'adsterra',
           position: 'footer',
@@ -1696,27 +1678,26 @@ async function runAdRenderingTests() {
           containerWidth: availOuter,
           isLiveChatScreen: false,
         }) === ADSTERRA_CONFIG.banner728x90,
-      `17.8a Viewport ${vw}px selects maximum compatible 728x102 / 728x90 outer horizontal creatives`
+      `17.8a Viewport ${vw}px selects ExoClick 6109952 for chatroom banners and Adsterra 728x90 for footer`
     );
   }
 
   for (const mobileWidth of [390, 320]) {
-    // PublicChatPage uses px-0 sm:px-4 on top/bottom -> full 320px/390px available
     assert(
       resolveEffectiveUnitId({
-        provider: 'juicyads',
+        provider: 'exoclick',
         position: 'top',
         slotId: 'public-chatroom-top',
         containerWidth: mobileWidth,
         isLiveChatScreen: true,
-      }) === JUICYADS_CONFIG.zones.banner300x62 &&
+      }) === EXOCLICK_CONFIG.responsiveBannerZoneId &&
         resolveEffectiveUnitId({
-          provider: 'juicyads',
+          provider: 'exoclick',
           position: 'bottom',
           slotId: 'public-chatroom-bottom',
           containerWidth: mobileWidth,
           isLiveChatScreen: true,
-        }) === JUICYADS_CONFIG.zones.banner300x62 &&
+        }) === EXOCLICK_CONFIG.responsiveBannerZoneId &&
         resolveEffectiveUnitId({
           provider: 'adsterra',
           position: 'footer',
@@ -1724,28 +1705,26 @@ async function runAdRenderingTests() {
           containerWidth: mobileWidth,
           isLiveChatScreen: false,
         }) === ADSTERRA_CONFIG.banner320x50,
-      `17.8b Mobile viewport ${mobileWidth}px fits 300x62 and 320x50 cleanly on outer banners without clipping`
+      `17.8b Mobile viewport ${mobileWidth}px fits ExoClick 6109952 and Adsterra 320x50 cleanly on outer banners without clipping`
     );
 
-    // Internal inline width at 320px: 320 - 16 (px-2) - 2 (border) = 302px (JuicyAds 300x62 fits; Adsterra 320x50 skips cleanly!)
-    // At 390px: 390 - 16 - 2 = 372px (both 320x50 and 300x62 fit)
     const internalAvail = mobileWidth - 18;
     assert(
       resolveEffectiveUnitId({
-        provider: 'juicyads',
+        provider: 'exoclick',
         position: 'sidebar-horizontal',
         slotId: 'public-chatroom-status-above',
         containerWidth: internalAvail,
         isLiveChatScreen: true,
-      }) === JUICYADS_CONFIG.zones.banner300x62 &&
+      }) === EXOCLICK_CONFIG.responsiveBannerZoneId &&
         resolveEffectiveUnitId({
-          provider: 'juicyads',
+          provider: 'exoclick',
           position: 'sidebar-horizontal',
           slotId: 'public-chatroom-message-inline',
           containerWidth: internalAvail,
           isLiveChatScreen: true,
-        }) === JUICYADS_CONFIG.zones.banner300x62,
-      `17.8c Internal chatroom ads at ${mobileWidth}px (${internalAvail}px inner width) select JuicyAds 300x62 cleanly`
+        }) === EXOCLICK_CONFIG.responsiveBannerZoneId,
+      `17.8c Internal chatroom ads at ${mobileWidth}px (${internalAvail}px inner width) select ExoClick 6109952 cleanly`
     );
   }
 
@@ -1757,61 +1736,34 @@ async function runAdRenderingTests() {
     '17.9 AdPlacementBox enforces page/slot visibility, viewport-shrink downgrade, and zero forced auto-refresh JS timers'
   );
 
-  // --- Task 18: Phase R2.3 Revenue-Optimized Ad Stability & Explore Chatrooms UI Integration ---
-  console.log('\n--- 18. Phase R2.3 Deterministic Ad Rotation, Loop Prevention & Explore UI ---');
+  // --- Task 18: Phase R2.3 Revenue-Optimized ExoClick Stability & Explore Chatrooms UI Integration ---
+  console.log('\n--- 18. ExoClick Deterministic Rotation, Loop Prevention & Explore UI ---');
 
-  // 18.1 Deterministic ExoClick & JuicyAds distribution across chatroom slots (both receive primary impressions)
-  const parity0Top = getProviderRotation('top', true, 'public-chatroom-top', 0);
-  const parity0StatusAbove = getProviderRotation('sidebar-horizontal', true, 'public-chatroom-status-above', 0);
-  const parity0MsgInline = getProviderRotation('sidebar-horizontal', true, 'public-chatroom-message-inline', 0);
-  const parity0Bottom = getProviderRotation('bottom', true, 'public-chatroom-bottom', 0);
-  const parity0Explore = getProviderRotation('content-gap', true, 'explore-chatrooms-inline', 0);
-  const parity0Participant = getProviderRotation('sidebar-horizontal', true, 'participant-box-horizontal', 0);
-
-  assert(
-    parity0Top[0] === 'juicyads' &&
-      parity0Top[1] === 'exoclick' &&
-      parity0StatusAbove[0] === 'exoclick' &&
-      parity0StatusAbove[1] === 'juicyads' &&
-      parity0MsgInline[0] === 'juicyads' &&
-      parity0Bottom[0] === 'exoclick' &&
-      parity0Explore[0] === 'juicyads' &&
-      parity0Participant[0] === 'juicyads',
-    '18.1a Parity 0 distributes primary impressions deterministically across both JuicyAds and ExoClick with mutual failover'
-  );
-
-  const parity1Top = getProviderRotation('top', true, 'public-chatroom-top', 1);
-  const parity1StatusAbove = getProviderRotation('sidebar-horizontal', true, 'public-chatroom-status-above', 1);
-  const parity1Bottom = getProviderRotation('bottom', true, 'public-chatroom-bottom', 1);
-  const parity1Explore = getProviderRotation('content-gap', true, 'explore-chatrooms-inline', 1);
+  const topRot = getProviderRotation('top', true, 'public-chatroom-top');
+  const statusAboveRot = getProviderRotation('sidebar-horizontal', true, 'public-chatroom-status-above');
+  const msgInlineRot = getProviderRotation('sidebar-horizontal', true, 'public-chatroom-message-inline');
+  const bottomRot = getProviderRotation('bottom', true, 'public-chatroom-bottom');
+  const exploreRot = getProviderRotation('content-gap', true, 'explore-chatrooms-inline');
+  const participantRot = getProviderRotation('sidebar-horizontal', true, 'participant-box-horizontal');
 
   assert(
-    parity1Top[0] === 'exoclick' &&
-      parity1StatusAbove[0] === 'juicyads' &&
-      parity1Bottom[0] === 'juicyads' &&
-      parity1Explore[0] === 'exoclick' &&
-      getProviderRotation('content-gap', true, 'public-chatroom-body-bottom', 1).join(',') === 'monetag' &&
-      getProviderRotation('footer', false, 'global-footer-responsive', 1).join(',') === 'adsterra',
-    '18.1b Parity 1 swaps ExoClick/JuicyAds order while keeping Monetag body-bottom-only and Adsterra footer-only'
+    topRot.join(',') === 'exoclick' &&
+      statusAboveRot.join(',') === 'exoclick' &&
+      msgInlineRot.join(',') === 'exoclick' &&
+      bottomRot.join(',') === 'exoclick' &&
+      exploreRot.join(',') === 'exoclick' &&
+      participantRot.join(',') === 'exoclick' &&
+      getProviderRotation('footer', false, 'global-footer-responsive').join(',') === 'adsterra',
+    '18.1 All live chatroom placements use ExoClick exclusively while global footer remains Adsterra-only'
   );
 
-  // Repeat calls produce exact same ordering (never random per render)
-  assert(
-    getProviderRotation('top', true, 'public-chatroom-top', 0).join(',') === parity0Top.join(',') &&
-      getProviderRotation('bottom', true, 'public-chatroom-bottom', 0).join(',') === parity0Bottom.join(',') &&
-      typeof getSessionAdRotationParity() === 'number' &&
-      (getSessionAdRotationParity() === 0 || getSessionAdRotationParity() === 1),
-    '18.2 Session parity and rotation calls remain deterministic across re-renders'
-  );
-
-  // 18.3 Infinite unfilled retry loop prevention & React updater purity
-  const evalFn = (provider: 'juicyads' | 'exoclick', width: number | null) =>
+  const evalFn = (provider: 'adsense' | 'exoclick', width: number | null) =>
     resolveEffectiveUnitId({
-      provider,
-      position: 'top',
-      slotId: 'public-chatroom-top',
+      provider: 'adsterra',
+      position: 'footer',
+      slotId: 'global-footer-responsive',
       containerWidth: width,
-      isLiveChatScreen: true,
+      isLiveChatScreen: false,
     });
 
   assert(
@@ -1819,57 +1771,49 @@ async function runAdRenderingTests() {
       adStatus: 'unfilled',
       prevWidth: null,
       nextWidth: 768,
-      primaryRotationProvider: 'juicyads',
+      primaryRotationProvider: 'adsterra',
       getEffectiveUnitId: evalFn,
     }) === false &&
       shouldReevaluateSlotOnResize({
         adStatus: 'unfilled',
         prevWidth: 768,
         nextWidth: 768,
-        primaryRotationProvider: 'juicyads',
+        primaryRotationProvider: 'adsterra',
         getEffectiveUnitId: evalFn,
       }) === false &&
       shouldReevaluateSlotOnResize({
         adStatus: 'error',
         prevWidth: 390,
         nextWidth: 390,
-        primaryRotationProvider: 'exoclick',
+        primaryRotationProvider: 'adsterra',
         getEffectiveUnitId: evalFn,
       }) === false &&
       shouldReevaluateSlotOnResize({
         adStatus: 'unfilled',
         prevWidth: 390,
         nextWidth: 768,
-        primaryRotationProvider: 'juicyads',
+        primaryRotationProvider: 'adsterra',
         getEffectiveUnitId: evalFn,
       }) === true &&
       !adPlacementBoxSource.includes('cleanupSlotRuntime();\n            return \'idle\';'),
     '18.3 Constant containerWidth never triggers infinite unfilled/error retry loops, while genuine breakpoint widening re-evaluates cleanly without side-effects in state updaters'
   );
 
-  // 18.4 Explore Chatrooms Sponsored Placement policy & sizing
   assert(
     resolveEffectiveUnitId({
-      provider: 'juicyads',
+      provider: 'exoclick',
       position: 'content-gap',
       slotId: 'explore-chatrooms-inline',
       containerWidth: 1024,
       isLiveChatScreen: true,
-    }) === JUICYADS_CONFIG.zones.banner728x102 &&
+    }) === EXOCLICK_CONFIG.responsiveBannerZoneId &&
       resolveEffectiveUnitId({
-        provider: 'juicyads',
-        position: 'content-gap',
-        slotId: 'explore-chatrooms-inline',
-        containerWidth: 390,
+        provider: 'exoclick',
+        position: 'bottom',
+        slotId: 'chatroom-explore-bottom',
+        containerWidth: 320,
         isLiveChatScreen: true,
-      }) === JUICYADS_CONFIG.zones.banner300x62 &&
-      resolveEffectiveUnitId({
-        provider: 'monetag',
-        position: 'content-gap',
-        slotId: 'explore-chatrooms-inline',
-        containerWidth: 1024,
-        isLiveChatScreen: true,
-      }) === null &&
+      }) === EXOCLICK_CONFIG.zoneId &&
       resolveEffectiveUnitId({
         provider: 'adsterra',
         position: 'content-gap',
@@ -1877,7 +1821,7 @@ async function runAdRenderingTests() {
         containerWidth: 1024,
         isLiveChatScreen: true,
       }) === null,
-    '18.4 Explore Sponsored placement resolves 728x102 desktop / 300x62 mobile via JuicyAds/ExoClick only and blocks Monetag/Adsterra'
+    '18.4 Explore Sponsored resolves 6109952, Explore bottom resolves 6087300 (300x250), and Adsterra is blocked outside Footer'
   );
 
   const exploreAdHtml = renderToString(
@@ -1964,16 +1908,16 @@ async function runAdRenderingTests() {
     '19.2 Adsterra footer selects 728x90 (>=728px) or 320x50 (>=320px) and returns null <320px without substituting 300x250'
   );
 
-  // 19.3 Participant bar width-collapse + external-to-panel border + container-scoped polling checks
+  // 19.3 Participant bar width-collapse + external-to-panel border + container-scoped loaders checks
   assert(
     adPlacementBoxSource.includes('isParticipantWidthCollapsed') &&
       adPlacementBoxSource.includes("'data-ad-collapsed': isParticipantWidthCollapsed ? 'true' : 'false'") &&
-      adPlacementBoxSource.includes('imperativeHostRef.current?.contains(target)') &&
+      adPlacementBoxSource.includes('startPolling(() => imperativeHostRef.current') &&
       adPlacementBoxSource.includes("adStatusRef.current === 'loading'") &&
       publicChatPageSource.includes('{/* Ad 4 — External Participant-Side Ad (50px) - OUTSIDE and BELOW the participant panel\'s border */}') &&
       !publicChatPageSource.includes('public-chatroom-left') &&
       !publicChatPageSource.includes('public-chatroom-right'),
-    '19.3 Participant bar collapses cleanly below 300px, JuicyAds/ExoClick polling is scoped to slot DOM host, loading host clears cleanly on visibility loss, and no empty vertical rails waste horizontal width'
+    '19.3 Participant bar collapses cleanly below 300px, ExoClick polling inspects imperativeHostRef container, loading host clears cleanly on visibility loss, and no empty vertical rails waste horizontal width'
   );
 
   // 19.4 SSR sanity on PublicChatPage route context (/chat still excludes AdSense but enables footer global-footer-responsive)
@@ -2002,7 +1946,7 @@ async function runAdRenderingTests() {
     publicChatPageSource.includes('className="relative w-full overflow-x-clip flex flex-col gap-4 py-4"') &&
       publicChatPageSource.includes('<AdPlacementBox\n          slotId="public-chatroom-top"\n          position="top"\n          className="!my-0"') &&
       publicChatPageSource.includes('<AdPlacementBox\n          slotId="public-chatroom-bottom"\n          position="bottom"\n          className="!my-0"') &&
-      publicChatPageSource.includes('<AdPlacementBox\n          slotId="public-chatroom-body-bottom"\n          provider="monetag"\n          position="content-gap"\n          className="!my-0"') &&
+      !publicChatPageSource.includes('public-chatroom-body-bottom') &&
       !publicChatPageSource.includes('data-testid="explore-other-chatrooms-section"\n            className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 mb-8"'),
     '20.1 PublicChatPage outer stack uses uniform 16px (gap-4 py-4) spacing with !my-0 margin overrides on outer ads'
   );
@@ -2021,15 +1965,15 @@ async function runAdRenderingTests() {
   const topOrderIdx = publicChatPageSource.indexOf('slotId="public-chatroom-top"');
   const chatOrderIdx = publicChatPageSource.indexOf('data-testid="central-chatroom-container"');
   const bottomOrderIdx = publicChatPageSource.indexOf('slotId="public-chatroom-bottom"');
-  const monetagOrderIdx = publicChatPageSource.indexOf('slotId="public-chatroom-body-bottom"');
   const exploreOrderIdx = publicChatPageSource.indexOf('data-testid="explore-other-chatrooms-section"');
+  const exploreBottomOrderIdx = publicChatPageSource.indexOf('slotId="chatroom-explore-bottom"');
   assert(
     topOrderIdx > 0 &&
       chatOrderIdx > topOrderIdx &&
       bottomOrderIdx > chatOrderIdx &&
-      monetagOrderIdx > bottomOrderIdx &&
-      exploreOrderIdx > monetagOrderIdx,
-    '20.3 Vertical section order strictly matches Top Ad -> Chatroom -> Bottom Ad -> Monetag Body-Bottom -> Explore Other Chatrooms'
+      exploreOrderIdx > bottomOrderIdx &&
+      exploreBottomOrderIdx > exploreOrderIdx,
+    '20.3 Vertical section order strictly matches Top Ad -> Chatroom -> Bottom Ad -> Explore Other Chatrooms -> ExoClick 300x250 Explore Bottom'
   );
 
   assert(

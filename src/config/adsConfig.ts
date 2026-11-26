@@ -1,4 +1,4 @@
-export type AdProvider = 'adsterra' | 'juicyads' | 'exoclick' | 'monetag' | 'adsense';
+export type AdProvider = 'adsterra' | 'exoclick' | 'adsense';
 
 export const ADSTERRA_CONFIG = {
   publisherId: '6190760',
@@ -12,13 +12,22 @@ export const ADSTERRA_CONFIG = {
 };
 
 export const EXOCLICK_CONFIG = {
+  // Dedicated 300x250 banner zone (eas6a97888e2) - use strictly in containers >= 300x250
   zoneId: '6087300',
-  videoSliderZoneId: '6102500',
-  horizontalVastZoneId: '6102492',
-  horizontalVastUrl: 'https://s.magsrv.com/v1/vast.php?idz=6102492',
-  scriptUrl: 'https://a.magsrv.com/ad-provider.js',
   elementClass: 'eas6a97888e2',
+  // User-supplied ExoClick Multi-Format Banner zone (eas6a97888e38)
+  responsiveBannerZoneId: '6109952',
+  responsiveBannerElementClass: 'eas6a97888e38',
+  // User-supplied ExoClick Sticky Banner zone (eas6a97888e17)
+  stickyBannerZoneId: '6110028',
+  stickyBannerElementClass: 'eas6a97888e17',
+  // Preserved Video Slider / Multi-Format zone (eas6a97888e38)
+  videoSliderZoneId: '6102500',
   videoSliderElementClass: 'eas6a97888e38',
+  // User-supplied ExoClick VAST Video zone
+  horizontalVastZoneId: '6109970',
+  horizontalVastUrl: 'https://s.magsrv.com/v1/vast.php?idz=6109970',
+  scriptUrl: 'https://a.magsrv.com/ad-provider.js',
   verificationFile: '28befc4532cb8837aa59edffca607a5a.html',
   integrationType: 'async' as const,
   // ExoClick native Ad Refresh supports 30, 60, 90, 120s (max 10 session rotations) on async zones
@@ -27,28 +36,6 @@ export const EXOCLICK_CONFIG = {
   supportedNativeRefreshIntervalsSec: [30, 60, 90, 120] as const,
   chosenNativeRefreshIntervalSec: 120,
   maxSessionRotations: 10,
-  enabled: true,
-};
-
-export const JUICYADS_CONFIG = {
-  verificationTag: '97a6aeec522d11d21efa5f84c86eb958',
-  scriptUrl: 'https://poweredby.jads.co/js/jads.js',
-  floatingScriptUrl: 'https://poweredby.jads.co/js/jfc.js',
-  zones: {
-    banner300x62: '1131763',
-    banner300x262: '1131765',
-    banner728x102: '1131766',
-    banner300x112: '1131767',
-    floating: '1133907',
-    display308x298: '1133909',
-  },
-  enabled: true,
-};
-
-export const MONETAG_CONFIG = {
-  verificationTag: '416e702dd7d166aafe13107553d43a38',
-  zoneId: '12241585',
-  scriptUrl: 'https://nap5k.com/tag.min.js',
   enabled: true,
 };
 
@@ -106,7 +93,7 @@ export const getProviderRefreshPolicy = (
       mechanism: authorized ? 'provider_native_async' : 'none',
       reason: authorized
         ? 'ExoClick native async Ad Refresh authorized at longest 120s interval with 10 rotations/session cap'
-        : 'ExoClick native Ad Refresh supports 30/60/90/120s (max 10/session), but dashboard authorization for zone 6087300 is unverified; disabled',
+        : 'ExoClick native Ad Refresh supports 30/60/90/120s (max 10/session), but dashboard authorization is unverified; custom JS timers disabled',
     };
   }
 
@@ -157,38 +144,6 @@ export const getProviderRefreshPolicy = (
     };
   }
 
-  if (provider === 'juicyads') {
-    return {
-      provider: 'juicyads',
-      enabled: JUICYADS_CONFIG.enabled,
-      supportsNativeRefresh: false,
-      accountAuthorized: false,
-      supportedIntervalsSec: [],
-      chosenIntervalSec: null,
-      maxSessionRotations: null,
-      requiresVisibility: true,
-      usesCustomJsTimer: false,
-      mechanism: 'none',
-      reason: 'JuicyAds jads.js zones have no verified publisher auto-refresh setting; fallback only on genuine error/unfilled',
-    };
-  }
-
-  if (provider === 'monetag') {
-    return {
-      provider: 'monetag',
-      enabled: MONETAG_CONFIG.enabled,
-      supportsNativeRefresh: false,
-      accountAuthorized: false,
-      supportedIntervalsSec: [],
-      chosenIntervalSec: null,
-      maxSessionRotations: null,
-      requiresVisibility: true,
-      usesCustomJsTimer: false,
-      mechanism: 'none',
-      reason: 'Monetag technical requirements prohibit aggressive refreshes and DOM replacement; keep creative stable',
-    };
-  }
-
   return {
     provider: 'adsense',
     enabled: ADSENSE_CONFIG.enabled,
@@ -208,8 +163,6 @@ export const PROVIDER_REFRESH_POLICIES: Record<RefreshCapableProvider, ProviderR
   exoclick: getProviderRefreshPolicy('exoclick'),
   trafficstars: getProviderRefreshPolicy('trafficstars'),
   adsterra: getProviderRefreshPolicy('adsterra'),
-  juicyads: getProviderRefreshPolicy('juicyads'),
-  monetag: getProviderRefreshPolicy('monetag'),
   adsense: getProviderRefreshPolicy('adsense'),
 };
 
@@ -252,80 +205,27 @@ export const isAdSenseExcludedRoute = (currentRoute: string): boolean => {
   );
 };
 
-const SESSION_PARITY_STORAGE_KEY = 'vx_ad_session_parity';
-let inMemorySessionAdParity: 0 | 1 | null = null;
-
-/**
- * Returns a stable per-browser-session parity bit (0 or 1) for balancing
- * ExoClick and JuicyAds primary impressions across approved chatroom slots
- * without random flip-flopping on React re-renders.
- */
-export const getSessionAdRotationParity = (): 0 | 1 => {
-  try {
-    if (typeof sessionStorage !== 'undefined') {
-      const existing = sessionStorage.getItem(SESSION_PARITY_STORAGE_KEY);
-      if (existing === '0') return 0;
-      if (existing === '1') return 1;
-      let next: 0 | 1 = 0;
-      if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-        const buf = new Uint32Array(1);
-        crypto.getRandomValues(buf);
-        next = (buf[0] & 1) as 0 | 1;
-      } else {
-        next = Math.floor(Date.now() / 1000) % 2 === 0 ? 0 : 1;
-      }
-      sessionStorage.setItem(SESSION_PARITY_STORAGE_KEY, String(next));
-      inMemorySessionAdParity = next;
-      return next;
-    }
-  } catch {
-    // Ignore storage restrictions
-  }
-  if (inMemorySessionAdParity !== null) {
-    return inMemorySessionAdParity;
-  }
-  return 0;
-};
-
 /**
  * Selection strategy: Deterministic provider priority list.
  * CRITICAL POLICY:
  * - Google AdSense is STRICTLY EXCLUDED from live-chat screens (/chat).
  * - Adsterra is STRICTLY Footer-only (global-footer-responsive).
- * - Monetag is STRICTLY single-slot public-chatroom-body-bottom-only.
- * - Approved chatroom slots share primary impressions deterministically across
- *   ExoClick and JuicyAds with mutual failover.
+ * - Live chatroom placements use ExoClick exclusively.
+ * - Non-chat, non-footer public pages use AdSense primary with ExoClick failover.
  */
 export const getProviderRotation = (
   position: string,
   isLiveChatScreen: boolean = true,
-  slotId?: string,
-  rotationParity: number = 0
+  slotId?: string
 ): AdProvider[] => {
-  if (slotId === 'public-chatroom-body-bottom') {
-    return ['monetag'];
-  }
   if (position === 'footer' || slotId === 'global-footer-responsive' || Boolean(slotId?.includes('footer'))) {
     return ['adsterra'];
   }
   if (isLiveChatScreen) {
-    // Dedicated 300x112 participant bar slot prioritizes JuicyAds with ExoClick failover
-    if (slotId === 'participant-box-horizontal') {
-      return ['juicyads', 'exoclick'];
-    }
-
-    const flip = (rotationParity & 1) === 1;
-    // Split regular horizontal placements across ExoClick & JuicyAds deterministically
-    if (slotId === 'public-chatroom-status-above' || slotId === 'public-chatroom-bottom') {
-      return flip ? ['juicyads', 'exoclick'] : ['exoclick', 'juicyads'];
-    }
-
-    return flip ? ['exoclick', 'juicyads'] : ['juicyads', 'exoclick'];
+    return ['exoclick'];
   }
 
-  // Non-chat, non-footer public pages: AdSense, JuicyAds, and ExoClick only
-  // (Adsterra is strictly Footer-only; Monetag is strictly public-chatroom-body-bottom-only)
-  return ['adsense', 'juicyads', 'exoclick'];
+  return ['adsense', 'exoclick'];
 };
 
 export const FOOTER_EXCLUDED_ROUTES = [
@@ -411,54 +311,6 @@ export const isEligibleRouteForGlobalAds = (currentRoute: string): boolean => {
   );
 };
 
-export type JuicyAdsAlternatingZone = '1133907' | '1133909';
-
-// Evaluated once per full browser page load, never on React re-render or client navigation
-let cachedJuicyAdsAlternatingZone: JuicyAdsAlternatingZone | null = null;
-let cachedPageLoadCount: number | null = null;
-
-export const getJuicyAdsPageLoadAlternation = (forceNewCounter?: number): {
-  zone: JuicyAdsAlternatingZone;
-  loadCount: number;
-} => {
-  if (typeof forceNewCounter === 'number') {
-    const zone = forceNewCounter % 2 === 1 ? '1133907' : '1133909';
-    return { zone, loadCount: forceNewCounter };
-  }
-
-  if (cachedJuicyAdsAlternatingZone !== null && cachedPageLoadCount !== null) {
-    return { zone: cachedJuicyAdsAlternatingZone, loadCount: cachedPageLoadCount };
-  }
-
-  let count = 1;
-  try {
-    if (typeof window !== 'undefined' && window.sessionStorage) {
-      const stored = window.sessionStorage.getItem('vx_juicyads_page_load_count');
-      const prevCount = stored ? parseInt(stored, 10) : 0;
-      count = isNaN(prevCount) ? 1 : prevCount + 1;
-      window.sessionStorage.setItem('vx_juicyads_page_load_count', String(count));
-    }
-  } catch {
-    count = 1;
-  }
-
-  cachedPageLoadCount = count;
-  cachedJuicyAdsAlternatingZone = count % 2 === 1 ? '1133907' : '1133909';
-  return { zone: cachedJuicyAdsAlternatingZone, loadCount: count };
-};
-
-export const resetJuicyAdsAlternationForTest = (initialCount?: number) => {
-  cachedJuicyAdsAlternatingZone = null;
-  cachedPageLoadCount = null;
-  if (typeof window !== 'undefined' && window.sessionStorage) {
-    if (typeof initialCount === 'number') {
-      window.sessionStorage.setItem('vx_juicyads_page_load_count', String(initialCount));
-    } else {
-      window.sessionStorage.removeItem('vx_juicyads_page_load_count');
-    }
-  }
-};
-
 export const getAdsterraUnitForWidth = (width: number, position: string): string | null => {
   if (position === 'footer') {
     if (width >= 728) return ADSTERRA_CONFIG.banner728x90;
@@ -466,22 +318,6 @@ export const getAdsterraUnitForWidth = (width: number, position: string): string
     return null;
   }
 
-  if (position === 'content-gap') {
-    if (width >= 728) return ADSTERRA_CONFIG.banner728x90;
-    if (width >= 320) return ADSTERRA_CONFIG.banner320x50;
-    if (width >= 300) return ADSTERRA_CONFIG.banner300x250;
-  }
-  
-  if (position === 'sidebar-horizontal') {
-    if (width >= 320) return ADSTERRA_CONFIG.banner320x50;
-    if (width >= 300) return ADSTERRA_CONFIG.banner300x250;
-  }
-
-  // General fallback by width
-  if (width >= 728) return ADSTERRA_CONFIG.banner728x90;
-  if (width >= 300) return ADSTERRA_CONFIG.banner300x250;
-  if (width >= 320) return ADSTERRA_CONFIG.banner320x50;
-  
   return null;
 };
 
@@ -507,9 +343,8 @@ export interface VerifiedAdUnitSpec {
 /**
  * Registry of configured provider units with verified fixed dimensions.
  * - A unit is vertical ONLY when height > width.
- * - 300x250 (Adsterra) and 300x262 (JuicyAds) have width > height, so they are strictly horizontal/landscape.
- * - Dynamic widgets or un-dimensioned generic zones (Adsterra native, ExoClick 6087300, Monetag MultiTag)
- *   have no statically verifiable vertical dimensions and are intentionally excluded from vertical verification.
+ * - 300x250 (Adsterra Footer-only & ExoClick 6087300) have width > height, so they are horizontal/landscape.
+ * - Dynamic multi-format zones (ExoClick 6109952 / 6102500) adapt per slot bounds and are omitted from vertical specs.
  */
 export const VERIFIED_AD_UNITS: readonly VerifiedAdUnitSpec[] = [
   {
@@ -534,38 +369,10 @@ export const VERIFIED_AD_UNITS: readonly VerifiedAdUnitSpec[] = [
     orientation: 'horizontal',
   },
   {
-    id: JUICYADS_CONFIG.zones.banner300x62,
-    provider: 'juicyads',
+    id: EXOCLICK_CONFIG.zoneId,
+    provider: 'exoclick',
     width: 300,
-    height: 62,
-    orientation: 'horizontal',
-  },
-  {
-    id: JUICYADS_CONFIG.zones.banner300x112,
-    provider: 'juicyads',
-    width: 300,
-    height: 112,
-    orientation: 'horizontal',
-  },
-  {
-    id: JUICYADS_CONFIG.zones.banner300x262,
-    provider: 'juicyads',
-    width: 300,
-    height: 262,
-    orientation: 'horizontal',
-  },
-  {
-    id: JUICYADS_CONFIG.zones.banner728x102,
-    provider: 'juicyads',
-    width: 728,
-    height: 102,
-    orientation: 'horizontal',
-  },
-  {
-    id: JUICYADS_CONFIG.zones.display308x298,
-    provider: 'juicyads',
-    width: 308,
-    height: 298,
+    height: 250,
     orientation: 'horizontal',
   },
 ];
@@ -639,12 +446,23 @@ export const getReservedDimensionTarget = (
     };
   }
 
+  if (slotId === 'chatroom-explore-bottom') {
+    return {
+      orientation: 'horizontal',
+      minWidth: 300,
+      maxWidth: 300,
+      minHeight: 250,
+      maxHeight: 250,
+      allowPortraitCreative: false,
+    };
+  }
+
   if (slotId === 'participant-box-horizontal') {
     return {
       orientation: 'horizontal',
       minWidth: 300,
       maxWidth: 320,
-      minHeight: 112,
+      minHeight: 90,
       maxHeight: 120,
       allowPortraitCreative: false,
     };
@@ -671,5 +489,3 @@ export const getReservedDimensionTarget = (
     allowPortraitCreative: false,
   };
 };
-
-

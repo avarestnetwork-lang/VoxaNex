@@ -270,6 +270,19 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const hasLiveCall = isCallModalOpen || Boolean(activeCall && activeCall.status !== 'ended');
+    if (hasLiveCall) {
+      document.documentElement.setAttribute('data-vx-call-active', 'true');
+    } else {
+      document.documentElement.removeAttribute('data-vx-call-active');
+    }
+    return () => {
+      document.documentElement.removeAttribute('data-vx-call-active');
+    };
+  }, [isCallModalOpen, activeCall]);
+
   return (
     <CallContext.Provider
       value={{
@@ -297,7 +310,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       {/* INCOMING CALL BANNER / MODAL (HIGH VISIBILITY)                            */}
       {/* ========================================================================= */}
       {incomingCall && (
-        <div className="fixed top-6 right-6 z-50 max-w-sm w-full bg-[#0d1424] border-2 border-cyan-500 rounded-2xl p-5 shadow-2xl shadow-cyan-950/80 animate-bounce duration-1000">
+        <div className="fixed top-6 right-6 z-[80] max-w-sm w-full bg-[#0d1424] border-2 border-cyan-500 rounded-2xl p-5 shadow-2xl shadow-cyan-950/80 animate-bounce duration-1000">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-12 h-12 rounded-2xl bg-cyan-950 border border-cyan-500 flex items-center justify-center text-2xl shrink-0">
               {incomingCall.initiator.avatar}
@@ -346,7 +359,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       {/* ACTIVE CALL FLOATING MODAL OVERLAY                                        */}
       {/* ========================================================================= */}
       {isCallModalOpen && activeCall && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
           <div className="w-full max-w-4xl bg-[#080d1a] border border-slate-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
             {/* Call Header */}
             <div className="p-4 bg-[#0d1424] border-b border-slate-800 flex items-center justify-between">
@@ -506,4 +519,8 @@ export const useCall = () => {
     throw new Error('useCall must be used within a CallProvider');
   }
   return context;
+};
+
+export const useOptionalCall = () => {
+  return useContext(CallContext);
 };

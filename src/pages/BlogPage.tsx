@@ -9,7 +9,6 @@ import { Modal } from '../components/ui/Modal';
 import { formatDhakaDate } from '../utils/date';
 import { SEOHead } from '../components/common/SEOHead';
 import { AdPlacementBox } from '../components/ads/AdPlacementBox';
-import { ADSTERRA_CONFIG } from '../config/adsConfig';
 import {
   BookOpen,
   Clock,
@@ -443,8 +442,7 @@ export const BlogPage: React.FC = () => {
           {/* Ad between content and comments */}
           <AdPlacementBox 
             slotId="blog-article-gap" 
-            position="content-gap" 
-            adUnitId={ADSTERRA_CONFIG.banner728x90}
+            position="content-gap"
           />
 
           {/* Moderated Comments Section */}
@@ -581,8 +579,7 @@ export const BlogPage: React.FC = () => {
                 <div className="md:col-span-3">
                   <AdPlacementBox 
                     slotId="blog-list-gap" 
-                    position="content-gap" 
-                    adUnitId={ADSTERRA_CONFIG.banner728x90}
+                    position="content-gap"
                   />
                 </div>
               )}

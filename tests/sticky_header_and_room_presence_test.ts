@@ -430,30 +430,31 @@ async function runTests() {
       publicChatSource.includes('slotId="public-chatroom-message-inline"') &&
       publicChatSource.includes('slotId="participant-box-horizontal"') &&
       publicChatSource.includes('slotId="public-chatroom-bottom"') &&
-      publicChatSource.includes('slotId="public-chatroom-body-bottom"') &&
+      !publicChatSource.includes('slotId="public-chatroom-body-bottom"') &&
       publicChatSource.includes('slotId="explore-chatrooms-inline"') &&
+      publicChatSource.includes('slotId="chatroom-explore-bottom"') &&
       !publicChatSource.includes('slotId="public-chatroom-left"') &&
       !publicChatSource.includes('slotId="public-chatroom-right"'),
-    '1.19 PublicChatPage renders all approved active chatroom ad slots and omits empty left/right vertical rails'
+    '1.19 PublicChatPage renders all approved active chatroom ad slots and omits Monetag and empty left/right vertical rails'
   );
   assert(
     (() => {
       const topAdIdx = publicChatSource.indexOf('slotId="public-chatroom-top"');
       const chatIdx = publicChatSource.indexOf('data-testid="central-chatroom-container"');
       const bottomAdIdx = publicChatSource.indexOf('slotId="public-chatroom-bottom"');
-      const monetagIdx = publicChatSource.indexOf('slotId="public-chatroom-body-bottom"');
       const exploreIdx = publicChatSource.indexOf('data-testid="explore-other-chatrooms-section"');
+      const exploreBottomIdx = publicChatSource.indexOf('slotId="chatroom-explore-bottom"');
       return (
         publicChatSource.includes('className="relative w-full overflow-x-clip flex flex-col gap-4 py-4"') &&
         (publicChatSource.match(/className="!my-0"/g) || []).length >= 3 &&
         topAdIdx > 0 &&
         chatIdx > topAdIdx &&
         bottomAdIdx > chatIdx &&
-        monetagIdx > bottomAdIdx &&
-        exploreIdx > monetagIdx
+        exploreIdx > bottomAdIdx &&
+        exploreBottomIdx > exploreIdx
       );
     })(),
-    '1.20 PublicChatPage enforces uniform 16px (gap-4 py-4 + !my-0) vertical spacing and strict Top Ad -> Chatroom -> Bottom Ad -> Monetag -> Explore DOM order'
+    '1.20 PublicChatPage enforces uniform 16px (gap-4 py-4 + !my-0) vertical spacing and strict Top Ad -> Chatroom -> Bottom Ad -> Explore -> Explore Bottom DOM order'
   );
 
   // -------------------------------------------------------------------------

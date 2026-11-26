@@ -4,12 +4,9 @@ import { useOptionalConsent } from '../../context/ConsentContext';
 import {
   ADSTERRA_CONFIG,
   EXOCLICK_CONFIG,
-  JUICYADS_CONFIG,
-  MONETAG_CONFIG,
   ADSENSE_CONFIG,
   AdProvider,
   getProviderRotation,
-  getSessionAdRotationParity,
   getPlacementOrientation,
   getReservedDimensionTarget,
   getVerifiedAdUnitSpec,
@@ -151,7 +148,7 @@ export function resetProviderSessionRotations(provider?: RefreshCapableProvider)
   inMemorySessionRotations.clear();
   try {
     if (typeof sessionStorage !== 'undefined') {
-      for (const p of ['exoclick', 'trafficstars', 'adsterra', 'juicyads', 'monetag', 'adsense']) {
+      for (const p of ['exoclick', 'trafficstars', 'adsterra', 'adsense']) {
         sessionStorage.removeItem(`vx_ad_session_rotations_${p}`);
       }
     }
@@ -847,15 +844,9 @@ export function resolveEffectiveUnitId({
   if (provider === 'adsterra' && position !== 'footer' && !slotId?.includes('footer')) {
     return null;
   }
-  // Monetag is strictly restricted to the single dedicated public-chatroom-body-bottom slot
-  if (provider === 'monetag' && slotId !== 'public-chatroom-body-bottom') {
-    return null;
-  }
 
   // 2. Check if provider is enabled in system configuration
   if (provider === 'exoclick' && !EXOCLICK_CONFIG.enabled) return null;
-  if (provider === 'monetag' && !MONETAG_CONFIG.enabled) return null;
-  if (provider === 'juicyads' && !JUICYADS_CONFIG.enabled) return null;
   if (provider === 'adsterra' && !ADSTERRA_CONFIG.enabled) return null;
   if (provider === 'adsense' && !ADSENSE_CONFIG.enabled) return null;
 
@@ -934,48 +925,14 @@ export function resolveEffectiveUnitId({
     return null;
   }
 
-  if (provider === 'juicyads') {
-    // Horizontal JuicyAds
-    if (containerWidth !== null && containerWidth < 300) {
-      return null;
-    }
-
-    // Participant Bar: dedicated 300x112 zone (fits 300x120 target cleanly on mobile & desktop)
-    if (isParticipantBar) {
-      return JUICYADS_CONFIG.zones.banner300x112; // 1131767
-    }
-
-    // Internal inline placements: ALWAYS compact horizontal 300x62
-    if (isInternalInline) {
-      return JUICYADS_CONFIG.zones.banner300x62; // 1131763
-    }
-
-    if (slotId === 'chatroom-juicyads-bottom' || primaryAdUnitId === JUICYADS_CONFIG.zones.display308x298) {
-      return JUICYADS_CONFIG.zones.display308x298; // 1133909
-    }
-
-    if (posStr === 'top' || posStr === 'bottom' || posStr === 'footer' || posStr === 'content-gap') {
-      if (containerWidth !== null && containerWidth >= 728) {
-        return JUICYADS_CONFIG.zones.banner728x102; // 1131766
-      }
-      return JUICYADS_CONFIG.zones.banner300x62; // 1131763
-    }
-
-    return JUICYADS_CONFIG.zones.banner300x62; // 1131763
-  }
-
   if (provider === 'exoclick') {
     if (isHorizontalBanner && containerWidth !== null && containerWidth < 300) {
       return null;
     }
-    return EXOCLICK_CONFIG.zoneId; // 6087300
-  }
-
-  if (provider === 'monetag') {
-    if (isHorizontalBanner && containerWidth !== null && containerWidth < 300) {
-      return null;
+    if (slotId === 'chatroom-explore-bottom' || sanitizedPrimaryUnit === EXOCLICK_CONFIG.zoneId) {
+      return EXOCLICK_CONFIG.zoneId; // 6087300 (300x250)
     }
-    return MONETAG_CONFIG.zoneId; // 12241585
+    return EXOCLICK_CONFIG.responsiveBannerZoneId; // 6109952 (eas6a97888e38)
   }
 
   if (provider === 'adsense') {
@@ -1115,7 +1072,6 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
   const prevContainerWidthRef = useRef<number | null>(null);
   const adStatusRef = useRef<AdSlotStatus>(adStatus);
   adStatusRef.current = adStatus;
-  const sessionRotationParityRef = useRef<number>(getSessionAdRotationParity());
 
   const clearAllActiveTimers = useCallback(() => {
     activeTimersRef.current.forEach((t) => {
@@ -1148,13 +1104,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
 
   const rotationKey = effectiveIsLiveChatScreen ? 'chat' : 'public';
   const rotation = useMemo(
-    () =>
-      getProviderRotation(
-        position || '',
-        effectiveIsLiveChatScreen,
-        slotId,
-        sessionRotationParityRef.current
-      ),
+    () => getProviderRotation(position || '', effectiveIsLiveChatScreen, slotId),
     [position, rotationKey, slotId]
   );
   const currentProvider = explicitProvider || rotation[providerIndex] || rotation[0];
@@ -1489,17 +1439,12 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       }
     }
 
-    if (currentProvider === 'juicyads') {
-      if (effectiveUnitId === JUICYADS_CONFIG.zones.banner728x102 && containerWidth < 728) {
+    if (currentProvider === 'exoclick') {
+      if (effectiveUnitId === EXOCLICK_CONFIG.zoneId && containerWidth < 300) {
         updateStatus('unfilled', attemptId);
         return;
       }
-      if (
-        (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x62 ||
-          effectiveUnitId === JUICYADS_CONFIG.zones.banner300x112 ||
-          effectiveUnitId === JUICYADS_CONFIG.zones.banner300x262) &&
-        containerWidth < 300
-      ) {
+      if (containerWidth < 300) {
         updateStatus('unfilled', attemptId);
         return;
       }
@@ -1552,53 +1497,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
       activeTimersRef.current.push(timer);
     };
 
-    if (currentProvider === 'juicyads') {
-      try {
-        if (!imperativeHostRef.current) {
-          updateStatus('error', attemptId);
-          return;
-        }
-
-        let width = 300;
-        let height = 250;
-        if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x62) {
-          width = 300;
-          height = 62;
-        } else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner728x102) {
-          width = 728;
-          height = 102;
-        } else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x262) {
-          width = 300;
-          height = 262;
-        } else if (effectiveUnitId === JUICYADS_CONFIG.zones.banner300x112) {
-          width = 300;
-          height = 112;
-        } else if (effectiveUnitId === JUICYADS_CONFIG.zones.display308x298) {
-          width = 308;
-          height = 298;
-        }
-
-        const is308x298 = effectiveUnitId === JUICYADS_CONFIG.zones.display308x298;
-        const domId = is308x298 ? '1133909' : `juicyads-ins-${effectiveUnitId}-${slotId}`;
-        imperativeHostRef.current.innerHTML = `<ins id="${domId}" data-width="${width}" data-height="${height}"></ins>`;
-
-        ensureHeadScriptOnce(JUICYADS_CONFIG.scriptUrl, {
-          isStillValid: () => isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current),
-          onError: () => updateStatus('error', attemptId),
-        });
-
-        const win = window as any;
-        win.adsbyjuicy = win.adsbyjuicy || [];
-        win.adsbyjuicy.push(is308x298 ? { adzone: 1133909 } : { adzone: effectiveUnitId, id: domId });
-
-        startPolling(() => {
-          const target = document.getElementById(domId);
-          return target && imperativeHostRef.current?.contains(target) ? target : null;
-        }, 12, 18);
-      } catch {
-        updateStatus('error', attemptId);
-      }
-    } else if (currentProvider === 'adsense') {
+    if (currentProvider === 'adsense') {
       if (effectiveIsLiveChatScreen) {
         updateStatus('unfilled', attemptId);
         return;
@@ -1801,8 +1700,13 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           updateStatus('error', attemptId);
           return;
         }
-        const domId = `exoclick-ins-${EXOCLICK_CONFIG.zoneId}-${slotId}`;
-        imperativeHostRef.current.innerHTML = `<ins id="${domId}" class="${EXOCLICK_CONFIG.elementClass}" data-zoneid="${EXOCLICK_CONFIG.zoneId}" data-keywords="chat,bangla,desi,dating,social,friendship,community,online,international,south-asia,bangladesh,india,usa,united-states,uk,united-kingdom,canada,australia,new-zealand,ireland,germany,france,netherlands,sweden,norway,denmark,switzerland"></ins>`;
+        const zoneId = effectiveUnitId || EXOCLICK_CONFIG.responsiveBannerZoneId;
+        const elementClass =
+          zoneId === EXOCLICK_CONFIG.zoneId
+            ? EXOCLICK_CONFIG.elementClass
+            : EXOCLICK_CONFIG.responsiveBannerElementClass;
+        const domId = `exoclick-ins-${zoneId}-${slotId}`;
+        imperativeHostRef.current.innerHTML = `<ins id="${domId}" class="${elementClass}" data-zoneid="${zoneId}" data-keywords="chat,bangla,desi,dating,social,friendship,community,online,international,south-asia,bangladesh,india,usa,united-states,uk,united-kingdom,canada,australia,new-zealand,ireland,germany,france,netherlands,sweden,norway,denmark,switzerland"></ins>`;
 
         ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl, {
           isStillValid: () => isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current),
@@ -1815,29 +1719,7 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
           win.AdProvider.push({ serve: {} });
         }
 
-        startPolling(() => {
-          const target = document.getElementById(domId);
-          return target && imperativeHostRef.current?.contains(target) ? target : null;
-        }, 12, 18);
-      } catch {
-        updateStatus('error', attemptId);
-      }
-    } else if (currentProvider === 'monetag') {
-      try {
-        if (!imperativeHostRef.current) {
-          updateStatus('error', attemptId);
-          return;
-        }
-        const domId = `monetag-wrap-${MONETAG_CONFIG.zoneId}-${slotId}`;
-        imperativeHostRef.current.innerHTML = `<div id="${domId}" class="w-full h-full flex items-center justify-center overflow-hidden"></div>`;
-
-        ensureHeadScriptOnce(MONETAG_CONFIG.scriptUrl, {
-          attrs: { 'data-zone': MONETAG_CONFIG.zoneId, 'data-cfasync': 'false' },
-          isStillValid: () => isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current),
-          onError: () => updateStatus('error', attemptId),
-        });
-
-        startPolling(() => document.getElementById(domId), 10, 15);
+        startPolling(() => imperativeHostRef.current, 12, 18);
       } catch {
         updateStatus('error', attemptId);
       }
@@ -1877,9 +1759,9 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
     posClasses = isParticipantWidthCollapsed
       ? 'w-full max-w-[300px] min-h-0 h-0 max-h-0 m-0 p-0 border-0 opacity-0 pointer-events-none mx-auto flex items-center justify-center overflow-hidden shrink-0'
       : 'w-full max-w-[300px] lg:max-w-[320px] min-h-[112px] h-[112px] max-h-[120px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
-  } else if (slotId === 'chatroom-juicyads-bottom' || effectiveUnitId === JUICYADS_CONFIG.zones.display308x298) {
+  } else if (slotId === 'chatroom-explore-bottom' || effectiveUnitId === EXOCLICK_CONFIG.zoneId) {
     posClasses =
-      'w-full max-w-[320px] min-h-[298px] h-[298px] max-h-[300px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
+      'w-full max-w-[300px] min-h-[250px] h-[250px] max-h-[250px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';
   } else if (isInternalHorizontalPlacement(slotId) || position === 'sidebar-horizontal') {
     posClasses =
       'w-full max-w-[320px] min-h-[62px] h-[62px] max-h-[68px] mx-auto flex items-center justify-center overflow-hidden [contain:layout_style] shrink-0';

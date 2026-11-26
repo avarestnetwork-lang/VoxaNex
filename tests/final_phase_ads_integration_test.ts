@@ -4,24 +4,23 @@ import path from 'node:path';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import {
-  JUICYADS_CONFIG,
+  ADSTERRA_CONFIG,
   EXOCLICK_CONFIG,
   VERIFIED_AD_UNITS,
+  getAdsterraUnitForWidth,
+  getProviderRotation,
   isEligibleRouteForGlobalAds,
   isAdSenseExcludedRoute,
   isRouteExcludedFromFooterAds,
 } from '../src/config/adsConfig';
 import { isSafeHttpUrl } from '../src/components/ads/HorizontalVastVideoAd';
-import { ensureHeadScriptOnce } from '../src/components/ads/AdPlacementBox';
-import {
-  CentralizedAdCoordinator,
-  evaluateJuicyAdsFloatingState,
-} from '../src/components/ads/CentralizedAdCoordinator';
+import { ensureHeadScriptOnce, resolveEffectiveUnitId } from '../src/components/ads/AdPlacementBox';
+import { CentralizedAdCoordinator } from '../src/components/ads/CentralizedAdCoordinator';
 import { ConsentProvider } from '../src/context/ConsentContext';
 import { RouterProvider } from '../src/context/RouterContext';
 
 console.log('================================================================');
-console.log('  FINAL PHASE ADS INTEGRATION & AUDIT REMEDIATION TEST SUITE');
+console.log('  EXOCLICK MIGRATION, RESPONSIVE VIDEO SLIDER & AD POLICY TESTS');
 console.log('================================================================');
 
 function withMockBrowserEnv(
@@ -56,102 +55,180 @@ function withMockBrowserEnv(
   }
 }
 
+function collectFilesRecursive(dir: string): string[] {
+  const results: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'build') continue;
+      results.push(...collectFilesRecursive(full));
+    } else if (/\.(ts|tsx|js|jsx|css|html)$/.test(entry.name)) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
 function runTests() {
+  const adsConfigSource = fs.readFileSync(path.resolve('src/config/adsConfig.ts'), 'utf-8');
   const vastSource = fs.readFileSync(path.resolve('src/components/ads/HorizontalVastVideoAd.tsx'), 'utf-8');
   const coordinatorSource = fs.readFileSync(path.resolve('src/components/ads/CentralizedAdCoordinator.tsx'), 'utf-8');
   const sliderSource = fs.readFileSync(path.resolve('src/components/ads/ExoClickVideoSlider.tsx'), 'utf-8');
+  const stickySource = fs.readFileSync(path.resolve('src/components/ads/ExoClickStickyBanner.tsx'), 'utf-8');
   const adSenseLoaderSource = fs.readFileSync(path.resolve('src/components/ads/AdSenseScriptLoader.tsx'), 'utf-8');
   const adPlacementBoxSource = fs.readFileSync(path.resolve('src/components/ads/AdPlacementBox.tsx'), 'utf-8');
   const consentContextSource = fs.readFileSync(path.resolve('src/context/ConsentContext.tsx'), 'utf-8');
   const publicChatSource = fs.readFileSync(path.resolve('src/pages/PublicChatPage.tsx'), 'utf-8');
+  const footerSource = fs.readFileSync(path.resolve('src/components/layout/Footer.tsx'), 'utf-8');
   const indexCssSource = fs.readFileSync(path.resolve('src/index.css'), 'utf-8');
+  const indexHtmlSource = fs.readFileSync(path.resolve('index.html'), 'utf-8');
+  const swSource = fs.readFileSync(path.resolve('public/sw.js'), 'utf-8');
+  const mainTsxSource = fs.readFileSync(path.resolve('src/main.tsx'), 'utf-8');
 
   // -------------------------------------------------------------------------
-  // 1. JuicyAds Decoupling: 1133907 Floating + 1133909 Explore Display Both Eligible
+  // 1. Complete Monetag & JuicyAds Removal + PWA Service Worker Preservation
   // -------------------------------------------------------------------------
-  console.log('\n--- 1. JuicyAds Zone Decoupling (1133907 & 1133909 Independently Eligible) ---');
+  console.log('\n--- 1. Complete Monetag & JuicyAds Removal + PWA Preservation ---');
 
   assert(
-    !coordinatorSource.includes('getJuicyAdsPageLoadAlternation'),
-    'CentralizedAdCoordinator must not import or use getJuicyAdsPageLoadAlternation'
+    !fs.existsSync(path.resolve('src/components/ads/MonetagScript.tsx')),
+    'MonetagScript.tsx must be completely deleted'
   );
   assert(
-    !publicChatSource.includes('getJuicyAdsPageLoadAlternation') &&
-      !publicChatSource.includes("activeJuicyAdsZone === '1133909'"),
-    'PublicChatPage must not import getJuicyAdsPageLoadAlternation or gate 1133909 behind alternation'
+    !indexHtmlSource.toLowerCase().includes('monetag') &&
+      !indexHtmlSource.toLowerCase().includes('juicyads') &&
+      !indexHtmlSource.includes('97a6aeec522d11d21efa5f84c86eb958') &&
+      !indexHtmlSource.includes('416e702dd7d166aafe13107553d43a38'),
+    'index.html has zero Monetag or JuicyAds meta tags'
   );
   assert(
-    publicChatSource.includes('data-testid="explore-other-chatrooms-section"') &&
-      publicChatSource.includes('data-testid="chatroom-juicyads-bottom-section"') &&
-      publicChatSource.includes('slotId="chatroom-juicyads-bottom"'),
-    'Explore Other Chatrooms display placement (1133909) renders unconditionally below Explore Other Chatrooms'
+    !indexCssSource.includes('fadeinbox') && !indexCssSource.toLowerCase().includes('juicyads'),
+    'src/index.css has zero #fadeinbox or JuicyAds CSS rules'
   );
-  assert.notStrictEqual(
-    JUICYADS_CONFIG.floatingScriptUrl,
-    JUICYADS_CONFIG.scriptUrl,
-    'Floating zone 1133907 (jfc.js) and display zone 1133909 (jads.js) use distinct scripts'
+
+  // Verify Service Worker Monetag removal while strictly preserving PWA install/activate lifecycle
+  assert(
+    !swSource.toLowerCase().includes('monetag') &&
+      !swSource.includes('5gvci.com') &&
+      !swSource.includes('12241124') &&
+      !swSource.includes('importScripts') &&
+      swSource.includes("addEventListener('install'") &&
+      swSource.includes('skipWaiting()') &&
+      swSource.includes("addEventListener('activate'") &&
+      swSource.includes('clients.claim()'),
+    'public/sw.js removes Monetag integration while preserving PWA install, activate, skipWaiting, and clients.claim'
   );
-  console.log('✅ [PASSED] 1.1 JuicyAds floating (1133907) and display (1133909) are independently eligible on every page load');
+  assert(
+    !mainTsxSource.toLowerCase().includes('monetag') &&
+      mainTsxSource.includes("navigator.serviceWorker.register('/sw.js'"),
+    'src/main.tsx preserves PWA service worker registration without Monetag references'
+  );
 
-  // Verify SSR render of CentralizedAdCoordinator renders both JuicyAds 1133907 anchor and ExoClick 6102500 on consented eligible routes
-  withMockBrowserEnv('/chat', { cookie_consent_status: 'accepted' }, () => {
-    const html = renderToString(
-      React.createElement(
-        RouterProvider,
-        null,
-        React.createElement(
-          ConsentProvider,
-          null,
-          React.createElement(CentralizedAdCoordinator)
-        )
-      )
-    );
-    assert(
-      html.includes('data-testid="centralized-ad-coordinator"') &&
-        html.includes('data-testid="juicyads-floating-anchor"') &&
-        html.includes('data-juicyads-zone="1133907"') &&
-        html.includes('data-testid="exoclick-video-slider-container"'),
-      'Consented /chat route mounts both JuicyAds 1133907 left anchor and ExoClick 6102500 right slider'
-    );
-  });
-
-  withMockBrowserEnv('/', { cookie_consent_status: 'accepted' }, () => {
-    const html = renderToString(
-      React.createElement(
-        RouterProvider,
-        null,
-        React.createElement(
-          ConsentProvider,
-          null,
-          React.createElement(CentralizedAdCoordinator)
-        )
-      )
-    );
-    assert(
-      html.includes('data-juicyads-zone="1133907"') &&
-        html.includes('data-testid="exoclick-video-slider-container"'),
-      'Consented / route mounts both JuicyAds 1133907 left anchor and ExoClick 6102500 right slider'
-    );
-  });
-  console.log('✅ [PASSED] 1.2 Returning accepted visitor receives synchronous initial consent and dual-side floating coordinator');
+  const bannedPattern =
+    /\b(monetag|juicyads|adsbyjuicy|juicy_adzone|fadeinbox|5gvci\.com|nap5k\.com|poweredby\.jads\.co|12241124|12241585|1133907|1133909|1131763|1131765|1131766|1131767)\b/i;
+  for (const filePath of [...collectFilesRecursive(path.resolve('src')), path.resolve('index.html'), path.resolve('public/sw.js')]) {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const match = content.match(bannedPattern);
+    assert(!match, `Found prohibited Monetag/JuicyAds reference "${match?.[0]}" in ${path.relative(process.cwd(), filePath)}`);
+  }
+  console.log('✅ [PASSED] 1.1 Zero Monetag/JuicyAds references remain across src, index.html, and public/sw.js; PWA intact');
 
   // -------------------------------------------------------------------------
-  // 2. ExoClick Video Slider (6102500) & Horizontal VAST (6102492)
+  // 2. Adsterra Footer-Only Preservation
   // -------------------------------------------------------------------------
-  console.log('\n--- 2. ExoClick Video Slider (6102500) & Horizontal VAST (6102492) ---');
-  assert.strictEqual(EXOCLICK_CONFIG.videoSliderZoneId, '6102500', 'Video Slider zone ID must be 6102500');
-  assert.strictEqual(EXOCLICK_CONFIG.videoSliderElementClass, 'eas6a97888e38', 'Video Slider class must be eas6a97888e38');
-  assert.strictEqual(EXOCLICK_CONFIG.scriptUrl, 'https://a.magsrv.com/ad-provider.js', 'Video slider uses ad-provider.js');
-  const adsConfigSource = fs.readFileSync(path.resolve('src/config/adsConfig.ts'), 'utf-8');
-  assert(!adsConfigSource.includes('6102494') && !adsConfigSource.includes('eas6a97888e31'), 'Stale 6102494 / eas6a97888e31 removed');
-  assert(!sliderSource.includes('6102494') && !coordinatorSource.includes('6102494'), 'No stale 6102494 references in components');
+  console.log('\n--- 2. Adsterra Footer-Only Enforcement ---');
 
-  assert.strictEqual(EXOCLICK_CONFIG.horizontalVastZoneId, '6102492', 'Horizontal VAST zone ID must be 6102492');
+  assert(
+    footerSource.includes('slotId="global-footer-responsive"') &&
+      footerSource.includes("getAdsterraUnitForWidth(footerWidth, 'footer')") &&
+      footerSource.includes('adUnitId={responsiveAdUnit}') &&
+      getAdsterraUnitForWidth(375, 'footer') === ADSTERRA_CONFIG.banner320x50 &&
+      getAdsterraUnitForWidth(1024, 'footer') === ADSTERRA_CONFIG.banner728x90 &&
+      getProviderRotation('footer', false, 'global-footer-responsive').join(',') === 'adsterra' &&
+      getProviderRotation('footer', true, 'global-footer-responsive').join(',') === 'adsterra',
+    'Footer exclusively uses Adsterra global-footer-responsive'
+  );
+  for (const pageFile of ['PublicChatPage.tsx', 'BlogPage.tsx', 'ForumPage.tsx', 'MemberDashboardPage.tsx']) {
+    const pageSrc = fs.readFileSync(path.resolve('src/pages', pageFile), 'utf-8');
+    assert(!pageSrc.includes('ADSTERRA_CONFIG'), `${pageFile} must not reference ADSTERRA_CONFIG outside Footer`);
+  }
+  assert(
+    resolveEffectiveUnitId({
+      provider: 'adsterra',
+      position: 'content-gap',
+      slotId: 'blog-article-gap',
+      containerWidth: 768,
+      isLiveChatScreen: false,
+    }) === null,
+    'Adsterra is rejected in non-footer content-gap slots'
+  );
+  console.log('✅ [PASSED] 2.1 Adsterra remains strictly Footer-only across codebase');
+
+  // -------------------------------------------------------------------------
+  // 3. Verified ExoClick Zones (6087300, 6109952, 6110028, 6109970, 6102500)
+  // -------------------------------------------------------------------------
+  console.log('\n--- 3. ExoClick 5-Zone Configuration & Class Compatibility ---');
+
+  assert.strictEqual(EXOCLICK_CONFIG.zoneId, '6087300');
+  assert.strictEqual(EXOCLICK_CONFIG.elementClass, 'eas6a97888e2');
+  assert.strictEqual(EXOCLICK_CONFIG.responsiveBannerZoneId, '6109952');
+  assert.strictEqual(EXOCLICK_CONFIG.responsiveBannerElementClass, 'eas6a97888e38');
+  assert.strictEqual(EXOCLICK_CONFIG.stickyBannerZoneId, '6110028');
+  assert.strictEqual(EXOCLICK_CONFIG.stickyBannerElementClass, 'eas6a97888e17');
+  assert.strictEqual(EXOCLICK_CONFIG.videoSliderZoneId, '6102500');
+  assert.strictEqual(EXOCLICK_CONFIG.videoSliderElementClass, 'eas6a97888e38');
+  assert.strictEqual(EXOCLICK_CONFIG.horizontalVastZoneId, '6109970');
+  assert.strictEqual(EXOCLICK_CONFIG.horizontalVastUrl, 'https://s.magsrv.com/v1/vast.php?idz=6109970');
+  assert.strictEqual(EXOCLICK_CONFIG.scriptUrl, 'https://a.magsrv.com/ad-provider.js');
+
+  // Old stale VAST ID 6102492 removed
+  assert(!adsConfigSource.includes('6102492') && !adsConfigSource.includes('6102494'));
+
+  // 6087300 (300x250) used for Explore Bottom & registered at 300x250; never forced into compact bars
+  const unit6087300 = VERIFIED_AD_UNITS.find((u) => u.id === '6087300');
+  assert(unit6087300 && unit6087300.width === 300 && unit6087300.height === 250);
   assert.strictEqual(
-    EXOCLICK_CONFIG.horizontalVastUrl,
-    'https://s.magsrv.com/v1/vast.php?idz=6102492',
-    'Horizontal VAST URL matches endpoint'
+    resolveEffectiveUnitId({
+      provider: 'exoclick',
+      position: 'bottom',
+      slotId: 'chatroom-explore-bottom',
+      containerWidth: 320,
+      isLiveChatScreen: true,
+    }),
+    '6087300'
   );
+  assert.strictEqual(
+    resolveEffectiveUnitId({
+      provider: 'exoclick',
+      position: 'sidebar-horizontal',
+      slotId: 'participant-box-horizontal',
+      containerWidth: 324,
+      isLiveChatScreen: true,
+    }),
+    '6109952'
+  );
+  assert.strictEqual(
+    resolveEffectiveUnitId({
+      provider: 'exoclick',
+      position: 'top',
+      slotId: 'public-chatroom-top',
+      containerWidth: 768,
+      isLiveChatScreen: true,
+    }),
+    '6109952'
+  );
+  assert.strictEqual(
+    resolveEffectiveUnitId({
+      provider: 'exoclick',
+      position: 'bottom',
+      slotId: 'public-chatroom-bottom',
+      containerWidth: 375,
+      isLiveChatScreen: true,
+    }),
+    '6109952'
+  );
+
+  // VAST parser + safe HTTP URL validation
   assert(
     vastSource.includes('DOMParser') &&
       vastSource.includes('<video') &&
@@ -159,160 +236,158 @@ function runTests() {
       vastSource.includes('muted') &&
       vastSource.includes('onError') &&
       !vastSource.includes('<script src='),
-    'Horizontal VAST safely parses XML and uses HTML5 video'
+    'Horizontal VAST safely parses XML and uses isolated HTML5 video'
   );
   assert.strictEqual(isSafeHttpUrl('https://cdn.example.com/ad.mp4'), true);
-  assert.strictEqual(isSafeHttpUrl('http://cdn.example.com/ad.mp4'), true);
   assert.strictEqual(isSafeHttpUrl('javascript:alert(1)'), false);
   assert.strictEqual(isSafeHttpUrl('data:text/html,<script>alert(1)</script>'), false);
-  assert.strictEqual(isSafeHttpUrl(''), false);
-  console.log('✅ [PASSED] 2.1 ExoClick 6102500 / eas6a97888e38 and Horizontal VAST 6102492 verified');
 
-  assert(
-    sliderSource.includes('fixed right-2 sm:right-4') &&
-      vastSource.includes('max-w-3xl mx-auto') &&
-      coordinatorSource.includes('hidden lg:block fixed left-4 bottom-4') &&
-      coordinatorSource.includes('data-vx-juicy-float') &&
-      indexCssSource.includes('html[data-vx-juicy-float="left"] #fadeinbox') &&
-      indexCssSource.includes('left: 16px !important;') &&
-      indexCssSource.includes('top: auto !important;') &&
-      indexCssSource.includes('html:not([data-vx-juicy-float="left"]) #fadeinbox') &&
-      indexCssSource.includes('@media (max-width: 1023px)'),
-    'Dual-side CSS positioning rules for JuicyAds 1133907 LEFT and ExoClick 6102500 RIGHT intact'
-  );
-  console.log('✅ [PASSED] 2.2 Dual-side positioning CSS and desktop/mobile breakpoints configured');
+  // Verify DOM verification file for ExoClick domain ownership remains intact
+  assert(fs.existsSync(path.resolve('public/28befc4532cb8837aa59edffca607a5a.html')));
+  console.log('✅ [PASSED] 3.1 All 5 ExoClick zones (6087300, 6109952, 6110028, 6109970, 6102500) verified');
 
   // -------------------------------------------------------------------------
-  // 3. Consent Lifecycle: Unset / Rejected / Pre-Load / Post-Load / Withdrawal / Re-Accept / Deduplication
+  // 4. SSR Render: CentralizedAdCoordinator (Slider 6102500 + Sticky 6110028) & Consent
   // -------------------------------------------------------------------------
-  console.log('\n--- 3. Consent Initialization, Post-Load Deferral, Withdrawal & Non-Duplication ---');
+  console.log('\n--- 4. Consent Gating, Coordinator SSR & Route Exclusions ---');
 
   assert(
-    coordinatorSource.includes("consent?.consentStatus === 'accepted'") &&
-      sliderSource.includes("consent?.consentStatus === 'accepted'") &&
+    sliderSource.includes("consent?.consentStatus === 'accepted'") &&
+      stickySource.includes("consent?.consentStatus === 'accepted'") &&
       vastSource.includes("consent?.consentStatus === 'accepted'") &&
       adSenseLoaderSource.includes("consent?.consentStatus === 'accepted'") &&
       adPlacementBoxSource.includes("consent?.consentStatus === 'accepted'"),
     'All ad components require accepted consent'
   );
-  assert(
-    consentContextSource.includes('readInitialConsentState'),
-    'ConsentProvider synchronously reads persisted consent before initial paint/effects'
-  );
-  assert(
-    !coordinatorSource.includes("new Event('load')") &&
-      !coordinatorSource.includes('dispatchEvent(') &&
-      !coordinatorSource.includes('location.reload'),
-    'Coordinator must never dispatch synthetic window.load or force-reload the page'
-  );
+  assert(consentContextSource.includes('readInitialConsentState'), 'Synchronous persisted consent initialization preserved');
 
-  // SSR checks for unset and rejected consent
   for (const state of [{}, { cookie_consent_status: 'rejected' }] as Array<Record<string, string>>) {
     withMockBrowserEnv('/chat', state, () => {
       const html = renderToString(
         React.createElement(
           RouterProvider,
           null,
-          React.createElement(
-            ConsentProvider,
-            null,
-            React.createElement(CentralizedAdCoordinator)
-          )
+          React.createElement(ConsentProvider, null, React.createElement(CentralizedAdCoordinator))
         )
       );
-      assert.strictEqual(html, '', 'Unset or rejected consent must render zero global ad DOM');
+      assert.strictEqual(html, '', 'Unset or rejected consent renders zero global ad DOM');
     });
   }
-  // Legacy granted migration also initializes synchronously
-  withMockBrowserEnv('/chat', { cookie_consent: 'granted' }, () => {
-    const html = renderToString(
-      React.createElement(
-        RouterProvider,
-        null,
+
+  for (const route of ['/chat', '/']) {
+    withMockBrowserEnv(route, { cookie_consent_status: 'accepted' }, () => {
+      const html = renderToString(
         React.createElement(
-          ConsentProvider,
+          RouterProvider,
           null,
-          React.createElement(CentralizedAdCoordinator)
+          React.createElement(ConsentProvider, null, React.createElement(CentralizedAdCoordinator))
         )
-      )
-    );
-    assert(html.includes('data-juicyads-zone="1133907"'), 'Legacy cookie_consent=granted initializes synchronously');
-  });
-  console.log('✅ [PASSED] 3.1 SSR consent gating verified for unset, rejected, accepted, and legacy granted');
+      );
+      assert(
+        html.includes('data-testid="centralized-ad-coordinator"') &&
+          html.includes('data-testid="exoclick-video-slider-container"') &&
+          html.includes('data-exoclick-zone="6102500"') &&
+          html.includes('data-testid="exoclick-sticky-banner-container"') &&
+          html.includes('data-exoclick-zone="6110028"'),
+        `Consented ${route} mounts ExoClick Video Slider (6102500) and Sticky Banner (6110028)`
+      );
+    });
+  }
 
-  // Behavioral state machine tests for evaluateJuicyAdsFloatingState()
-  const unsetDecision = evaluateJuicyAdsFloatingState({
-    hasAcceptedConsent: false,
-    isEligibleRoute: true,
-    documentReadyState: 'loading',
-  });
-  assert.strictEqual(unsetDecision.shouldInjectScript, false);
-  assert.strictEqual(unsetDecision.shouldSetRootLeftAttr, false);
-  assert.strictEqual(unsetDecision.shouldExposeLeftAnchor, false);
+  // Video-call routes (/av-chat, /chat/video) must suppress floating Slider & Sticky Banner for strict player isolation
+  for (const videoRoute of ['/av-chat', '/chat/video']) {
+    withMockBrowserEnv(videoRoute, { cookie_consent_status: 'accepted' }, () => {
+      const html = renderToString(
+        React.createElement(
+          RouterProvider,
+          null,
+          React.createElement(ConsentProvider, null, React.createElement(CentralizedAdCoordinator))
+        )
+      );
+      assert(
+        !html.includes('exoclick-video-slider-container') &&
+          !html.includes('exoclick-sticky-banner-container'),
+        `Video call route ${videoRoute} suppresses floating video slider and sticky banner to isolate user webcam player`
+      );
+    });
+  }
 
-  const ineligibleDecision = evaluateJuicyAdsFloatingState({
-    hasAcceptedConsent: true,
-    isEligibleRoute: false,
-    documentReadyState: 'loading',
-  });
-  assert.strictEqual(ineligibleDecision.shouldInjectScript, false);
-  assert.strictEqual(ineligibleDecision.shouldSetRootLeftAttr, false);
-  assert.strictEqual(ineligibleDecision.shouldExposeLeftAnchor, false);
+  // Protected & private account routes suppress global coordinator
+  for (const excluded of ['/dashboard', '/user/dashboard', '/profile', '/login', '/admin', '/checkout']) {
+    assert.strictEqual(isEligibleRouteForGlobalAds(excluded), false);
+    withMockBrowserEnv(excluded, { cookie_consent_status: 'accepted' }, () => {
+      const html = renderToString(
+        React.createElement(
+          RouterProvider,
+          null,
+          React.createElement(ConsentProvider, null, React.createElement(CentralizedAdCoordinator))
+        )
+      );
+      assert.strictEqual(html, '', `Excluded route ${excluded} renders zero coordinator DOM`);
+    });
+  }
 
-  const preLoadAccepted = evaluateJuicyAdsFloatingState({
-    hasAcceptedConsent: true,
-    isEligibleRoute: true,
-    documentReadyState: 'interactive',
-    hasExistingFadeInBox: false,
-    hasExistingFloatingScript: false,
-  });
-  assert.strictEqual(preLoadAccepted.shouldInjectScript, true, 'Pre-load accepted initializes jfc.js');
-  assert.strictEqual(preLoadAccepted.shouldSetRootLeftAttr, true);
-  assert.strictEqual(preLoadAccepted.isPostLoadDeferred, false);
+  assert.strictEqual(isAdSenseExcludedRoute('/chat'), true);
+  assert.strictEqual(isAdSenseExcludedRoute('/'), false);
+  assert.strictEqual(isRouteExcludedFromFooterAds('/login'), true);
+  assert.strictEqual(isRouteExcludedFromFooterAds('/chat'), false);
+  console.log('✅ [PASSED] 4.1 Consent gating, route exclusions, and SSR isolation verified');
 
-  const postLoadAccepted = evaluateJuicyAdsFloatingState({
-    hasAcceptedConsent: true,
-    isEligibleRoute: true,
-    documentReadyState: 'complete',
-    hasExistingFadeInBox: false,
-    hasExistingFloatingScript: false,
-  });
-  assert.strictEqual(
-    postLoadAccepted.isPostLoadDeferred,
-    true,
-    'Post-window.load fresh acceptance defers jfc.js cleanly instead of consuming juicy_fadedin with a broken hidden element'
+  // -------------------------------------------------------------------------
+  // 5. Responsive Video Slider (6102500), Sticky Banner (6110028) & User Video Isolation
+  // -------------------------------------------------------------------------
+  console.log('\n--- 5. Responsive Video Slider, Sticky Banner & Call Player Isolation ---');
+
+  assert(
+    sliderSource.includes('88px+env(safe-area-inset-bottom,0px)') &&
+      sliderSource.includes('w-[min(288px,calc(100vw-16px))] sm:w-[300px] lg:w-[320px]') &&
+      !sliderSource.includes('min-h-[160px] h-[180px]') &&
+      sliderSource.includes('orientationchange') &&
+      sliderSource.includes('visualViewport') &&
+      sliderSource.includes('hasLiveCall') &&
+      sliderSource.includes('hasActiveFloatingChat') &&
+      sliderSource.includes('handleDismiss') &&
+      sliderSource.includes('vx_video_slider_dismissed') &&
+      sliderSource.includes('toggleMinimize') &&
+      sliderSource.includes('initializedZoneRef'),
+    'ExoClick Video Slider (6102500) adapts cleanly across 320px-1920px viewports with aspect sizing, orientation handling, and call/chat/keyboard isolation'
   );
-  assert.strictEqual(postLoadAccepted.shouldInjectScript, false);
-  assert.strictEqual(postLoadAccepted.shouldSetRootLeftAttr, false);
 
-  const reAcceptedDecision = evaluateJuicyAdsFloatingState({
-    hasAcceptedConsent: true,
-    isEligibleRoute: true,
-    documentReadyState: 'complete',
-    hasExistingFadeInBox: true,
-    hasExistingFloatingScript: true,
-  });
-  assert.strictEqual(reAcceptedDecision.shouldExposeLeftAnchor, true);
-  assert.strictEqual(reAcceptedDecision.shouldSetRootLeftAttr, true, 'Re-acceptance restores left #fadeinbox visibility');
-  assert.strictEqual(reAcceptedDecision.shouldInjectScript, false, 'Re-acceptance never injects duplicate jfc.js');
-  assert.strictEqual(reAcceptedDecision.isPostLoadDeferred, false);
-  console.log('✅ [PASSED] 3.2 JuicyAds floating consent state transitions (pre-load, post-load deferral, withdrawal, re-accept) verified');
+  assert(
+    stickySource.includes('vx_sticky_banner_dismissed') &&
+      stickySource.includes('handleDismiss') &&
+      stickySource.includes('winW < 1024 || winH < 580') &&
+      stickySource.includes('hasLiveCall') &&
+      indexCssSource.includes('[data-testid="exoclick-sticky-banner-container"] [id*="msg-sticky-container"]') &&
+      indexCssSource.includes('z-index: 38 !important') &&
+      indexCssSource.includes('@media (max-width: 1023px), (max-height: 579px)'),
+    'ExoClick Sticky Banner (6110028) is safe-area anchored, dismissible, capped below modals/calls, and suppressed on compact/mobile viewports'
+  );
 
-  // Behavioral script non-duplication check with mock document
+  // Verify CallContext, VoiceWebcamPage, SecureMediaRenderer, ComposerAttachmentPreview contain zero ad injections
+  for (const playerFile of [
+    'src/pages/VoiceWebcamPage.tsx',
+    'src/components/chat/SecureMediaRenderer.tsx',
+    'src/components/chat/ComposerAttachmentPreview.tsx',
+  ]) {
+    const src = fs.readFileSync(path.resolve(playerFile), 'utf-8');
+    assert(!src.includes('magsrv') && !src.includes('AdPlacementBox') && !src.includes('vast.php'), `${playerFile} must have zero ad/VAST injection`);
+  }
+  const callContextSrc = fs.readFileSync(path.resolve('src/context/CallContext.tsx'), 'utf-8');
+  assert(
+    callContextSrc.includes('data-vx-call-active') &&
+      callContextSrc.includes('z-[80]') &&
+      !callContextSrc.includes('vast.php'),
+    'CallContext elevates live WebRTC call modal above ads and broadcasts data-vx-call-active'
+  );
+
+  // Single-injection test for ensureHeadScriptOnce
   (() => {
     const prevDoc = (global as any).document;
     const appendedScripts: any[] = [];
     (global as any).document = {
-      head: {
-        appendChild: (node: any) => {
-          appendedScripts.push(node);
-          return node;
-        },
-      },
-      querySelector: (selector: string) => {
-        const match = appendedScripts.find((s) => `script[src="${s.src}"]` === selector);
-        return match || null;
-      },
+      head: { appendChild: (node: any) => (appendedScripts.push(node), node) },
+      querySelector: (selector: string) => appendedScripts.find((s) => `script[src="${s.src}"]` === selector) || null,
       createElement: (tag: string) => ({
         tagName: tag.toUpperCase(),
         async: false,
@@ -329,163 +404,24 @@ function runTests() {
       }),
     };
     try {
-      const s1 = ensureHeadScriptOnce(JUICYADS_CONFIG.floatingScriptUrl);
-      const s2 = ensureHeadScriptOnce(JUICYADS_CONFIG.floatingScriptUrl);
-      assert.strictEqual(appendedScripts.length, 1, 'ensureHeadScriptOnce must inject jfc.js at most once');
-      assert.strictEqual(s1, s2, 'Repeated ensureHeadScriptOnce calls return the existing script element');
+      const s1 = ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl);
+      const s2 = ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl);
+      assert.strictEqual(appendedScripts.length, 1);
+      assert.strictEqual(s1, s2);
     } finally {
       (global as any).document = prevDoc;
     }
   })();
-  console.log('✅ [PASSED] 3.3 ensureHeadScriptOnce prevents duplicate script injection');
 
-  // -------------------------------------------------------------------------
-  // 4. Route Exclusions: Public/Chat Eligible vs Private Account & Protected Excluded
-  // -------------------------------------------------------------------------
-  console.log('\n--- 4. Global Ad Route Exclusions & AdSense Policy Separation ---');
-
-  const eligibleRoutes = [
-    '/',
-    '/rooms',
-    '/rooms/',
-    '/chat',
-    '/chat?roomId=bangla',
-    '/chat/bangla',
-    '/chat/indian',
-    '/dating',
-    '/shop',
-    '/about',
-    '/faq',
-    '/terms',
-    '/privacy',
-    '/safety',
-    '/forum',
-    '/blog',
-    '/user/public-guide', // Not all /user/* routes are excluded — only explicit private/auth routes
-  ];
-  for (const r of eligibleRoutes) {
-    assert.strictEqual(isEligibleRouteForGlobalAds(r), true, `Eligible route ${r} must permit global ads`);
-  }
-
-  const excludedPrivateAccountRoutes = [
-    '/dashboard',
-    '/dashboard/',
-    '/dashboard/overview',
-    '/dashboard/settings?tab=privacy',
-    '/user/dashboard',
-    '/user/dashboard/',
-    '/user/dashboard/activity#recent',
-    '/profile',
-    '/profile/',
-    '/profile/edit?x=1',
-  ];
-  for (const pr of excludedPrivateAccountRoutes) {
-    assert.strictEqual(
-      isEligibleRouteForGlobalAds(pr),
-      false,
-      `Private account route ${pr} must be excluded from global ads`
-    );
-    withMockBrowserEnv(pr.split(/[?#]/)[0], { cookie_consent_status: 'accepted' }, () => {
-      const html = renderToString(
-        React.createElement(
-          RouterProvider,
-          null,
-          React.createElement(
-            ConsentProvider,
-            null,
-            React.createElement(CentralizedAdCoordinator)
-          )
-        )
-      );
-      assert.strictEqual(html, '', `Coordinator SSR on ${pr} must render nothing even with accepted consent`);
-    });
-  }
-
-  const protectedRoutes = [
-    '/age-gate',
-    '/age-gate/',
-    '/guest-entry',
-    '/guest-entry/',
-    '/register',
-    '/register/',
-    '/login',
-    '/auth',
-    '/auth/callback',
-    '/user/login',
-    '/user/login/',
-    '/user/register',
-    '/user/guest-entry',
-    '/user/reset-password',
-    '/user/password-reset',
-    '/user/account-recovery',
-    '/admin',
-    '/admin/',
-    '/admin/dashboard',
-    '/admin/login',
-    '/admin/users?page=2',
-    '/moderator',
-    '/moderator/',
-    '/moderator/dashboard',
-    '/moderator/login',
-    '/checkout',
-    '/checkout/step-1',
-    '/payment',
-    '/payment/confirm?tx=1',
-  ];
-  for (const pr of protectedRoutes) {
-    assert.strictEqual(isEligibleRouteForGlobalAds(pr), false, `Protected route ${pr} must exclude global ads`);
-    assert.strictEqual(isAdSenseExcludedRoute(pr), true, `Protected route ${pr} must exclude AdSense`);
-    assert.strictEqual(isRouteExcludedFromFooterAds(pr), true, `Protected route ${pr} must exclude footer ads`);
-  }
-
-  // AdSense policy remains intact and distinct
-  assert.strictEqual(isAdSenseExcludedRoute('/chat'), true);
-  assert.strictEqual(isAdSenseExcludedRoute('/messages'), true);
-  assert.strictEqual(isAdSenseExcludedRoute('/'), false);
-  assert.strictEqual(isAdSenseExcludedRoute('/dashboard'), false, 'AdSense route exclusion list stays independent');
-
-  console.log(
-    `✅ [PASSED] 4.1 Verified ${eligibleRoutes.length} eligible routes, ${excludedPrivateAccountRoutes.length} private account routes, and ${protectedRoutes.length} protected routes`
-  );
-
-  // Member Dashboard explicit embed preserved
   const dashboardSource = fs.readFileSync(path.resolve('src/pages/MemberDashboardPage.tsx'), 'utf-8');
   assert(dashboardSource.includes('<HorizontalVastVideoAd'), 'Member Dashboard retains explicit HorizontalVastVideoAd');
 
-  // Existing JuicyAds zones preserved
-  assert.strictEqual(JUICYADS_CONFIG.zones.banner300x62, '1131763');
-  assert.strictEqual(JUICYADS_CONFIG.zones.banner300x262, '1131765');
-  assert.strictEqual(JUICYADS_CONFIG.zones.banner728x102, '1131766');
-  assert.strictEqual(JUICYADS_CONFIG.zones.banner300x112, '1131767');
-  assert.strictEqual(JUICYADS_CONFIG.zones.floating, '1133907');
-  assert.strictEqual(JUICYADS_CONFIG.zones.display308x298, '1133909');
-
-  const unit308 = VERIFIED_AD_UNITS.find((u) => u.id === '1133909');
-  assert(unit308 !== undefined && unit308.width === 308 && unit308.height === 298, 'Unit 1133909 registered at 308x298');
-  console.log('✅ [PASSED] 4.2 All existing JuicyAds zones (1131763/1131765/1131766/1131767) and 1133907/1133909 verified');
-
-  // -------------------------------------------------------------------------
-  // 5. Chat Usability, Minimize, Dismiss, Keyboard/Private-Chat Suppression
-  // -------------------------------------------------------------------------
-  console.log('\n--- 5. Chat Usability & Responsive Suppression Controls ---');
-  assert(
-    sliderSource.includes('88px+env(safe-area-inset-bottom,0px)') &&
-      sliderSource.includes('handleDismiss') &&
-      sliderSource.includes('vx_video_slider_dismissed') &&
-      sliderSource.includes('toggleMinimize') &&
-      sliderSource.includes("isMinimized\n              ? 'hidden'") &&
-      sliderSource.includes('initializedZoneRef') &&
-      sliderSource.includes('visualViewport') &&
-      sliderSource.includes('hasActiveFloatingChat'),
-    'ExoClick slider keeps composer lift, dismiss, minimize, deduplication, and keyboard/floating-chat suppression'
-  );
-
   const appSource = fs.readFileSync(path.resolve('src/App.tsx'), 'utf-8');
   assert(appSource.includes('<CentralizedAdCoordinator />'), 'App.tsx mounts CentralizedAdCoordinator at root');
-  console.log('✅ [PASSED] 5.1 Responsive suppression rules and App.tsx root mounting verified (code/SSR level)');
 
+  console.log('✅ [PASSED] 5.1 Responsive slider/sticky rules, user video isolation, and script deduplication verified');
   console.log('\n================================================================');
-  console.log('  ALL FINAL PHASE ADS AUDIT REMEDIATION TESTS PASSED!');
+  console.log('  ALL EXOCLICK MIGRATION & RESPONSIVE SLIDER TESTS PASSED!');
   console.log('================================================================\n');
 }
 

@@ -9,7 +9,6 @@ import { Modal } from '../components/ui/Modal';
 import { toRelativeTime, formatDhakaDate } from '../utils/date';
 import { SEOHead } from '../components/common/SEOHead';
 import { AdPlacementBox } from '../components/ads/AdPlacementBox';
-import { ADSTERRA_CONFIG } from '../config/adsConfig';
 import {
   MessageSquare,
   Users,
@@ -334,8 +333,7 @@ export const ForumPage: React.FC = () => {
             {/* Ad between post content and replies */}
             <AdPlacementBox 
               slotId="forum-post-gap" 
-              position="content-gap" 
-              adUnitId={ADSTERRA_CONFIG.banner728x90}
+              position="content-gap"
             />
 
             {/* Replies Section */}
@@ -526,8 +524,7 @@ export const ForumPage: React.FC = () => {
                   {index === 3 && (
                     <AdPlacementBox 
                       slotId="forum-list-gap" 
-                      position="content-gap" 
-                      adUnitId={ADSTERRA_CONFIG.banner728x90}
+                      position="content-gap"
                     />
                   )}
                 </React.Fragment>

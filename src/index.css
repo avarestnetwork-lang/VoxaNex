@@ -26,27 +26,53 @@
   }
 }
 
-/* JuicyAds Floating Video Ad (Zone 1133907 via jfc.js -> #fadeinbox).
-   Overrides fadeinbox.js inline centered coordinates so the ad sits bottom-left on desktop
-   opposite the bottom-right ExoClick video slider, without altering native visibility close state. */
-html[data-vx-juicy-float="left"] #fadeinbox {
+/* ExoClick Video Slider (6102500) responsive media containment */
+[data-testid="exoclick-video-slider-host"] > div {
+  max-width: 100% !important;
+  max-height: 100% !important;
+  width: 100% !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+[data-testid="exoclick-video-slider-host"] video,
+[data-testid="exoclick-video-slider-host"] img {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+[data-testid="exoclick-video-slider-host"] iframe {
+  max-width: 100% !important;
+  max-height: 100% !important;
+  display: block;
+  border: 0;
+}
+
+/* ExoClick Sticky Banner (6110028) safe-area anchoring & z-index cap below modals/calls */
+[data-testid="exoclick-sticky-banner-container"] [id*="msg-sticky-container"] {
   position: fixed !important;
   left: 16px !important;
   right: auto !important;
   top: auto !important;
   bottom: max(16px, env(safe-area-inset-bottom, 16px)) !important;
   margin: 0 !important;
-  z-index: 40 !important;
-  max-width: min(320px, calc(100vw - 32px)) !important;
+  z-index: 38 !important;
+  max-width: min(300px, calc(100vw - 32px)) !important;
+  max-height: min(250px, calc(100dvh - 120px)) !important;
 }
 
-html:not([data-vx-juicy-float="left"]) #fadeinbox {
-  display: none !important;
-}
-
-@media (max-width: 1023px), (max-height: 519px) {
-  html[data-vx-juicy-float="left"] #fadeinbox {
+@media (max-width: 1023px), (max-height: 579px) {
+  [data-testid="exoclick-sticky-banner-container"] [id*="msg-sticky-container"] {
     display: none !important;
   }
+}
+
+html[data-vx-call-active="true"] [data-testid="exoclick-sticky-banner-container"] [id*="msg-sticky-container"] {
+  display: none !important;
 }
 

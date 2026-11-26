@@ -542,6 +542,7 @@ export const PublicChatPage: React.FC = () => {
   // Authoritative main view tab: 'room' for public group chat, or conversationId for maximized private chat
   const [activeMainTab, setActiveMainTab] = useState<'room' | string>('room');
   const [exploreAdFailed, setExploreAdFailed] = useState(false);
+  const [exploreBottomAdFailed, setExploreBottomAdFailed] = useState(false);
 
   // Rule 6 & 7: The expanded/tab-style renderer must render ONLY conversations whose mode is 'maximized'
   const maximizedWindows = openWindows.filter(
@@ -2154,16 +2155,6 @@ export const PublicChatPage: React.FC = () => {
         />
       </div>
 
-      {/* Monetag Body-Bottom Dedicated Advertisement */}
-      <div className="w-full max-w-7xl mx-auto px-0 sm:px-4 lg:px-6 shrink-0 flex justify-center">
-        <AdPlacementBox
-          slotId="public-chatroom-body-bottom"
-          provider="monetag"
-          position="content-gap"
-          className="!my-0"
-        />
-      </div>
-
       {/* Explore Other Chatrooms Discovery Section */}
       {(() => {
         const exploreRooms = getExploreRoomsForSlug(activeRoom.slug);
@@ -2312,27 +2303,34 @@ export const PublicChatPage: React.FC = () => {
         );
       })()}
 
-      {/* JuicyAds Advertisement Placement (Immediately below Explore Other Chatrooms, zone 1133909) */}
-      <section
-        aria-label="JuicyAds advertisement"
-        data-testid="chatroom-juicyads-bottom-section"
-        className="w-full max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 shrink-0"
-      >
-        <div
-          data-testid="chatroom-juicyads-container"
-          className="bg-[#0c1324] border border-slate-800 rounded-2xl p-3 sm:p-4 shadow-md flex flex-col items-center gap-1.5"
+      {/* ExoClick 300x250 Advertisement Placement (Below Explore Other Chatrooms, zone 6087300) */}
+      {!exploreBottomAdFailed && (
+        <section
+          aria-label="Sponsored advertisement"
+          data-testid="chatroom-explore-bottom-section"
+          className="w-full max-w-7xl mx-auto px-1 sm:px-4 lg:px-6 shrink-0"
         >
-          <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
-            Advertisement
-          </span>
-          <AdPlacementBox
-            slotId="chatroom-juicyads-bottom"
-            provider="juicyads"
-            position="bottom"
-            className="!my-0"
-          />
-        </div>
-      </section>
+          <div
+            data-testid="chatroom-explore-bottom-container"
+            className="bg-[#0c1324] border border-slate-800 rounded-2xl px-1 py-3 sm:p-4 shadow-md flex flex-col items-center gap-1.5"
+          >
+            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
+              Advertisement
+            </span>
+            <AdPlacementBox
+              slotId="chatroom-explore-bottom"
+              provider="exoclick"
+              position="bottom"
+              className="!my-0"
+              onStatusChange={(status) => {
+                if (status === 'unfilled' || status === 'error') {
+                  setExploreBottomAdFailed(true);
+                }
+              }}
+            />
+          </div>
+        </section>
+      )}
 
       {/* Contextual User Action Menu */}
       {userActionMenu && (
