@@ -1336,5 +1336,143 @@ export const databaseService = {
       return 'error';
     }
   },
+
+  /**
+   * Broadcast WebRTC signaling lifecycle events to a dedicated user channel (`webrtc_user:${userId}`).
+   */
+  async broadcastWebRTCEvent(
+    userId: string,
+    eventName: string,
+    payload: any,
+    overrideClient?: any
+  ): Promise<string> {
+    const supabase = overrideClient || getSupabaseClient();
+    if (!supabase || !userId) return 'no_client';
+    try {
+      const channelName = `webrtc_user:${userId}`;
+      const entry = sharedChannels.get(channelName);
+      if (entry?.channel && entry.status === 'SUBSCRIBED') {
+        return await entry.channel.send({
+          type: 'broadcast',
+          event: eventName,
+          payload,
+        });
+      }
+
+      const tempChannel = supabase.channel(channelName, {
+        config: { broadcast: { self: false } },
+      });
+      return await new Promise<string>((resolve) => {
+        let settled = false;
+        const timeout = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            try {
+              supabase.removeChannel(tempChannel);
+            } catch {}
+            resolve('timed_out');
+          }
+        }, 2500);
+
+        tempChannel.subscribe(async (status: string) => {
+          if (settled) return;
+          if (status === 'SUBSCRIBED') {
+            settled = true;
+            clearTimeout(timeout);
+            try {
+              const sendStatus = await tempChannel.send({
+                type: 'broadcast',
+                event: eventName,
+                payload,
+              });
+              try {
+                supabase.removeChannel(tempChannel);
+              } catch {}
+              resolve(sendStatus);
+            } catch {
+              try {
+                supabase.removeChannel(tempChannel);
+              } catch {}
+              resolve('error');
+            }
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            settled = true;
+            clearTimeout(timeout);
+            try {
+              supabase.removeChannel(tempChannel);
+            } catch {}
+            resolve(status);
+          }
+        });
+      });
+    } catch (e) {
+      console.warn(`[VX-WebRTC] broadcastWebRTCEvent (${eventName}) error:`, e);
+      return 'error';
+    }
+  },
+
+  /**
+   * Subscribe to WebRTC signaling lifecycle events for a specific user via Supabase Realtime.
+   */
+  subscribeToUserWebRTCEvents(
+    userId: string,
+    onEvent: (eventName: string, payload: any) => void
+  ): () => void {
+    const supabase = getSupabaseClient();
+    if (!supabase || !userId) return () => {};
+
+    const channelName = `webrtc_user:${userId}`;
+    let entry = sharedChannels.get(channelName);
+
+    if (!entry) {
+      const channel = supabase.channel(channelName, {
+        config: { broadcast: { self: false } },
+      });
+      entry = { channel, refs: 0, listeners: new Set() };
+      sharedChannels.set(channelName, entry);
+
+      const events = [
+        'incoming_call',
+        'call_accepted',
+        'call_rejected',
+        'call_ended',
+        'call_timeout',
+        'webrtc_signal',
+      ];
+
+      events.forEach((evt) => {
+        channel.on('broadcast', { event: evt }, (msg: any) => {
+          const data = msg?.payload;
+          if (data !== undefined) {
+            entry!.listeners.forEach((l) => l(evt, data));
+          }
+        });
+      });
+
+      channel.subscribe((status: string) => {
+        if (entry) {
+          entry.status = status;
+        }
+      });
+    }
+
+    entry.refs++;
+    const listener = (eventName: string, payload: any) => onEvent(eventName, payload);
+    entry.listeners.add(listener);
+
+    return () => {
+      const currentEntry = sharedChannels.get(channelName);
+      if (currentEntry) {
+        currentEntry.listeners.delete(listener);
+        currentEntry.refs--;
+        if (currentEntry.refs <= 0) {
+          try {
+            supabase.removeChannel(currentEntry.channel);
+          } catch {}
+          sharedChannels.delete(channelName);
+        }
+      }
+    };
+  },
 };
 

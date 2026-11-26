@@ -50,6 +50,7 @@ import {
   postSignal,
   getCallSession,
   getActiveCallForUser,
+  getCallSignals,
   registerUserSignalingStream,
 } from './src/server/webrtcCallHub';
 import {
@@ -995,18 +996,41 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   // ---------------------------------------------------------------------------
-  // WEBRTC CALLING & SIGNALING ENDPOINTS (PHASE 5)
+  // WEBRTC CALLING & SIGNALING ENDPOINTS (PHASE 5 - AUTHENTICATED)
   // ---------------------------------------------------------------------------
 
-  // Fetch STUN & configured TURN servers (never exposes long-lived secrets to client)
-  app.get('/api/webrtc/ice-servers', (req, res) => {
+  const requireRegisteredCallAuth = async (req: express.Request, res: express.Response) => {
+    const authResult = await authenticateRequest(req, dbEnv);
+    if ('errorCode' in authResult) {
+      res.status(authResult.errorCode).json({ success: false, error: authResult.error });
+      return null;
+    }
+    if (authResult.isGuestCaller) {
+      res.status(403).json({
+        success: false,
+        error: 'Forbidden: Voice and video calling is restricted to registered members.',
+      });
+      return null;
+    }
+    return authResult;
+  };
+
+  // Fetch STUN & configured TURN servers (never exposes long-lived secrets to unauthenticated callers)
+  app.get('/api/webrtc/ice-servers', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
     const iceServers = getIceServers();
     res.json({ success: true, iceServers });
   });
 
   // User Signaling Stream (SSE for incoming calls, answers, ICE candidates)
-  app.get('/api/webrtc/signaling/:userId/events', (req, res) => {
+  app.get('/api/webrtc/signaling/:userId/events', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
     const { userId } = req.params;
+    if (auth.verifiedUserId !== userId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Cannot subscribe to another user\'s call signaling stream.' });
+    }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -1018,9 +1042,12 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   // Initiate call
-  app.post('/api/webrtc/call/initiate', (req, res) => {
+  app.post('/api/webrtc/call/initiate', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
+
     const {
-      initiatorId,
+      initiatorId: bodyInitiatorId,
       initiatorNickname,
       initiatorAvatar,
       calleeId,
@@ -1030,17 +1057,26 @@ export function createExpressApp(dbEnvOverride?: {
       conversationId,
     } = req.body || {};
 
-    if (!initiatorId || !calleeId) {
-      return res.status(400).json({ success: false, error: 'initiatorId and calleeId required.' });
+    if (bodyInitiatorId && bodyInitiatorId !== auth.verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Initiator identity mismatch.' });
+    }
+    if (!calleeId || typeof calleeId !== 'string') {
+      return res.status(400).json({ success: false, error: 'calleeId required.' });
+    }
+    if (calleeId.startsWith('guest_')) {
+      return res.status(403).json({ success: false, error: 'Cannot initiate WebRTC calls with guest accounts.' });
     }
 
+    const profile = await fetchMemberProfile(auth.verifiedUserId, dbEnv);
+    const calleeProfile = await fetchMemberProfile(calleeId, dbEnv);
+
     const result = initiateCall({
-      initiatorId,
-      initiatorNickname: initiatorNickname || 'Anonymous',
-      initiatorAvatar: initiatorAvatar || '👤',
+      initiatorId: auth.verifiedUserId,
+      initiatorNickname: profile.nickname || initiatorNickname || 'User',
+      initiatorAvatar: profile.avatar || initiatorAvatar || '👤',
       calleeId,
-      calleeNickname: calleeNickname || 'Partner',
-      calleeAvatar: calleeAvatar || '👤',
+      calleeNickname: calleeProfile.nickname !== 'User' ? calleeProfile.nickname : (calleeNickname || 'Partner'),
+      calleeAvatar: calleeProfile.avatar !== '👤' ? calleeProfile.avatar : (calleeAvatar || '👤'),
       mediaKind: mediaKind === 'audio' ? 'audio' : 'video',
       conversationId,
     });
@@ -1052,13 +1088,18 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   // Accept call
-  app.post('/api/webrtc/call/accept', (req, res) => {
+  app.post('/api/webrtc/call/accept', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
     const { callId, calleeId } = req.body || {};
-    if (!callId || !calleeId) {
-      return res.status(400).json({ success: false, error: 'callId and calleeId required.' });
+    if (calleeId && calleeId !== auth.verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Callee identity mismatch.' });
+    }
+    if (!callId) {
+      return res.status(400).json({ success: false, error: 'callId required.' });
     }
 
-    const result = acceptCall(callId, calleeId);
+    const result = acceptCall(callId, auth.verifiedUserId);
     if (!result.success) {
       return res.status(400).json(result);
     }
@@ -1066,13 +1107,18 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   // Reject call
-  app.post('/api/webrtc/call/reject', (req, res) => {
+  app.post('/api/webrtc/call/reject', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
     const { callId, calleeId, reason } = req.body || {};
-    if (!callId || !calleeId) {
-      return res.status(400).json({ success: false, error: 'callId and calleeId required.' });
+    if (calleeId && calleeId !== auth.verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Caller identity mismatch.' });
+    }
+    if (!callId) {
+      return res.status(400).json({ success: false, error: 'callId required.' });
     }
 
-    const result = rejectCall(callId, calleeId, reason);
+    const result = rejectCall(callId, auth.verifiedUserId, reason);
     if (!result.success) {
       return res.status(400).json(result);
     }
@@ -1080,13 +1126,18 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   // End call
-  app.post('/api/webrtc/call/end', (req, res) => {
+  app.post('/api/webrtc/call/end', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
     const { callId, userId, reason } = req.body || {};
-    if (!callId || !userId) {
-      return res.status(400).json({ success: false, error: 'callId and userId required.' });
+    if (userId && userId !== auth.verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Caller identity mismatch.' });
+    }
+    if (!callId) {
+      return res.status(400).json({ success: false, error: 'callId required.' });
     }
 
-    const result = endCall(callId, userId, reason);
+    const result = endCall(callId, auth.verifiedUserId, reason);
     if (!result.success) {
       return res.status(400).json(result);
     }
@@ -1094,13 +1145,18 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   // WebRTC Signal Relay (Offer / Answer / ICE Candidates / Mute State)
-  app.post('/api/webrtc/signal', (req, res) => {
+  app.post('/api/webrtc/signal', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
     const { callId, senderId, type, payload } = req.body || {};
-    if (!callId || !senderId || !type || !payload) {
-      return res.status(400).json({ success: false, error: 'callId, senderId, type, and payload required.' });
+    if (senderId && senderId !== auth.verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Sender identity mismatch.' });
+    }
+    if (!callId || !type || !payload) {
+      return res.status(400).json({ success: false, error: 'callId, type, and payload required.' });
     }
 
-    const result = postSignal({ callId, senderId, type, payload });
+    const result = postSignal({ callId, senderId: auth.verifiedUserId, type, payload });
     if (!result.success) {
       return res.status(400).json(result);
     }
@@ -1108,25 +1164,42 @@ export function createExpressApp(dbEnvOverride?: {
   });
 
   // Query Active Call for User
-  app.get('/api/webrtc/call/active', (req, res) => {
-    const userId = req.query.userId as string;
-    if (!userId) {
-      return res.status(400).json({ success: false, error: 'userId required.' });
+  app.get('/api/webrtc/call/active', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
+    const userId = (req.query.userId as string) || auth.verifiedUserId;
+    if (userId !== auth.verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Cannot query another user\'s active call.' });
     }
 
-    const call = getActiveCallForUser(userId);
+    const call = getActiveCallForUser(auth.verifiedUserId);
     res.json({ success: true, call: call || null });
   });
 
-  // Query Call Session Details
-  app.get('/api/webrtc/call/:callId', (req, res) => {
+  // Query Call Signals (Polling fallback / reconnect recovery)
+  app.get('/api/webrtc/call/:callId/signals', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
     const { callId } = req.params;
-    const userId = req.query.userId as string;
-    if (!userId) {
-      return res.status(400).json({ success: false, error: 'userId required.' });
+    const after = req.query.after as string | undefined;
+    const signals = getCallSignals(callId, auth.verifiedUserId, after);
+    if (!signals) {
+      return res.status(404).json({ success: false, error: 'Call not found or unauthorized.' });
+    }
+    res.json({ success: true, signals });
+  });
+
+  // Query Call Session Details
+  app.get('/api/webrtc/call/:callId', async (req, res) => {
+    const auth = await requireRegisteredCallAuth(req, res);
+    if (!auth) return;
+    const { callId } = req.params;
+    const userId = (req.query.userId as string) || auth.verifiedUserId;
+    if (userId !== auth.verifiedUserId) {
+      return res.status(403).json({ success: false, error: 'Forbidden: Cannot query another user\'s call session.' });
     }
 
-    const call = getCallSession(callId, userId);
+    const call = getCallSession(callId, auth.verifiedUserId);
     if (!call) {
       return res.status(404).json({ success: false, error: 'Call not found or unauthorized.' });
     }

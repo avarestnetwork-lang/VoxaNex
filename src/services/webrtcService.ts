@@ -1,14 +1,19 @@
 import { CallSessionData, WebRTCSignal, IceServerConfig, CallMediaKind } from '../types';
+import { getAuthToken, connectCustomSSE } from './messagingService';
+import { databaseService } from './databaseService';
 
 export class WebRTCService {
   private peerConnection: RTCPeerConnection | null = null;
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
-  private eventSource: EventSource | null = null;
+  private customSseCleanup: (() => void) | null = null;
+  private unsubscribeSupabaseEvents: (() => void) | null = null;
   private iceServers: IceServerConfig[] = [];
 
-  // Active call state
+  // Active call state & ICE candidate buffering for race condition prevention
   private currentCall: CallSessionData | null = null;
+  private pendingIceCandidates: RTCIceCandidateInit[] = [];
+  private processedSignalIds = new Set<string>();
 
   // Callbacks
   private onRemoteStreamCallbacks: Set<(stream: MediaStream) => void> = new Set();
@@ -19,119 +24,147 @@ export class WebRTCService {
   private onErrorCallbacks: Set<(err: string) => void> = new Set();
 
   /**
-   * Initialize signaling SSE stream for current user
+   * Initialize signaling stream (SSE + Supabase Realtime fallback) with Authorization Bearer header
    */
   public subscribeToSignaling(userId: string): () => void {
-    if (this.eventSource) {
-      this.eventSource.close();
+    if (this.customSseCleanup) {
+      this.customSseCleanup();
+      this.customSseCleanup = null;
+    }
+    if (this.unsubscribeSupabaseEvents) {
+      this.unsubscribeSupabaseEvents();
+      this.unsubscribeSupabaseEvents = null;
     }
 
-    const sse = new EventSource(`/api/webrtc/signaling/${encodeURIComponent(userId)}/events`);
-    this.eventSource = sse;
-
-    sse.addEventListener('incoming_call', (e: MessageEvent) => {
+    const handleIncomingEvent = (eventName: string, dataObj: any) => {
       try {
-        const data = JSON.parse(e.data);
-        const incomingSession: CallSessionData = {
-          callId: data.callId,
-          conversationId: data.conversationId,
-          initiator: data.initiator,
-          callee: data.callee,
-          mediaKind: data.mediaKind,
-          status: 'ringing',
-          startedAt: Date.now(),
-        };
-        this.currentCall = incomingSession;
-        this.onIncomingCallCallbacks.forEach((cb) => cb(incomingSession));
-      } catch (err) {
-        console.error('Failed to parse incoming_call event', err);
-      }
-    });
-
-    sse.addEventListener('call_accepted', async (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (this.currentCall && this.currentCall.callId === data.callId) {
-          this.currentCall.status = 'connecting';
-          this.onCallStatusCallbacks.forEach((cb) => cb(this.currentCall!));
-
-          // If initiator, create and send WebRTC Offer
-          if (this.peerConnection && this.currentCall.initiator.id === userId) {
-            await this.createAndSendOffer(data.callId, userId);
+        if (eventName === 'incoming_call') {
+          const incomingSession: CallSessionData = {
+            callId: dataObj.callId,
+            conversationId: dataObj.conversationId,
+            initiator: dataObj.initiator,
+            callee: dataObj.callee,
+            mediaKind: dataObj.mediaKind || 'video',
+            status: 'ringing',
+            startedAt: Date.now(),
+          };
+          this.currentCall = incomingSession;
+          this.onIncomingCallCallbacks.forEach((cb) => cb(incomingSession));
+        } else if (eventName === 'call_accepted') {
+          if (this.currentCall && this.currentCall.callId === dataObj.callId) {
+            this.currentCall.status = 'connecting';
+            this.onCallStatusCallbacks.forEach((cb) => cb(this.currentCall!));
+            if (this.peerConnection && this.currentCall.initiator.id === userId) {
+              this.createAndSendOffer(dataObj.callId, userId);
+            }
           }
+        } else if (eventName === 'call_rejected') {
+          if (this.currentCall && this.currentCall.callId === dataObj.callId) {
+            this.currentCall.status = 'rejected';
+            this.currentCall.endedReason = dataObj.reason || 'Call rejected';
+            this.onCallStatusCallbacks.forEach((cb) => cb(this.currentCall!));
+            this.cleanupPeerConnection();
+          }
+        } else if (eventName === 'call_ended') {
+          if (this.currentCall && this.currentCall.callId === dataObj.callId) {
+            this.currentCall.status = 'ended';
+            this.currentCall.endedReason = dataObj.reason || 'Call ended';
+            this.currentCall.durationSeconds = dataObj.durationSeconds;
+            this.onCallStatusCallbacks.forEach((cb) => cb(this.currentCall!));
+            this.cleanupPeerConnection();
+          }
+        } else if (eventName === 'call_timeout') {
+          if (this.currentCall && this.currentCall.callId === dataObj.callId) {
+            this.currentCall.status = 'missed';
+            this.currentCall.endedReason = dataObj.reason || 'No answer (timed out)';
+            this.onCallStatusCallbacks.forEach((cb) => cb(this.currentCall!));
+            this.cleanupPeerConnection();
+          }
+        } else if (eventName === 'webrtc_signal') {
+          const signal: WebRTCSignal = dataObj;
+          if (signal && signal.id) {
+            if (this.processedSignalIds.has(signal.id)) return;
+            this.processedSignalIds.add(signal.id);
+            if (this.processedSignalIds.size > 200) {
+              const oldest = this.processedSignalIds.values().next().value;
+              if (oldest) this.processedSignalIds.delete(oldest);
+            }
+          }
+          this.onSignalCallbacks.forEach((cb) => cb(signal));
+          this.handleIncomingSignal(signal, userId);
         }
       } catch (err) {
-        console.error('Failed to handle call_accepted event', err);
+        console.error('Failed to handle incoming WebRTC signaling event', err);
       }
-    });
+    };
 
-    sse.addEventListener('call_rejected', (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (this.currentCall && this.currentCall.callId === data.callId) {
-          this.currentCall.status = 'rejected';
-          this.currentCall.endedReason = data.reason || 'Call rejected';
-          this.onCallStatusCallbacks.forEach((cb) => cb(this.currentCall!));
-          this.cleanupPeerConnection();
+    // 1. Custom SSE Stream with Bearer Token header
+    const cleanupSse = connectCustomSSE({
+      url: `/api/webrtc/signaling/${encodeURIComponent(userId)}/events`,
+      headers: async () => {
+        const token = await getAuthToken({ isGuest: false, userId });
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
         }
-      } catch (err) {
-        console.error('Failed to handle call_rejected event', err);
-      }
-    });
-
-    sse.addEventListener('call_ended', (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (this.currentCall && this.currentCall.callId === data.callId) {
-          this.currentCall.status = 'ended';
-          this.currentCall.endedReason = data.reason || 'Call ended';
-          this.currentCall.durationSeconds = data.durationSeconds;
-          this.onCallStatusCallbacks.forEach((cb) => cb(this.currentCall!));
-          this.cleanupPeerConnection();
+        return headers;
+      },
+      onEvent: (eventName, dataStr) => {
+        try {
+          const parsed = JSON.parse(dataStr);
+          handleIncomingEvent(eventName, parsed);
+        } catch {
+          // ignore non-json pings
         }
-      } catch (err) {
-        console.error('Failed to handle call_ended event', err);
-      }
+      },
+      onError: () => {},
+      onAuthError: (status) => {
+        console.warn(`[WebRTC] SSE Auth error status ${status}`);
+      },
     });
+    this.customSseCleanup = cleanupSse;
 
-    sse.addEventListener('call_timeout', (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (this.currentCall && this.currentCall.callId === data.callId) {
-          this.currentCall.status = 'missed';
-          this.currentCall.endedReason = data.reason || 'No answer (timed out)';
-          this.onCallStatusCallbacks.forEach((cb) => cb(this.currentCall!));
-          this.cleanupPeerConnection();
-        }
-      } catch (err) {
-        console.error('Failed to handle call_timeout event', err);
-      }
-    });
-
-    sse.addEventListener('webrtc_signal', async (e: MessageEvent) => {
-      try {
-        const signal: WebRTCSignal = JSON.parse(e.data);
-        this.onSignalCallbacks.forEach((cb) => cb(signal));
-        await this.handleIncomingSignal(signal, userId);
-      } catch (err) {
-        console.error('Failed to handle webrtc_signal event', err);
-      }
-    });
+    // 2. Supabase Realtime channel subscription backup
+    try {
+      const unsubSupabase = databaseService.subscribeToUserWebRTCEvents(userId, (eventName, payload) => {
+        handleIncomingEvent(eventName, payload);
+      });
+      this.unsubscribeSupabaseEvents = unsubSupabase;
+    } catch {
+      // ignore if supabase not configured
+    }
 
     return () => {
-      if (this.eventSource === sse) {
-        sse.close();
-        this.eventSource = null;
+      if (this.customSseCleanup === cleanupSse) {
+        cleanupSse();
+        this.customSseCleanup = null;
+      }
+      if (this.unsubscribeSupabaseEvents) {
+        this.unsubscribeSupabaseEvents();
+        this.unsubscribeSupabaseEvents = null;
       }
     };
   }
 
   /**
-   * Fetch STUN / TURN servers from backend
+   * Helper to get authenticated headers for /api/webrtc/* calls
+   */
+  private async getAuthHeaders(): Promise<Record<string, string>> {
+    const token = await getAuthToken({ isGuest: false });
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  }
+
+  /**
+   * Fetch STUN / TURN servers from backend with auth
    */
   public async fetchIceServers(): Promise<IceServerConfig[]> {
     try {
-      const res = await fetch('/api/webrtc/ice-servers');
+      const headers = await this.getAuthHeaders();
+      const res = await fetch('/api/webrtc/ice-servers', { headers });
       const data = (await res.json()) as { success?: boolean; iceServers?: IceServerConfig[] };
       if (data.success && data.iceServers) {
         this.iceServers = data.iceServers;
@@ -140,12 +173,11 @@ export class WebRTCService {
     } catch (err) {
       console.warn('Using default STUN servers due to API fetch failure', err);
     }
-    // Fallback public STUN
     return [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
   }
 
   /**
-   * Acquire local browser media (camera / mic)
+   * Acquire local browser media (camera / mic) with validation
    */
   public async acquireLocalMedia(constraints: {
     video: boolean | MediaTrackConstraints;
@@ -177,13 +209,14 @@ export class WebRTCService {
   }
 
   /**
-   * Initialize RTCPeerConnection with STUN/TURN configuration and ICE candidates routing
+   * Initialize RTCPeerConnection with STUN/TURN configuration and ICE candidate handling
    */
   public async initPeerConnection(callId: string, currentUserId: string): Promise<RTCPeerConnection> {
     if (this.peerConnection) {
       this.peerConnection.close();
       this.peerConnection = null;
     }
+    this.pendingIceCandidates = [];
 
     if (this.iceServers.length === 0) {
       await this.fetchIceServers();
@@ -195,35 +228,36 @@ export class WebRTCService {
     });
     this.peerConnection = pc;
 
-    // Attach local media tracks
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {
         pc.addTrack(track, this.localStream!);
       });
     }
 
-    // Remote track incoming
     pc.ontrack = (event) => {
       if (event.streams && event.streams[0]) {
         this.remoteStream = event.streams[0];
-        this.onRemoteStreamCallbacks.forEach((cb) => cb(this.remoteStream!));
+      } else {
+        if (!this.remoteStream) {
+          this.remoteStream = new MediaStream();
+        }
+        this.remoteStream.addTrack(event.track);
       }
+      this.onRemoteStreamCallbacks.forEach((cb) => cb(this.remoteStream!));
     };
 
-    // ICE Candidate generation
     pc.onicecandidate = async (event) => {
       if (event.candidate) {
         await this.sendSignal(callId, currentUserId, 'ice_candidate', event.candidate.toJSON());
       }
     };
 
-    // Connection state monitoring
     pc.onconnectionstatechange = () => {
       this.onConnectionStateCallbacks.forEach((cb) => cb(pc.connectionState));
       if (pc.connectionState === 'connected' && this.currentCall) {
         this.currentCall.status = 'active';
         this.onCallStatusCallbacks.forEach((cb) => cb(this.currentCall!));
-      } else if (pc.connectionState === 'failed') {
+      } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         this.onErrorCallbacks.forEach((cb) => cb('WebRTC connection failed. Network or firewall issue.'));
       }
     };
@@ -239,44 +273,67 @@ export class WebRTCService {
       await this.initPeerConnection(callId, currentUserId);
     }
     const pc = this.peerConnection!;
+    const mediaKind = this.currentCall?.mediaKind || 'video';
     const offer = await pc.createOffer({
       offerToReceiveAudio: true,
-      offerToReceiveVideo: true,
+      offerToReceiveVideo: mediaKind === 'video',
     });
     await pc.setLocalDescription(offer);
-
     await this.sendSignal(callId, currentUserId, 'offer', offer);
   }
 
   /**
-   * Handle incoming WebRTC signal (offer, answer, ICE candidate)
+   * Handle incoming WebRTC signal with ICE candidate buffering
    */
   private async handleIncomingSignal(signal: WebRTCSignal, currentUserId: string) {
     const pc = this.peerConnection;
 
     if (signal.type === 'offer') {
-      // Callee received offer
       if (!this.peerConnection) {
         await this.initPeerConnection(signal.callId, currentUserId);
       }
       const activePc = this.peerConnection!;
       await activePc.setRemoteDescription(new RTCSessionDescription(signal.payload));
 
+      // Flush buffered ICE candidates
+      if (this.pendingIceCandidates.length > 0) {
+        for (const cand of this.pendingIceCandidates) {
+          try {
+            await activePc.addIceCandidate(new RTCIceCandidate(cand));
+          } catch (err) {
+            console.warn('Error flushing buffered ICE candidate', err);
+          }
+        }
+        this.pendingIceCandidates = [];
+      }
+
       const answer = await activePc.createAnswer();
       await activePc.setLocalDescription(answer);
-
       await this.sendSignal(signal.callId, currentUserId, 'answer', answer);
     } else if (signal.type === 'answer') {
-      // Initiator received answer
       if (pc && pc.signalingState !== 'stable') {
         await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+        if (this.pendingIceCandidates.length > 0) {
+          for (const cand of this.pendingIceCandidates) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (err) {
+              console.warn('Error flushing buffered ICE candidate', err);
+            }
+          }
+          this.pendingIceCandidates = [];
+        }
       }
     } else if (signal.type === 'ice_candidate') {
-      if (pc && signal.payload) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
-        } catch (err) {
-          console.warn('Error adding ICE candidate', err);
+      if (signal.payload) {
+        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
+          } catch (err) {
+            console.warn('Error adding ICE candidate', err);
+          }
+        } else {
+          this.pendingIceCandidates.push(signal.payload);
         }
       }
     } else if (signal.type === 'hangup') {
@@ -285,7 +342,7 @@ export class WebRTCService {
   }
 
   /**
-   * Send signal to backend
+   * Send signal to backend with auth
    */
   public async sendSignal(
     callId: string,
@@ -294,9 +351,10 @@ export class WebRTCService {
     payload: any
   ): Promise<boolean> {
     try {
+      const headers = await this.getAuthHeaders();
       const res = await fetch('/api/webrtc/signal', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ callId, senderId, type, payload }),
       });
       const data = (await res.json()) as { success?: boolean };
@@ -307,7 +365,7 @@ export class WebRTCService {
   }
 
   /**
-   * Initiate 1-on-1 call
+   * Initiate 1-on-1 call with auth headers
    */
   public async initiateCall(params: {
     initiatorId: string;
@@ -320,9 +378,10 @@ export class WebRTCService {
     conversationId?: string;
   }): Promise<{ success: boolean; call?: CallSessionData; error?: string }> {
     try {
+      const headers = await this.getAuthHeaders();
       const res = await fetch('/api/webrtc/call/initiate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(params),
       });
       const data = (await res.json()) as { success?: boolean; call?: CallSessionData; error?: string };
@@ -337,13 +396,14 @@ export class WebRTCService {
   }
 
   /**
-   * Accept incoming call
+   * Accept incoming call with auth headers
    */
   public async acceptCall(callId: string, calleeId: string): Promise<{ success: boolean; call?: CallSessionData; error?: string }> {
     try {
+      const headers = await this.getAuthHeaders();
       const res = await fetch('/api/webrtc/call/accept', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ callId, calleeId }),
       });
       const data = (await res.json()) as { success?: boolean; call?: CallSessionData; error?: string };
@@ -362,9 +422,10 @@ export class WebRTCService {
    */
   public async rejectCall(callId: string, calleeId: string, reason?: string): Promise<boolean> {
     try {
+      const headers = await this.getAuthHeaders();
       const res = await fetch('/api/webrtc/call/reject', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ callId, calleeId, reason }),
       });
       const data = (await res.json()) as { success?: boolean };
@@ -383,9 +444,10 @@ export class WebRTCService {
    */
   public async endCall(callId: string, userId: string, reason?: string): Promise<boolean> {
     try {
+      const headers = await this.getAuthHeaders();
       const res = await fetch('/api/webrtc/call/end', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ callId, userId, reason }),
       });
       const data = (await res.json()) as { success?: boolean };
@@ -416,9 +478,9 @@ export class WebRTCService {
       this.localStream = null;
     }
     this.remoteStream = null;
+    this.pendingIceCandidates = [];
   }
 
-  // Toggles
   public toggleCamera(enabled: boolean): boolean {
     if (this.localStream) {
       const track = this.localStream.getVideoTracks()[0];
@@ -441,7 +503,6 @@ export class WebRTCService {
     return false;
   }
 
-  // Event Listeners
   public onRemoteStream(cb: (stream: MediaStream) => void): () => void {
     this.onRemoteStreamCallbacks.add(cb);
     return () => this.onRemoteStreamCallbacks.delete(cb);

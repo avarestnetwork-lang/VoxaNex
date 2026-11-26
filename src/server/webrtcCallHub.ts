@@ -135,16 +135,26 @@ export function initiateCall(params: {
 
   // User restriction checks (initiator & callee)
   const initRestr = checkUserRestriction(initiatorId);
-  if (initRestr.isRestricted && initRestr.restriction) {
-    if (initRestr.restriction.type === 'banned_permanent' || initRestr.restriction.type.startsWith('suspended')) {
-      return { success: false, error: `Account suspended (${initRestr.restriction.type}): ${initRestr.restriction.reason}` };
+  const initScope = String(initRestr.restriction?.scope || 'all');
+  if (initRestr.isRestricted && initRestr.restriction && (initScope === 'all' || initScope === 'calls' || initScope === 'calling')) {
+    if (
+      initRestr.restriction.type === 'banned_permanent' ||
+      initRestr.restriction.type === 'muted' ||
+      initRestr.restriction.type.startsWith('suspended')
+    ) {
+      return { success: false, error: `Account restricted (${initRestr.restriction.type}): ${initRestr.restriction.reason}` };
     }
   }
 
   const calleeRestr = checkUserRestriction(calleeId);
-  if (calleeRestr.isRestricted && calleeRestr.restriction) {
-    if (calleeRestr.restriction.type === 'banned_permanent' || calleeRestr.restriction.type.startsWith('suspended')) {
-      return { success: false, error: 'Participant is unavailable to receive calls (account suspended).' };
+  const calleeScope = String(calleeRestr.restriction?.scope || 'all');
+  if (calleeRestr.isRestricted && calleeRestr.restriction && (calleeScope === 'all' || calleeScope === 'calls' || calleeScope === 'calling')) {
+    if (
+      calleeRestr.restriction.type === 'banned_permanent' ||
+      calleeRestr.restriction.type === 'muted' ||
+      calleeRestr.restriction.type.startsWith('suspended')
+    ) {
+      return { success: false, error: 'Participant is unavailable to receive calls (account restricted).' };
     }
   }
 
@@ -386,6 +396,10 @@ export function postSignal(params: {
     return { success: false, error: 'Unauthorized signaling sender.' };
   }
 
+  if (call.status === 'ended' || call.status === 'rejected' || call.status === 'missed' || call.status === 'failed') {
+    return { success: false, error: `Cannot send signal in '${call.status}' state.` };
+  }
+
   const receiverId = call.initiator.id === senderId ? call.callee.id : call.initiator.id;
 
   if (type === 'answer') {
@@ -431,4 +445,16 @@ export function getActiveCallForUser(userId: string): CallSessionData | null {
     return null;
   }
   return call;
+}
+
+export function getCallSignals(callId: string, userId: string, afterTimestamp?: string): WebRTCSignal[] | null {
+  const call = getCallSession(callId, userId);
+  if (!call) return null;
+  const list = callSignals.get(callId) || [];
+  const afterMs = afterTimestamp ? Date.parse(afterTimestamp) : NaN;
+  return list.filter((sig) => {
+    if (sig.receiverId !== userId) return false;
+    if (Number.isFinite(afterMs) && Date.parse(sig.timestamp) <= afterMs) return false;
+    return true;
+  });
 }
