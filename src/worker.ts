@@ -1198,6 +1198,187 @@ async function verifyConversationParticipant(
   }
 }
 
+async function verifyCallConversationMembership(
+  conversationId: string,
+  initiatorId: string,
+  calleeId: string,
+  dbEnv: { supabaseUrl?: string; supabaseServiceKey?: string }
+): Promise<{ authorized: boolean; errorResponse?: Response }> {
+  if (!dbEnv.supabaseUrl || !dbEnv.supabaseServiceKey) {
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({
+        success: false,
+        error: 'Service Unavailable: Supabase configuration required for call authorization.',
+      }, 503),
+    };
+  }
+
+  const cleanConvId = (conversationId || '').trim();
+  const cleanInitiatorId = (initiatorId || '').trim();
+  const cleanCalleeId = (calleeId || '').trim();
+
+  if (!cleanConvId || !UUID_REGEX.test(cleanConvId)) {
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({
+        success: false,
+        error: 'Invalid conversation identifier format.',
+      }, 400),
+    };
+  }
+
+  if (!cleanInitiatorId || !UUID_REGEX.test(cleanInitiatorId) || !cleanCalleeId || !UUID_REGEX.test(cleanCalleeId)) {
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({
+        success: false,
+        error: 'Invalid participant user identifier format.',
+      }, 400),
+    };
+  }
+
+  if (cleanInitiatorId === cleanCalleeId) {
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({
+        success: false,
+        error: 'Initiator and callee must be distinct participants.',
+      }, 400),
+    };
+  }
+
+  try {
+    const partsUrl = `${dbEnv.supabaseUrl}/rest/v1/conversation_participants?conversation_id=eq.${encodeURIComponent(cleanConvId)}&select=user_id,guest_id`;
+    const partsRes = await fetch(partsUrl, {
+      headers: {
+        'apikey': dbEnv.supabaseServiceKey,
+        'Authorization': `Bearer ${dbEnv.supabaseServiceKey}`,
+      },
+    });
+
+    if (!partsRes.ok) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({
+          success: false,
+          error: `Database error verifying call participants (HTTP ${partsRes.status}).`,
+        }, 502),
+      };
+    }
+
+    const rows: any[] = await partsRes.json().catch(() => null as any);
+    if (!Array.isArray(rows)) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({
+          success: false,
+          error: 'Invalid participant data format.',
+        }, 502),
+      };
+    }
+
+    let initiatorFound = false;
+    let calleeFound = false;
+    let initiatorIsGuest = false;
+    let calleeIsGuest = false;
+
+    for (const r of rows) {
+      if (!r || typeof r !== 'object') continue;
+      const hasUserId = typeof r.user_id === 'string' && r.user_id.trim().length > 0;
+      const hasGuestId = typeof r.guest_id === 'string' && r.guest_id.trim().length > 0;
+
+      // Reject invalid participant records where both or neither are populated
+      if ((hasUserId && hasGuestId) || (!hasUserId && !hasGuestId)) continue;
+
+      if (hasUserId) {
+        if (r.user_id.trim() === cleanInitiatorId) {
+          initiatorFound = true;
+        }
+        if (r.user_id.trim() === cleanCalleeId) {
+          calleeFound = true;
+        }
+      } else if (hasGuestId) {
+        if (r.guest_id.trim() === cleanInitiatorId) {
+          initiatorFound = true;
+          initiatorIsGuest = true;
+        }
+        if (r.guest_id.trim() === cleanCalleeId) {
+          calleeFound = true;
+          calleeIsGuest = true;
+        }
+      }
+    }
+
+    if (!initiatorFound) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({
+          success: false,
+          error: 'Forbidden: Caller is not an authorized participant in this conversation.',
+        }, 403),
+      };
+    }
+
+    if (!calleeFound) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({
+          success: false,
+          error: 'Forbidden: Callee is not an authorized participant in this conversation.',
+        }, 403),
+      };
+    }
+
+    if (initiatorIsGuest || calleeIsGuest) {
+      return {
+        authorized: false,
+        errorResponse: jsonResponse({
+          success: false,
+          error: 'Forbidden: Calls are only supported between registered users.',
+        }, 403),
+      };
+    }
+
+    return { authorized: true };
+  } catch (err: any) {
+    return {
+      authorized: false,
+      errorResponse: jsonResponse({
+        success: false,
+        error: 'Database error verifying call conversation membership.',
+      }, 503),
+    };
+  }
+}
+
+function sanitizeIceServers(candidate: any): any[] {
+  if (!candidate) return [];
+  const list = Array.isArray(candidate) ? candidate : (Array.isArray(candidate?.iceServers) ? candidate.iceServers : []);
+  const valid: any[] = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object') continue;
+    let rawUrls = entry.urls;
+    if (typeof rawUrls === 'string') rawUrls = [rawUrls];
+    if (!Array.isArray(rawUrls) || rawUrls.length === 0) continue;
+    const validUrls: string[] = [];
+    for (const u of rawUrls) {
+      if (typeof u === 'string') {
+        const trimmed = u.trim();
+        if (/^(stun|turn|turns):/i.test(trimmed)) {
+          validUrls.push(trimmed);
+        }
+      }
+    }
+    if (validUrls.length === 0) continue;
+    const sanitizedEntry: any = { urls: validUrls.length === 1 ? validUrls[0] : validUrls };
+    if (typeof entry.username === 'string' && entry.username.trim()) sanitizedEntry.username = entry.username.trim();
+    if (typeof entry.credential === 'string' && entry.credential.trim()) sanitizedEntry.credential = entry.credential.trim();
+    valid.push(sanitizedEntry);
+  }
+  return valid;
+}
+
 export default {
   async fetch(request: Request, env: WorkerEnv, ctx: any): Promise<Response> {
     const url = new URL(request.url);
@@ -4981,6 +5162,8 @@ async function authorizeConversationAccess(
       const turnApiToken = env?.TURN_API_TOKEN;
 
       if (turnTokenId && turnApiToken) {
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(() => abortController.abort(), 4000);
         try {
           const turnRes = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(turnTokenId)}/credentials/generate-ice-servers`, {
             method: 'POST',
@@ -4989,18 +5172,20 @@ async function authorizeConversationAccess(
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({ ttl: 86400 }),
+            signal: abortController.signal,
           });
 
           if (turnRes.ok) {
             const turnData: any = await turnRes.json().catch(() => null);
-            if (turnData && Array.isArray(turnData.iceServers)) {
-              return jsonResponse({ success: true, iceServers: [...stunServers, ...turnData.iceServers] });
-            } else if (turnData && Array.isArray(turnData.iceServers?.iceServers)) {
-              return jsonResponse({ success: true, iceServers: [...stunServers, ...turnData.iceServers.iceServers] });
+            const sanitizedTurnServers = sanitizeIceServers(turnData);
+            if (sanitizedTurnServers.length > 0) {
+              return jsonResponse({ success: true, iceServers: [...stunServers, ...sanitizedTurnServers] });
             }
           }
         } catch {
-          // Fall back to STUN on network or API failure
+          // Fall back to STUN on network, timeout, or API failure
+        } finally {
+          clearTimeout(timeoutId);
         }
       }
 
@@ -5009,11 +5194,15 @@ async function authorizeConversationAccess(
       const turnCredential = env?.TURN_CREDENTIAL;
       const servers: any[] = [...stunServers];
       if (turnUrl && turnUsername && turnCredential) {
-        servers.push({
-          urls: typeof turnUrl === 'string' ? turnUrl.split(',') : [turnUrl],
-          username: turnUsername,
-          credential: turnCredential,
-        });
+        const rawUrls = typeof turnUrl === 'string' ? turnUrl.split(',').map((s: string) => s.trim()) : [turnUrl];
+        const validUrls = rawUrls.filter((u: string) => /^(stun|turn|turns):/i.test(u));
+        if (validUrls.length > 0) {
+          servers.push({
+            urls: validUrls.length === 1 ? validUrls[0] : validUrls,
+            username: turnUsername,
+            credential: turnCredential,
+          });
+        }
       }
 
       return jsonResponse({ success: true, iceServers: servers });
@@ -5031,6 +5220,9 @@ async function authorizeConversationAccess(
         supabaseClient
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot access WebRTC signaling streams.' }, 403);
+      }
       if (authResult.verifiedUserId !== targetUserId) {
         return jsonResponse({ success: false, error: 'Unauthorized: Cannot subscribe to another user\'s signaling stream.' }, 403);
       }
@@ -5102,42 +5294,55 @@ async function authorizeConversationAccess(
 
       try {
         const body: any = await request.json();
-        const { calleeId, calleeNickname, calleeAvatar, mediaKind, conversationId } = body;
+        const { calleeId, mediaKind, conversationId } = body;
         const initiatorId = authResult.verifiedUserId;
 
-        if (!calleeId || initiatorId === calleeId) {
+        if (!calleeId || typeof calleeId !== 'string' || initiatorId === calleeId.trim()) {
           return jsonResponse({ success: false, error: 'Invalid callee specification.' }, 400);
         }
+
+        const cleanCalleeId = calleeId.trim();
 
         if (mediaKind && mediaKind !== 'audio' && mediaKind !== 'video') {
           return jsonResponse({ success: false, error: 'Invalid mediaKind. Must be audio or video.' }, 400);
         }
 
-        if (!conversationId) {
+        if (!conversationId || typeof conversationId !== 'string') {
           return jsonResponse({ success: false, error: 'Conversation identifier required to initiate a call.' }, 400);
         }
 
-        const membershipCheck = await verifyConversationParticipant(conversationId, authResult, {
-          supabaseUrl: baseSupabaseUrl,
-          supabaseServiceKey,
-        });
+        const membershipCheck = await verifyCallConversationMembership(
+          conversationId,
+          initiatorId,
+          cleanCalleeId,
+          {
+            supabaseUrl: baseSupabaseUrl,
+            supabaseServiceKey,
+          }
+        );
         if (!membershipCheck.authorized) {
-          return membershipCheck.errorResponse || jsonResponse({ success: false, error: 'Forbidden: Caller is not a member of this conversation.' }, 403);
+          return membershipCheck.errorResponse || jsonResponse({ success: false, error: 'Forbidden: Caller or callee is not a valid participant in this conversation.' }, 403);
         }
+
+        // Authoritative profile retrieval
+        const [initiatorProfile, calleeProfile] = await Promise.all([
+          fetchMemberProfile(initiatorId, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey }),
+          fetchMemberProfile(cleanCalleeId, { supabaseUrl: baseSupabaseUrl, supabaseServiceKey }),
+        ]);
 
         const callId = `call_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
         const callSession = {
           callId,
-          conversationId: conversationId || undefined,
+          conversationId: conversationId.trim(),
           initiator: {
             id: initiatorId,
-            nickname: body.initiatorNickname || 'User',
-            avatar: body.initiatorAvatar || '👤',
+            nickname: initiatorProfile.nickname,
+            avatar: initiatorProfile.avatar,
           },
           callee: {
-            id: calleeId,
-            nickname: calleeNickname || 'User',
-            avatar: calleeAvatar || '👤',
+            id: cleanCalleeId,
+            nickname: calleeProfile.nickname,
+            avatar: calleeProfile.avatar,
           },
           mediaKind: mediaKind || 'video',
           status: 'ringing',
@@ -5146,10 +5351,10 @@ async function authorizeConversationAccess(
 
         workerActiveCalls.set(callId, callSession);
         workerUserActiveCall.set(initiatorId, callId);
-        workerUserActiveCall.set(calleeId, callId);
+        workerUserActiveCall.set(cleanCalleeId, callId);
         workerCallSignals.set(callId, []);
 
-        broadcastToWorkerUser(calleeId, 'incoming_call', {
+        broadcastToWorkerUser(cleanCalleeId, 'incoming_call', {
           callId,
           initiator: callSession.initiator,
           callee: callSession.callee,
@@ -5297,12 +5502,31 @@ async function authorizeConversationAccess(
       try {
         const body: any = await request.json();
         const { callId, type, payload } = body;
+
+        const ALLOWED_SIGNAL_TYPES = ['offer', 'answer', 'ice_candidate', 'mute_state', 'hangup'];
+        if (!type || typeof type !== 'string' || !ALLOWED_SIGNAL_TYPES.includes(type)) {
+          return jsonResponse({ success: false, error: `Invalid signal type. Allowed types: ${ALLOWED_SIGNAL_TYPES.join(', ')}.` }, 400);
+        }
+
+        if (payload === undefined) {
+          return jsonResponse({ success: false, error: 'Signal payload is required.' }, 400);
+        }
+
+        const payloadStr = JSON.stringify(payload);
+        if (payloadStr.length > 65536) {
+          return jsonResponse({ success: false, error: 'Payload exceeds maximum allowed size (64KB).' }, 413);
+        }
+
         const call = workerActiveCalls.get(callId);
         if (!call) {
           return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
         }
         if (call.initiator.id !== authResult.verifiedUserId && call.callee.id !== authResult.verifiedUserId) {
           return jsonResponse({ success: false, error: 'Unauthorized: You are not a participant in this call.' }, 403);
+        }
+
+        if (call.status === 'ended' || call.status === 'rejected' || call.status === 'missed') {
+          return jsonResponse({ success: false, error: `Cannot signal on a call that is ${call.status}.` }, 409);
         }
 
         const signalId = `sig_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
