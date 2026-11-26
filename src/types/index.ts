@@ -490,3 +490,17 @@ export interface IceServerConfig {
   credential?: string;
 }
 
+export interface RoomBroadcast {
+  id: string;
+  roomId: string;
+  broadcasterId: string;
+  broadcasterNickname: string;
+  broadcasterAvatar: string;
+  sessionId?: string;
+  status: 'live' | 'ended';
+  startedAt: number;
+  viewerCount?: number;
+}
+
+export type BroadcastSessionStatus = 'idle' | 'starting' | 'live' | 'ended' | 'unavailable' | 'error';
+

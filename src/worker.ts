@@ -77,6 +77,7 @@ const workerActiveCalls = new Map<string, any>();
 const workerUserActiveCall = new Map<string, string>();
 const workerCallSignals = new Map<string, any[]>();
 const workerUserSignalingStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
+const workerRoomBroadcasts = new Map<string, any>();
 
 function broadcastToWorkerUser(userId: string, eventName: string, data: any) {
   const controllers = workerUserSignalingStreams.get(userId);
@@ -5417,6 +5418,9 @@ async function authorizeConversationAccess(
         supabaseClient
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot participate in calls.' }, 403);
+      }
 
       try {
         const body: any = await request.json();
@@ -5457,6 +5461,9 @@ async function authorizeConversationAccess(
         supabaseClient
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot participate in calls.' }, 403);
+      }
 
       try {
         const body: any = await request.json();
@@ -5498,6 +5505,9 @@ async function authorizeConversationAccess(
         supabaseClient
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot participate in calls.' }, 403);
+      }
 
       try {
         const body: any = await request.json();
@@ -5563,6 +5573,9 @@ async function authorizeConversationAccess(
         supabaseClient
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot access calls.' }, 403);
+      }
 
       const activeCallId = workerUserActiveCall.get(authResult.verifiedUserId);
       const call = activeCallId ? workerActiveCalls.get(activeCallId) : null;
@@ -5581,6 +5594,9 @@ async function authorizeConversationAccess(
         supabaseClient
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot access call sessions.' }, 403);
+      }
 
       const call = workerActiveCalls.get(callId);
       if (!call) {
@@ -5606,6 +5622,9 @@ async function authorizeConversationAccess(
         supabaseClient
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot access call sessions.' }, 403);
+      }
 
       const call = workerActiveCalls.get(callId);
       if (!call) {
@@ -5615,6 +5634,325 @@ async function authorizeConversationAccess(
         return jsonResponse({ success: false, error: 'Unauthorized: You are not a participant in this call.' }, 403);
       }
       return jsonResponse({ success: true, call });
+    }
+
+    // -------------------------------------------------------------------------
+    // ROOM LIVE BROADCAST (CLOUDFLARE CALLS / REALTIME SFU) API ROUTES
+    // -------------------------------------------------------------------------
+
+    // GET /api/broadcast/status
+    if (url.pathname === '/api/broadcast/status' && request.method === 'GET') {
+      const callsAppId = env?.CALLS_APP_ID || env?.CLOUDFLARE_CALLS_APP_ID;
+      const callsAppSecret = env?.CALLS_APP_SECRET || env?.CLOUDFLARE_CALLS_APP_SECRET;
+      const isConfigured = Boolean(callsAppId && callsAppSecret);
+      const missingBindings: string[] = [];
+      if (!callsAppId) missingBindings.push('CALLS_APP_ID');
+      if (!callsAppSecret) missingBindings.push('CALLS_APP_SECRET');
+      return jsonResponse({
+        success: true,
+        sfuConfigured: isConfigured,
+        missingBindings: isConfigured ? [] : missingBindings,
+      });
+    }
+
+    // GET /api/broadcast/room/:roomId
+    const broadcastRoomMatch = url.pathname.match(/^\/api\/broadcast\/room\/([^/]+)\/?$/);
+    if (broadcastRoomMatch && request.method === 'GET') {
+      const rawRoomId = decodeURIComponent(broadcastRoomMatch[1]);
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      // Age assurance check for adult rooms
+      if (ADULT_ROOM_IDENTIFIERS.has(rawRoomId.toLowerCase()) && !isAuthorizedForAdultRoom(authResult)) {
+        return jsonResponse({ success: false, error: 'Forbidden: 18+ age verification required for this room.' }, 403);
+      }
+
+      const callsAppId = env?.CALLS_APP_ID || env?.CLOUDFLARE_CALLS_APP_ID;
+      const callsAppSecret = env?.CALLS_APP_SECRET || env?.CLOUDFLARE_CALLS_APP_SECRET;
+      const isConfigured = Boolean(callsAppId && callsAppSecret);
+
+      const broadcasts: any[] = [];
+      for (const b of workerRoomBroadcasts.values()) {
+        if (b.roomId.toLowerCase() === rawRoomId.toLowerCase() && b.status === 'live') {
+          broadcasts.push(b);
+        }
+      }
+
+      return jsonResponse({
+        success: true,
+        sfuConfigured: isConfigured,
+        broadcasts,
+      });
+    }
+
+    // POST /api/broadcast/start
+    if (url.pathname === '/api/broadcast/start' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      // Registered member requirement
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot start a room live broadcast.' }, 403);
+      }
+
+      try {
+        const body: any = await request.json();
+        const { roomId } = body;
+        if (!roomId || typeof roomId !== 'string') {
+          return jsonResponse({ success: false, error: 'Valid roomId is required.' }, 400);
+        }
+
+        // Age check for adult room
+        if (ADULT_ROOM_IDENTIFIERS.has(roomId.toLowerCase()) && !isAuthorizedForAdultRoom(authResult)) {
+          return jsonResponse({ success: false, error: 'Forbidden: 18+ age verification required to broadcast in this room.' }, 403);
+        }
+
+        const callsAppId = env?.CALLS_APP_ID || env?.CLOUDFLARE_CALLS_APP_ID;
+        const callsAppSecret = env?.CALLS_APP_SECRET || env?.CLOUDFLARE_CALLS_APP_SECRET;
+
+        // If Cloudflare SFU application credentials are not configured, return safe unavailable state
+        if (!callsAppId || !callsAppSecret) {
+          const missingBindings: string[] = [];
+          if (!callsAppId) missingBindings.push('CALLS_APP_ID');
+          if (!callsAppSecret) missingBindings.push('CALLS_APP_SECRET');
+          return jsonResponse({
+            success: false,
+            unavailable: true,
+            missingBindings,
+            error: 'Cloudflare Realtime SFU credentials (CALLS_APP_ID, CALLS_APP_SECRET) are not configured on this Worker environment.',
+          }, 503);
+        }
+
+        // SFU session creation with bounded 4-second timeout
+        let sfuSessionId: string | undefined;
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(() => abortController.abort(), 4000);
+        try {
+          const sfuRes = await fetch(`https://rtc.live.cloudflare.com/v1/apps/${encodeURIComponent(callsAppId)}/sessions/new`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${callsAppSecret}`,
+              'Content-Type': 'application/json',
+            },
+            signal: abortController.signal,
+          });
+
+          if (sfuRes.ok) {
+            const sfuData: any = await sfuRes.json().catch(() => null);
+            if (sfuData && sfuData.sessionId) {
+              sfuSessionId = sfuData.sessionId;
+            }
+          }
+        } catch {
+          // Upstream network or timeout error
+        } finally {
+          clearTimeout(timeoutId);
+        }
+
+        if (!sfuSessionId) {
+          return jsonResponse({
+            success: false,
+            error: 'Failed to create Cloudflare Realtime SFU session upstream.',
+          }, 502);
+        }
+
+        // Authoritative profile lookup
+        const broadcasterProfile = await fetchMemberProfile(authResult.verifiedUserId, {
+          supabaseUrl: baseSupabaseUrl,
+          supabaseServiceKey,
+        });
+
+        const broadcastId = `bcast_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+        const broadcastObj = {
+          id: broadcastId,
+          roomId: roomId.trim(),
+          broadcasterId: authResult.verifiedUserId,
+          broadcasterNickname: broadcasterProfile.nickname,
+          broadcasterAvatar: broadcasterProfile.avatar,
+          sessionId: sfuSessionId,
+          status: 'live',
+          startedAt: Date.now(),
+          viewerCount: 0,
+        };
+
+        workerRoomBroadcasts.set(broadcastId, broadcastObj);
+
+        return jsonResponse({ success: true, broadcast: broadcastObj });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Malformed start broadcast request.' }, 400);
+      }
+    }
+
+    // POST /api/broadcast/tracks/new
+    if (url.pathname === '/api/broadcast/tracks/new' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      const callsAppId = env?.CALLS_APP_ID || env?.CLOUDFLARE_CALLS_APP_ID;
+      const callsAppSecret = env?.CALLS_APP_SECRET || env?.CLOUDFLARE_CALLS_APP_SECRET;
+
+      if (!callsAppId || !callsAppSecret) {
+        return jsonResponse({
+          success: false,
+          unavailable: true,
+          error: 'Cloudflare Realtime SFU credentials are not configured.',
+        }, 503);
+      }
+
+      try {
+        const body: any = await request.json();
+        const { sessionId, sessionDescription, tracks } = body;
+        if (!sessionId || !sessionDescription) {
+          return jsonResponse({ success: false, error: 'Session ID and session description are required.' }, 400);
+        }
+
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(() => abortController.abort(), 4000);
+        try {
+          const sfuRes = await fetch(`https://rtc.live.cloudflare.com/v1/apps/${encodeURIComponent(callsAppId)}/sessions/${encodeURIComponent(sessionId)}/tracks/new`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${callsAppSecret}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ sessionDescription, tracks }),
+            signal: abortController.signal,
+          });
+
+          if (!sfuRes.ok) {
+            return jsonResponse({ success: false, error: `SFU track negotiation failed (HTTP ${sfuRes.status}).` }, 502);
+          }
+
+          const sfuData = await sfuRes.json();
+          return jsonResponse({ success: true, data: sfuData });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Malformed tracks request.' }, 400);
+      }
+    }
+
+    // POST /api/broadcast/end
+    if (url.pathname === '/api/broadcast/end' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      try {
+        const body: any = await request.json();
+        const { broadcastId } = body;
+        const broadcast = workerRoomBroadcasts.get(broadcastId);
+        if (!broadcast) {
+          return jsonResponse({ success: false, error: 'Broadcast session not found.' }, 404);
+        }
+
+        // Authoritative broadcaster check: only the broadcaster can end their publication
+        if (broadcast.broadcasterId !== authResult.verifiedUserId) {
+          return jsonResponse({ success: false, error: 'Unauthorized: Only the broadcaster can end this stream.' }, 403);
+        }
+
+        broadcast.status = 'ended';
+        workerRoomBroadcasts.delete(broadcastId);
+
+        return jsonResponse({ success: true, message: 'Broadcast ended successfully.' });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Malformed end broadcast request.' }, 400);
+      }
+    }
+
+    // POST /api/broadcast/subscribe
+    if (url.pathname === '/api/broadcast/subscribe' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      try {
+        const body: any = await request.json();
+        const { broadcastId } = body;
+        const broadcast = workerRoomBroadcasts.get(broadcastId);
+        if (!broadcast || broadcast.status !== 'live') {
+          return jsonResponse({ success: false, error: 'Broadcast is not currently live.' }, 404);
+        }
+
+        // Age check for viewer
+        if (ADULT_ROOM_IDENTIFIERS.has(broadcast.roomId.toLowerCase()) && !isAuthorizedForAdultRoom(authResult)) {
+          return jsonResponse({ success: false, error: 'Forbidden: 18+ age verification required to view this broadcast.' }, 403);
+        }
+
+        // Broadcaster cannot subscribe to their own stream as viewer
+        if (broadcast.broadcasterId === authResult.verifiedUserId) {
+          return jsonResponse({ success: false, error: 'Broadcasters cannot subscribe to their own broadcast as viewer.' }, 400);
+        }
+
+        const callsAppId = env?.CALLS_APP_ID || env?.CLOUDFLARE_CALLS_APP_ID;
+        const callsAppSecret = env?.CALLS_APP_SECRET || env?.CLOUDFLARE_CALLS_APP_SECRET;
+
+        if (!callsAppId || !callsAppSecret) {
+          return jsonResponse({
+            success: false,
+            unavailable: true,
+            error: 'Cloudflare Realtime SFU credentials are not configured on this Worker environment.',
+          }, 503);
+        }
+
+        // Create subscriber session on Cloudflare Calls SFU
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(() => abortController.abort(), 4000);
+        try {
+          const sfuRes = await fetch(`https://rtc.live.cloudflare.com/v1/apps/${encodeURIComponent(callsAppId)}/sessions/new`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${callsAppSecret}`,
+              'Content-Type': 'application/json',
+            },
+            signal: abortController.signal,
+          });
+
+          if (!sfuRes.ok) {
+            return jsonResponse({ success: false, error: 'Failed to create subscriber session on SFU.' }, 502);
+          }
+
+          const sfuData: any = await sfuRes.json().catch(() => null);
+          return jsonResponse({
+            success: true,
+            sessionId: sfuData?.sessionId,
+            broadcasterSessionId: broadcast.sessionId,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Malformed subscribe request.' }, 400);
+      }
     }
 
     // -------------------------------------------------------------------------

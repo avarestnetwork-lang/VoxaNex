@@ -7,6 +7,7 @@ import {
   UserX,
   AlertTriangle,
   Check,
+  Camera,
 } from 'lucide-react';
 import { RealtimePresenceMember } from '../../services/messagingService';
 import { getGenderInfo } from '../../pages/PublicChatPage';
@@ -26,6 +27,8 @@ export interface UserActionMenuProps {
   onViewProfile: (member: any) => void;
   onBlockUser: (targetId: string, targetNickname: string) => void;
   onReportUser: (targetId: string, targetNickname: string) => void;
+  onWatchBroadcast?: () => void;
+  isBroadcasting?: boolean;
   isCurrentUser?: boolean;
 }
 
@@ -38,6 +41,8 @@ export const UserActionMenu: React.FC<UserActionMenuProps> = ({
   onViewProfile,
   onBlockUser,
   onReportUser,
+  onWatchBroadcast,
+  isBroadcasting = false,
   isCurrentUser = false,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -105,6 +110,24 @@ export const UserActionMenu: React.FC<UserActionMenuProps> = ({
       <div className="p-1.5 space-y-0.5">
         {!isCurrentUser && (
           <>
+            {isBroadcasting && onWatchBroadcast && (
+              <button
+                onClick={() => {
+                  onWatchBroadcast();
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-emerald-300 hover:text-white hover:bg-emerald-600/25 border border-emerald-500/40 transition-colors text-left cursor-pointer group mb-1 shadow-sm"
+              >
+                <Camera className="w-4 h-4 text-emerald-400 group-hover:text-emerald-300 animate-pulse" />
+                <div>
+                  <div className="font-semibold text-white flex items-center gap-1.5">
+                    <span>Watch Live Stream</span>
+                    <span className="text-[9px] bg-rose-600 text-white font-bold px-1 rounded">LIVE</span>
+                  </div>
+                  <div className="text-[10px] text-emerald-400">Open floating room stream</div>
+                </div>
+              </button>
+            )}
             <button
               onClick={() => {
                 onOpenPrivateChat(member);
