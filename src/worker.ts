@@ -72,6 +72,27 @@ const ADULT_ROOM_IDENTIFIERS = new Set<string>(
   ])
 );
 
+// Worker-level WebRTC signaling and call state stores
+const workerActiveCalls = new Map<string, any>();
+const workerUserActiveCall = new Map<string, string>();
+const workerCallSignals = new Map<string, any[]>();
+const workerUserSignalingStreams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
+
+function broadcastToWorkerUser(userId: string, eventName: string, data: any) {
+  const controllers = workerUserSignalingStreams.get(userId);
+  if (!controllers) return;
+  const encoder = new TextEncoder();
+  const message = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+  const encoded = encoder.encode(message);
+  for (const controller of controllers) {
+    try {
+      controller.enqueue(encoded);
+    } catch {
+      controllers.delete(controller);
+    }
+  }
+}
+
 function safeDecodeURIComponent(str: string): string {
   if (!str) return '';
   try {
@@ -4935,6 +4956,375 @@ async function authorizeConversationAccess(
       } catch (err: any) {
         return jsonResponse({ success: false, error: 'Malformed profile update request.' }, 400);
       }
+    }
+
+    // -------------------------------------------------------------------------
+    // WEBRTC SIGNALING & CALLING API ROUTES
+    // -------------------------------------------------------------------------
+
+    // GET /api/webrtc/ice-servers
+    if (url.pathname === '/api/webrtc/ice-servers' && request.method === 'GET') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      const stunUrls = [
+        'stun:stun.l.google.com:19302',
+        'stun:stun1.l.google.com:19302',
+        'stun:stun2.l.google.com:19302',
+      ];
+      const servers: any[] = [{ urls: stunUrls }];
+      const turnUrl = env?.TURN_SERVER_URL;
+      const turnUsername = env?.TURN_USERNAME;
+      const turnCredential = env?.TURN_CREDENTIAL;
+      if (turnUrl && turnUsername && turnCredential) {
+        servers.push({
+          urls: typeof turnUrl === 'string' ? turnUrl.split(',') : [turnUrl],
+          username: turnUsername,
+          credential: turnCredential,
+        });
+      }
+      return jsonResponse({ success: true, iceServers: servers });
+    }
+
+    // GET /api/webrtc/signaling/:userId/events
+    const webrtcSseMatch = url.pathname.match(/^\/api\/webrtc\/signaling\/([^/]+)\/events\/?$/);
+    if (webrtcSseMatch && request.method === 'GET') {
+      const targetUserId = decodeURIComponent(webrtcSseMatch[1]);
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.verifiedUserId !== targetUserId) {
+        return jsonResponse({ success: false, error: 'Unauthorized: Cannot subscribe to another user\'s signaling stream.' }, 403);
+      }
+
+      let intervalId: any = null;
+      let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+      const readable = new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+          if (!workerUserSignalingStreams.has(targetUserId)) {
+            workerUserSignalingStreams.set(targetUserId, new Set());
+          }
+          const controllers = workerUserSignalingStreams.get(targetUserId)!;
+          controllers.add(controller);
+
+          const encoder = new TextEncoder();
+          try {
+            controller.enqueue(encoder.encode(`event: connected\ndata: {"status":"connected","userId":"${targetUserId}"}\n\n`));
+          } catch {
+            if (intervalId) clearInterval(intervalId);
+            controllers.delete(controller);
+          }
+
+          intervalId = setInterval(() => {
+            try {
+              controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
+            } catch {
+              if (intervalId) clearInterval(intervalId);
+              if (streamController) controllers.delete(streamController);
+            }
+          }, 15000);
+        },
+        cancel() {
+          if (intervalId) clearInterval(intervalId);
+          const controllers = workerUserSignalingStreams.get(targetUserId);
+          if (controllers && streamController) {
+            controllers.delete(streamController);
+            if (controllers.size === 0) {
+              workerUserSignalingStreams.delete(targetUserId);
+            }
+          }
+        },
+      });
+
+      return new Response(readable, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        },
+      });
+    }
+
+    // POST /api/webrtc/call/initiate
+    if (url.pathname === '/api/webrtc/call/initiate' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot initiate audio or video calls.' }, 403);
+      }
+
+      try {
+        const body: any = await request.json();
+        const { calleeId, calleeNickname, calleeAvatar, mediaKind, conversationId } = body;
+        const initiatorId = authResult.verifiedUserId;
+
+        if (!calleeId || initiatorId === calleeId) {
+          return jsonResponse({ success: false, error: 'Invalid callee specification.' }, 400);
+        }
+
+        const callId = `call_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+        const callSession = {
+          callId,
+          conversationId: conversationId || undefined,
+          initiator: {
+            id: initiatorId,
+            nickname: body.initiatorNickname || 'User',
+            avatar: body.initiatorAvatar || '👤',
+          },
+          callee: {
+            id: calleeId,
+            nickname: calleeNickname || 'User',
+            avatar: calleeAvatar || '👤',
+          },
+          mediaKind: mediaKind || 'video',
+          status: 'ringing',
+          startedAt: Date.now(),
+        };
+
+        workerActiveCalls.set(callId, callSession);
+        workerUserActiveCall.set(initiatorId, callId);
+        workerUserActiveCall.set(calleeId, callId);
+        workerCallSignals.set(callId, []);
+
+        broadcastToWorkerUser(calleeId, 'incoming_call', {
+          callId,
+          initiator: callSession.initiator,
+          callee: callSession.callee,
+          mediaKind: callSession.mediaKind,
+          conversationId: callSession.conversationId,
+          timestamp: new Date().toISOString(),
+        });
+
+        return jsonResponse({ success: true, call: callSession });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Malformed call initiation request.' }, 400);
+      }
+    }
+
+    // POST /api/webrtc/call/accept
+    if (url.pathname === '/api/webrtc/call/accept' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      try {
+        const body: any = await request.json();
+        const { callId } = body;
+        const call = workerActiveCalls.get(callId);
+        if (!call) {
+          return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
+        }
+        if (call.callee.id !== authResult.verifiedUserId) {
+          return jsonResponse({ success: false, error: 'Unauthorized: You are not the recipient of this call.' }, 403);
+        }
+
+        call.status = 'connecting';
+        broadcastToWorkerUser(call.initiator.id, 'call_accepted', {
+          callId,
+          calleeId: authResult.verifiedUserId,
+          timestamp: new Date().toISOString(),
+        });
+
+        return jsonResponse({ success: true, call });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Malformed call acceptance request.' }, 400);
+      }
+    }
+
+    // POST /api/webrtc/call/reject
+    if (url.pathname === '/api/webrtc/call/reject' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      try {
+        const body: any = await request.json();
+        const { callId, reason } = body;
+        const call = workerActiveCalls.get(callId);
+        if (!call) {
+          return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
+        }
+
+        call.status = 'rejected';
+        call.endedReason = reason || 'Call declined';
+        workerUserActiveCall.delete(call.initiator.id);
+        workerUserActiveCall.delete(call.callee.id);
+
+        const notifyTarget = call.callee.id === authResult.verifiedUserId ? call.initiator.id : call.callee.id;
+        broadcastToWorkerUser(notifyTarget, 'call_rejected', {
+          callId,
+          reason: call.endedReason,
+          timestamp: new Date().toISOString(),
+        });
+
+        return jsonResponse({ success: true });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Malformed call rejection request.' }, 400);
+      }
+    }
+
+    // POST /api/webrtc/call/end
+    if (url.pathname === '/api/webrtc/call/end' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      try {
+        const body: any = await request.json();
+        const { callId, reason } = body;
+        const call = workerActiveCalls.get(callId);
+        if (!call) {
+          return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
+        }
+
+        call.status = 'ended';
+        call.endedReason = reason || 'Call ended';
+        workerUserActiveCall.delete(call.initiator.id);
+        workerUserActiveCall.delete(call.callee.id);
+
+        const otherUserId = call.initiator.id === authResult.verifiedUserId ? call.callee.id : call.initiator.id;
+        broadcastToWorkerUser(otherUserId, 'call_ended', {
+          callId,
+          endedBy: authResult.verifiedUserId,
+          reason: call.endedReason,
+          timestamp: new Date().toISOString(),
+        });
+
+        return jsonResponse({ success: true });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Malformed call end request.' }, 400);
+      }
+    }
+
+    // POST /api/webrtc/signal
+    if (url.pathname === '/api/webrtc/signal' && request.method === 'POST') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      try {
+        const body: any = await request.json();
+        const { callId, type, payload } = body;
+        const call = workerActiveCalls.get(callId);
+        if (!call) {
+          return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
+        }
+
+        const signalId = `sig_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
+        const signalObj = {
+          id: signalId,
+          callId,
+          senderId: authResult.verifiedUserId,
+          type,
+          payload,
+          timestamp: Date.now(),
+        };
+
+        if (!workerCallSignals.has(callId)) {
+          workerCallSignals.set(callId, []);
+        }
+        workerCallSignals.get(callId)!.push(signalObj);
+
+        const targetUserId = call.initiator.id === authResult.verifiedUserId ? call.callee.id : call.initiator.id;
+        broadcastToWorkerUser(targetUserId, 'webrtc_signal', signalObj);
+
+        return jsonResponse({ success: true });
+      } catch (err: any) {
+        return jsonResponse({ success: false, error: err.message || 'Malformed signaling request.' }, 400);
+      }
+    }
+
+    // GET /api/webrtc/call/active
+    if (url.pathname === '/api/webrtc/call/active' && request.method === 'GET') {
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      const activeCallId = workerUserActiveCall.get(authResult.verifiedUserId);
+      const call = activeCallId ? workerActiveCalls.get(activeCallId) : null;
+      return jsonResponse({ success: true, call: call || null });
+    }
+
+    // GET /api/webrtc/call/:callId/signals
+    const signalsMatch = url.pathname.match(/^\/api\/webrtc\/call\/([^/]+)\/signals\/?$/);
+    if (signalsMatch && request.method === 'GET') {
+      const callId = signalsMatch[1];
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      const signals = workerCallSignals.get(callId) || [];
+      return jsonResponse({ success: true, signals });
+    }
+
+    // GET /api/webrtc/call/:callId
+    const callGetMatch = url.pathname.match(/^\/api\/webrtc\/call\/([^/]+)\/?$/);
+    if (callGetMatch && request.method === 'GET') {
+      const callId = callGetMatch[1];
+      const authResult = await authenticateRequest(
+        request,
+        url,
+        guestSecretInfo,
+        { supabaseUrl: baseSupabaseUrl, supabaseServiceKey, supabaseAnonKey },
+        supabaseClient
+      );
+      if ('errorResponse' in authResult) return authResult.errorResponse;
+
+      const call = workerActiveCalls.get(callId);
+      if (!call) {
+        return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
+      }
+      return jsonResponse({ success: true, call });
     }
 
     // -------------------------------------------------------------------------

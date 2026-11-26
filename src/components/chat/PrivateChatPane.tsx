@@ -16,6 +16,7 @@ import {
   SUPPORTED_ALL_FORMATS_TEXT,
 } from '../../lib/mediaValidation';
 import { Button } from '../ui/Button';
+import { useCall } from '../../context/CallContext';
 import {
   Send,
   ArrowLeft,
@@ -31,6 +32,9 @@ import {
   Minimize2,
   Maximize2,
   X,
+  Phone,
+  Video,
+  Minus,
 } from 'lucide-react';
 
 interface PrivateChatPaneProps {
@@ -78,6 +82,49 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+
+  const { initiateCall, activeCall, isCallModalOpen } = useCall();
+  const [isStartingCall, setIsStartingCall] = useState<'audio' | 'video' | null>(null);
+
+  const isGuestUser = currentUser.isGuest === true;
+  const isPartnerVerifiedMember = partner.isGuest === false;
+  const canInitiateCalls = !isGuestUser && isPartnerVerifiedMember;
+  const callDisabledReason = isGuestUser
+    ? (language === 'bn' ? 'অতিথি ব্যবহারকারীরা কল করতে পারবেন না।' : 'Guests cannot initiate calls.')
+    : !isPartnerVerifiedMember
+    ? (language === 'bn' ? 'অতিথি বা যাচাই না করা ব্যবহারকারীকে কল করা সম্ভব নয়।' : 'Cannot call unverified or guest partner.')
+    : activeCall || isCallModalOpen
+    ? (language === 'bn' ? 'একটি কল ইতিমধ্যে চলছে।' : 'A call is already active.')
+    : null;
+
+  const handleStartCall = async (mediaKind: 'audio' | 'video') => {
+    if (currentUser.isGuest) {
+      alert(language === 'bn' ? 'অতিথি ব্যবহারকারীরা কল করতে পারবেন না। অনুগ্রহ করে রেজিস্টার্ড অ্যাকাউন্ট ব্যবহার করুন।' : 'Guest users cannot initiate audio or video calls. Please register an account.');
+      return;
+    }
+    if (partner.isGuest !== false) {
+      alert(language === 'bn' ? 'অতিথি বা যাচাই না করা ব্যবহারকারীকে কল করা সম্ভব নয়।' : 'Cannot initiate call: Partner must be a registered verified member.');
+      return;
+    }
+    if (activeCall || isCallModalOpen || isStartingCall) {
+      alert(language === 'bn' ? 'একটি কল ইতিমধ্যে চলছে বা প্রক্রিয়াধীন আছে।' : 'A call is already active or in progress.');
+      return;
+    }
+
+    setIsStartingCall(mediaKind);
+    const res = await initiateCall({
+      calleeId: partner.id,
+      calleeNickname: partner.nickname,
+      calleeAvatar: partner.avatar,
+      mediaKind,
+      conversationId: activeConversationId || conversationId,
+    });
+    setIsStartingCall(null);
+
+    if (!res.success) {
+      alert(res.error || (language === 'bn' ? 'কল শুরু করা ব্যর্থ হয়েছে' : 'Failed to start call'));
+    }
+  };
 
   const {
     attachment,
@@ -367,20 +414,51 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            disabled={!canInitiateCalls || Boolean(isStartingCall) || Boolean(activeCall) || isCallModalOpen}
+            onClick={() => handleStartCall('audio')}
+            className={`p-1.5 rounded-lg border transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0 flex items-center justify-center ${
+              isStartingCall === 'audio'
+                ? 'bg-cyan-600 text-white border-cyan-500 animate-pulse'
+                : 'border-slate-800 bg-[#101729] text-cyan-400 hover:text-white hover:bg-slate-800 hover:border-cyan-500/50'
+            }`}
+            title={canInitiateCalls ? 'Start audio call' : (callDisabledReason || 'Calls unavailable')}
+            aria-label="Start audio call"
+          >
+            <Phone className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            disabled={!canInitiateCalls || Boolean(isStartingCall) || Boolean(activeCall) || isCallModalOpen}
+            onClick={() => handleStartCall('video')}
+            className={`p-1.5 rounded-lg border transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0 flex items-center justify-center ${
+              isStartingCall === 'video'
+                ? 'bg-violet-600 text-white border-violet-500 animate-pulse'
+                : 'border-slate-800 bg-[#101729] text-violet-400 hover:text-white hover:bg-slate-800 hover:border-violet-500/50'
+            }`}
+            title={canInitiateCalls ? 'Start video call' : (callDisabledReason || 'Calls unavailable')}
+            aria-label="Start video call"
+          >
+            <Video className="w-4 h-4" />
+          </button>
+
           {onMinimize && (
             <button
+              type="button"
               onClick={onMinimize}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-1.5 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white hover:bg-slate-800 hover:border-slate-700 transition-colors cursor-pointer shrink-0 flex items-center justify-center"
               title="Minimize"
               aria-label="Minimize chat"
             >
-              <Minimize2 className="w-4 h-4" />
+              <Minus className="w-4 h-4" />
             </button>
           )}
           {onMaximize && (
             <button
+              type="button"
               onClick={onMaximize}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-1.5 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-white hover:bg-slate-800 hover:border-slate-700 transition-colors cursor-pointer shrink-0 flex items-center justify-center"
               title="Maximize to large tab"
               aria-label="Maximize chat"
             >
@@ -388,12 +466,13 @@ export const PrivateChatPane: React.FC<PrivateChatPaneProps> = ({
             </button>
           )}
           <button
+            type="button"
             onClick={handleClosePane}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg border border-slate-800 bg-[#101729] text-slate-400 hover:text-rose-400 hover:bg-slate-800 hover:border-rose-500/50 transition-colors cursor-pointer shrink-0 flex items-center justify-center"
             title="Close"
             aria-label="Close chat"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
       </div>
