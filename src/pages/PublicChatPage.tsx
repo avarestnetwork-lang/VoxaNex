@@ -4,7 +4,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { usePrivateChat } from '../context/PrivateChatContext';
 import { ROOMS_CONFIG } from '../config/voxanexConfig';
-import { ChatMessage, Room, RoomBroadcast } from '../types';
+import { ChatMessage, Room } from '../types';
 import { formatDhakaTime } from '../utils/date';
 import { databaseService, isCanonicalRoomId } from '../services/databaseService';
 import { guestSessionService } from '../services/guestSessionService';
@@ -32,8 +32,6 @@ import { Button } from '../components/ui/Button';
 import { SEOHead } from '../components/common/SEOHead';
 import { PrivateChatPane } from '../components/chat/PrivateChatPane';
 import { AdPlacementBox } from '../components/ads/AdPlacementBox';
-import { broadcastService } from '../services/broadcastService';
-import { FloatingBroadcastViewer } from '../components/chat/FloatingBroadcastViewer';
 import {
   messagingService,
   RealtimePresenceMember,
@@ -69,8 +67,6 @@ import {
   Video,
   Shuffle,
   Globe2,
-  Camera,
-  Radio,
 } from 'lucide-react';
 
 interface ExtendedChatMessage extends ChatMessage {
@@ -608,72 +604,9 @@ export const PublicChatPage: React.FC = () => {
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
 
   // Chatroom View State & Sidebar Tabs
-  const [sidebarTab, setSidebarTab] = useState<'users' | 'private' | 'rooms' | 'broadcast'>('users');
+  const [sidebarTab, setSidebarTab] = useState<'users' | 'private' | 'rooms'>('users');
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
-
-  // Room Live Broadcast (Cloudflare Calls SFU) State
-  const [roomBroadcasts, setRoomBroadcasts] = useState<RoomBroadcast[]>([]);
-  const [sfuConfigured, setSfuConfigured] = useState(false);
-  const [activeViewerBroadcast, setActiveViewerBroadcast] = useState<RoomBroadcast | null>(null);
-  const [isMyBroadcastActive, setIsMyBroadcastActive] = useState(false);
-  const [isStartingBroadcast, setIsStartingBroadcast] = useState(false);
-  const [broadcastActionMsg, setBroadcastActionMsg] = useState<string | null>(null);
-
-  // Poll / fetch live broadcasts in current room
-  useEffect(() => {
-    let cancel = false;
-    async function loadBroadcasts() {
-      const res = await broadcastService.fetchRoomBroadcasts(activeRoom.id);
-      if (!cancel) {
-        setSfuConfigured(res.sfuConfigured);
-        setRoomBroadcasts(res.broadcasts || []);
-        const myActive = res.broadcasts?.some((b) => b.broadcasterId === user.id && b.status === 'live');
-        setIsMyBroadcastActive(Boolean(myActive));
-      }
-    }
-    loadBroadcasts();
-    const interval = setInterval(loadBroadcasts, 7000);
-    return () => {
-      cancel = true;
-      clearInterval(interval);
-    };
-  }, [activeRoom.id, user.id]);
-
-  const handleStartBroadcast = async () => {
-    if (user.isGuest) {
-      setBroadcastActionMsg('Guests cannot start broadcasts. Please log in with a registered account.');
-      return;
-    }
-    setIsStartingBroadcast(true);
-    setBroadcastActionMsg(null);
-    const res = await broadcastService.startBroadcast(activeRoom.id);
-    setIsStartingBroadcast(false);
-    if (res.success && res.broadcast) {
-      setRoomBroadcasts((prev) => [res.broadcast!, ...prev.filter((b) => b.id !== res.broadcast!.id)]);
-      setIsMyBroadcastActive(true);
-      setActiveViewerBroadcast(res.broadcast);
-    } else if (res.unavailable) {
-      setBroadcastActionMsg(
-        res.error ||
-          'Cloudflare Realtime SFU credentials (CALLS_APP_ID, CALLS_APP_SECRET) are not configured in this Worker environment.'
-      );
-    } else {
-      setBroadcastActionMsg(res.error || 'Failed to start broadcast.');
-    }
-  };
-
-  const handleEndMyBroadcast = async () => {
-    const myBroadcast = roomBroadcasts.find((b) => b.broadcasterId === user.id && b.status === 'live');
-    if (myBroadcast) {
-      await broadcastService.endBroadcast(myBroadcast.id);
-      setRoomBroadcasts((prev) => prev.filter((b) => b.id !== myBroadcast.id));
-      setIsMyBroadcastActive(false);
-      if (activeViewerBroadcast?.id === myBroadcast.id) {
-        setActiveViewerBroadcast(null);
-      }
-    }
-  };
 
   // Direct conversations list for the Private tab
   const [directConversations, setDirectConversations] = useState<
@@ -1937,11 +1870,11 @@ export const PublicChatPage: React.FC = () => {
         >
           {/* Complete Users/Participants Panel - 100% Ad-Free Internally with its own border */}
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-[#0c1220]">
-            <div className="p-2.5 border-b border-slate-800 bg-[#090d18] flex items-center justify-between gap-1">
-              <div className="flex items-center gap-1 bg-[#101729] p-0.5 rounded-xl border border-slate-800 flex-1 min-w-0 overflow-x-auto">
+            <div className="p-3 border-b border-slate-800 bg-[#090d18] flex items-center justify-between">
+              <div className="flex items-center gap-1 bg-[#101729] p-1 rounded-xl border border-slate-800">
                 <button
                   onClick={() => setSidebarTab('users')}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer shrink-0 ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                     sidebarTab === 'users'
                       ? 'bg-cyan-600 text-white'
                       : 'text-slate-400 hover:text-white'
@@ -1951,7 +1884,7 @@ export const PublicChatPage: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setSidebarTab('private')}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer relative shrink-0 ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer relative ${
                     sidebarTab === 'private'
                       ? 'bg-violet-600 text-white'
                       : 'text-slate-400 hover:text-white'
@@ -1964,26 +1897,13 @@ export const PublicChatPage: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setSidebarTab('rooms')}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer shrink-0 ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                     sidebarTab === 'rooms'
                       ? 'bg-cyan-600 text-white'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
                   Rooms
-                </button>
-                <button
-                  onClick={() => setSidebarTab('broadcast')}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer relative shrink-0 flex items-center gap-1 ${
-                    sidebarTab === 'broadcast'
-                      ? 'bg-emerald-600 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <span>Broadcast</span>
-                  {roomBroadcasts.length > 0 && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  )}
                 </button>
               </div>
 
@@ -1992,7 +1912,7 @@ export const PublicChatPage: React.FC = () => {
                 type="button"
                 aria-label="Close participants sidebar"
                 onClick={() => setShowMobileSidebar(false)}
-                className="lg:hidden p-1.5 text-slate-400 hover:text-white cursor-pointer shrink-0"
+                className="lg:hidden p-1.5 text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2034,20 +1954,6 @@ export const PublicChatPage: React.FC = () => {
                         <span className={`font-bold truncate text-xs ${getGenderColor(user?.gender)}`}>
                           {user?.nickname || 'You'}
                         </span>
-                        {isMyBroadcastActive && (
-                          <span
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const myB = roomBroadcasts.find((b) => b.broadcasterId === user.id && b.status === 'live');
-                              if (myB) setActiveViewerBroadcast(myB);
-                            }}
-                            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-500/60 text-emerald-400 text-[10px] font-bold hover:bg-emerald-900/80 transition-colors shadow-sm cursor-pointer shrink-0"
-                            title="Your active broadcast"
-                          >
-                            <Camera className="w-3 h-3 text-emerald-400 animate-pulse" />
-                            <span>LIVE</span>
-                          </span>
-                        )}
                       </div>
                       <GenderBadge gender={user?.gender} />
                     </div>
@@ -2071,56 +1977,38 @@ export const PublicChatPage: React.FC = () => {
                   {/* Active room members */}
                   {filteredMembers
                     .filter((m) => m.id !== user.id)
-                    .map((member) => {
-                      const memberBroadcast = roomBroadcasts.find(
-                        (b) => b.broadcasterId === member.id && b.status === 'live'
-                      );
-                      return (
-                        <div
-                          key={member.id}
-                          onClick={(e) => handleUserClick(e, member)}
-                          className="p-2.5 rounded-xl bg-[#101729] hover:bg-[#151f38] border border-slate-800/80 hover:border-cyan-500/50 transition-all cursor-pointer group shadow-sm"
-                        >
-                          <div className="flex items-center justify-between gap-1.5 mb-1">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-lg select-none shrink-0 group-hover:scale-110 transition-transform">
-                                {member.avatar || '👤'}
-                              </span>
-                              <span
-                                className={`font-semibold truncate text-xs group-hover:underline ${getGenderColor(
-                                  member.gender
-                                )}`}
-                              >
-                                {member.nickname}
-                              </span>
-                              {memberBroadcast && (
-                                <span
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveViewerBroadcast(memberBroadcast);
-                                  }}
-                                  className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-500/60 text-emerald-400 text-[10px] font-bold hover:bg-emerald-900/80 transition-colors shadow-sm cursor-pointer shrink-0"
-                                  title="Watch Live Stream"
-                                >
-                                  <Camera className="w-3 h-3 text-emerald-400 animate-pulse" />
-                                  <span>View</span>
-                                </span>
-                              )}
-                            </div>
-                            <GenderBadge gender={member.gender} />
-                          </div>
-                          <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/60 font-mono">
-                            <span className="flex items-center gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                              <span>{member.isGuest ? 'Guest Session' : 'Member'}</span>
+                    .map((member) => (
+                      <div
+                        key={member.id}
+                        onClick={(e) => handleUserClick(e, member)}
+                        className="p-2.5 rounded-xl bg-[#101729] hover:bg-[#151f38] border border-slate-800/80 hover:border-cyan-500/50 transition-all cursor-pointer group shadow-sm"
+                      >
+                        <div className="flex items-center justify-between gap-1.5 mb-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-lg select-none shrink-0 group-hover:scale-110 transition-transform">
+                              {member.avatar || '👤'}
                             </span>
-                            <span className="text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                              Options →
+                            <span
+                              className={`font-semibold truncate text-xs group-hover:underline ${getGenderColor(
+                                member.gender
+                              )}`}
+                            >
+                              {member.nickname}
                             </span>
                           </div>
+                          <GenderBadge gender={member.gender} />
                         </div>
-                      );
-                    })}
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/60 font-mono">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                            <span>{member.isGuest ? 'Guest Session' : 'Member'}</span>
+                          </span>
+                          <span className="text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                            Options →
+                          </span>
+                        </div>
+                      </div>
+                    ))}
 
                   {/* Empty state when no other members are in this room */}
                   {filteredMembers.filter((m) => m.id !== user.id).length === 0 && (
@@ -2223,135 +2111,6 @@ export const PublicChatPage: React.FC = () => {
                       </button>
                     );
                   })}
-                </div>
-              </div>
-            )}
-
-            {/* TAB CONTENT 4: ROOM LIVE BROADCAST */}
-            {sidebarTab === 'broadcast' && (
-              <div className="flex-1 min-h-0 flex flex-col p-3 overflow-hidden">
-                {/* SFU Configuration Notice if Credentials Missing */}
-                {!sfuConfigured && (
-                  <div className="mb-3 p-2.5 rounded-xl bg-amber-950/40 border border-amber-800/60 text-amber-300 text-xs">
-                    <div className="flex items-center gap-1.5 font-bold mb-1">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span>SFU Credentials Notice</span>
-                    </div>
-                    <p className="text-[11px] text-amber-200/80 leading-relaxed">
-                      Cloudflare Realtime SFU credentials (<code className="bg-black/40 px-1 rounded">CALLS_APP_ID</code>, <code className="bg-black/40 px-1 rounded">CALLS_APP_SECRET</code>) are not configured in this Worker environment.
-                    </p>
-                  </div>
-                )}
-
-                {broadcastActionMsg && (
-                  <div className="mb-3 p-2 rounded-lg bg-rose-950/60 border border-rose-800/60 text-rose-300 text-xs flex items-center justify-between">
-                    <span className="truncate">{broadcastActionMsg}</span>
-                    <button onClick={() => setBroadcastActionMsg(null)} className="text-rose-400 hover:text-white ml-2">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
-
-                {/* Broadcaster Action Bar */}
-                <div className="mb-3 pb-3 border-b border-slate-800 shrink-0">
-                  {user.isGuest ? (
-                    <div className="p-2.5 rounded-xl bg-[#101729] border border-slate-800/80 text-[11px] text-slate-400">
-                      <p className="font-semibold text-slate-300 mb-0.5">Guest Viewer Mode</p>
-                      <p className="text-[10px] text-slate-500">
-                        Guests can watch live room broadcasts. Sign in with a registered account to start your own live stream.
-                      </p>
-                    </div>
-                  ) : isMyBroadcastActive ? (
-                    <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-emerald-950/40 border border-emerald-800/60">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-white">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                          <span>You are broadcasting live</span>
-                        </div>
-                        <span className="text-[10px] text-emerald-400 font-mono">Stream active in {activeRoom.name[language]}</span>
-                      </div>
-                      <button
-                        onClick={handleEndMyBroadcast}
-                        className="px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer transition-colors shrink-0"
-                      >
-                        End Broadcast
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={handleStartBroadcast}
-                      disabled={isStartingBroadcast || !sfuConfigured}
-                      className={`w-full py-2 px-3 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all shadow-sm ${
-                        !sfuConfigured
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
-                          : 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer hover:shadow-emerald-500/20'
-                      }`}
-                      title={!sfuConfigured ? 'Cloudflare Calls SFU credentials required' : 'Start live video broadcast in this room'}
-                    >
-                      <Camera className="w-4 h-4" />
-                      <span>{isStartingBroadcast ? 'Connecting Stream...' : 'Start Broadcast'}</span>
-                    </button>
-                  )}
-                </div>
-
-                {/* List of Active Broadcasts */}
-                <div className="flex-1 overflow-y-auto overscroll-contain space-y-2">
-                  <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
-                    Active Broadcasters ({roomBroadcasts.length})
-                  </div>
-
-                  {roomBroadcasts.length === 0 ? (
-                    <div className="py-8 text-center text-xs text-slate-400">
-                      <Radio className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                      <p className="font-medium text-slate-300">No active live broadcasts</p>
-                      <p className="text-[10px] text-slate-500 mt-1">
-                        Eligible members can start broadcasting video live to everyone in {activeRoom.name[language]}.
-                      </p>
-                    </div>
-                  ) : (
-                    roomBroadcasts.map((bcast) => {
-                      const isMe = bcast.broadcasterId === user.id;
-                      return (
-                        <div
-                          key={bcast.id}
-                          className="p-3 rounded-xl bg-[#101729] border border-slate-800/80 hover:border-violet-500/50 transition-all flex items-center justify-between gap-2"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <span className="text-xl select-none shrink-0">{bcast.broadcasterAvatar || '👤'}</span>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-xs text-white truncate">{bcast.broadcasterNickname}</span>
-                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-600 text-white shrink-0">
-                                  LIVE
-                                </span>
-                              </div>
-                              <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
-                                {formatDhakaTime(new Date(bcast.startedAt).toISOString(), language)}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="shrink-0">
-                            {isMe ? (
-                              <button
-                                onClick={() => setActiveViewerBroadcast(bcast)}
-                                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold cursor-pointer transition-colors"
-                              >
-                                Preview
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => setActiveViewerBroadcast(bcast)}
-                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer transition-colors shadow-sm flex items-center gap-1"
-                              >
-                                <span>View</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
                 </div>
               </div>
             )}
@@ -2596,16 +2355,6 @@ export const PublicChatPage: React.FC = () => {
             setReportTargetUser({ targetId, nickname: targetNickname });
             setReportModalOpen(true);
           }}
-          isBroadcasting={Boolean(
-            userActionMenu.member &&
-            roomBroadcasts.some((b) => b.broadcasterId === userActionMenu.member.id && b.status === 'live')
-          )}
-          onWatchBroadcast={() => {
-            const b = roomBroadcasts.find(
-              (item) => item.broadcasterId === userActionMenu.member.id && item.status === 'live'
-            );
-            if (b) setActiveViewerBroadcast(b);
-          }}
           isCurrentUser={userActionMenu.member.id === user.id}
         />
       )}
@@ -2651,17 +2400,6 @@ export const PublicChatPage: React.FC = () => {
         evidenceSnippet={reportTargetUser?.snippet || ''}
         roomId={activeRoom.id}
       />
-
-      {/* Floating Room Live Broadcast Viewer */}
-      {activeViewerBroadcast && (
-        <FloatingBroadcastViewer
-          broadcast={activeViewerBroadcast}
-          isBroadcaster={activeViewerBroadcast.broadcasterId === user.id}
-          onClose={() => setActiveViewerBroadcast(null)}
-          onEndBroadcast={handleEndMyBroadcast}
-          language={language}
-        />
-      )}
     </div>
   );
 };
