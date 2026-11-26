@@ -4973,15 +4973,41 @@ async function authorizeConversationAccess(
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
 
-      const stunUrls = [
-        'stun:stun.l.google.com:19302',
-        'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302',
+      const stunServers = [
+        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] }
       ];
-      const servers: any[] = [{ urls: stunUrls }];
+
+      const turnTokenId = env?.TURN_TOKEN_ID;
+      const turnApiToken = env?.TURN_API_TOKEN;
+
+      if (turnTokenId && turnApiToken) {
+        try {
+          const turnRes = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(turnTokenId)}/credentials/generate-ice-servers`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${turnApiToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ ttl: 86400 }),
+          });
+
+          if (turnRes.ok) {
+            const turnData: any = await turnRes.json().catch(() => null);
+            if (turnData && Array.isArray(turnData.iceServers)) {
+              return jsonResponse({ success: true, iceServers: [...stunServers, ...turnData.iceServers] });
+            } else if (turnData && Array.isArray(turnData.iceServers?.iceServers)) {
+              return jsonResponse({ success: true, iceServers: [...stunServers, ...turnData.iceServers.iceServers] });
+            }
+          }
+        } catch {
+          // Fall back to STUN on network or API failure
+        }
+      }
+
       const turnUrl = env?.TURN_SERVER_URL;
       const turnUsername = env?.TURN_USERNAME;
       const turnCredential = env?.TURN_CREDENTIAL;
+      const servers: any[] = [...stunServers];
       if (turnUrl && turnUsername && turnCredential) {
         servers.push({
           urls: typeof turnUrl === 'string' ? turnUrl.split(',') : [turnUrl],
@@ -4989,6 +5015,7 @@ async function authorizeConversationAccess(
           credential: turnCredential,
         });
       }
+
       return jsonResponse({ success: true, iceServers: servers });
     }
 
@@ -5080,6 +5107,22 @@ async function authorizeConversationAccess(
 
         if (!calleeId || initiatorId === calleeId) {
           return jsonResponse({ success: false, error: 'Invalid callee specification.' }, 400);
+        }
+
+        if (mediaKind && mediaKind !== 'audio' && mediaKind !== 'video') {
+          return jsonResponse({ success: false, error: 'Invalid mediaKind. Must be audio or video.' }, 400);
+        }
+
+        if (!conversationId) {
+          return jsonResponse({ success: false, error: 'Conversation identifier required to initiate a call.' }, 400);
+        }
+
+        const membershipCheck = await verifyConversationParticipant(conversationId, authResult, {
+          supabaseUrl: baseSupabaseUrl,
+          supabaseServiceKey,
+        });
+        if (!membershipCheck.authorized) {
+          return membershipCheck.errorResponse || jsonResponse({ success: false, error: 'Forbidden: Caller is not a member of this conversation.' }, 403);
         }
 
         const callId = `call_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
