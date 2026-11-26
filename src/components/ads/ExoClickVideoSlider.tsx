@@ -33,7 +33,11 @@ export const ExoClickVideoSlider: React.FC<ExoClickVideoSliderProps> = ({ classN
   const isMountedRef = useRef(true);
   const initializedZoneRef = useRef<string | null>(null);
 
-  const isEligible = hasAcceptedConsent && isEligibleRouteForGlobalAds(currentRoute);
+  const browserPathname = typeof window !== 'undefined' ? window.location?.pathname || '' : '';
+  const isRouteEligible =
+    isEligibleRouteForGlobalAds(currentRoute) &&
+    (!browserPathname || isEligibleRouteForGlobalAds(browserPathname));
+  const isEligible = hasAcceptedConsent && isRouteEligible;
   const isLiveChatRoute =
     currentRoute === '/chat' ||
     currentRoute === '/chat/bangla' ||

@@ -50,18 +50,29 @@ interface RouterContextType {
 const RouterContext = createContext<RouterContextType | undefined>(undefined);
 
 function parsePath(pathname: string): { route: AppRoute; params: Record<string, string> } {
-  let path = pathname;
+  let path = (pathname || '').split(/[?#]/)[0];
   if (!path || path === '' || path === '/') {
     path = '/';
   } else if (path.endsWith('/')) {
-    path = path.slice(0, -1);
+    path = path.replace(/\/+$/, '') || '/';
   }
 
   // Legacy & Alias Redirects
   if (path === '/register') return { route: '/user/register', params: {} };
   if (path === '/guest-entry') return { route: '/user/guest-entry', params: {} };
-  if (path === '/auth' || path === '/login') return { route: '/user/login', params: {} };
-  if (path === '/dashboard' || path === '/profile') return { route: '/user/dashboard', params: {} };
+  if (path === '/auth' || path.startsWith('/auth/') || path === '/login') {
+    return { route: '/user/login', params: {} };
+  }
+  if (
+    path === '/dashboard' ||
+    path.startsWith('/dashboard/') ||
+    path === '/user/dashboard' ||
+    path.startsWith('/user/dashboard/') ||
+    path === '/profile' ||
+    path.startsWith('/profile/')
+  ) {
+    return { route: '/user/dashboard', params: {} };
+  }
   if (path === '/moderator') return { route: '/moderator/dashboard', params: {} };
 
   // Handle /chat/:roomId

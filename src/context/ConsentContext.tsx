@@ -13,9 +13,31 @@ interface ConsentContextType {
 
 const ConsentContext = createContext<ConsentContextType | undefined>(undefined);
 
+function readInitialConsentState(): { status: ConsentStatus; migratedFromLegacy: boolean } {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return { status: 'unset', migratedFromLegacy: false };
+    }
+    const newStatus = window.localStorage.getItem('cookie_consent_status');
+    if (newStatus === 'accepted' || newStatus === 'rejected') {
+      return { status: newStatus, migratedFromLegacy: false };
+    }
+    const legacyStatus = window.localStorage.getItem('cookie_consent');
+    if (legacyStatus === 'granted') {
+      return { status: 'accepted', migratedFromLegacy: true };
+    }
+    if (legacyStatus === 'denied') {
+      return { status: 'rejected', migratedFromLegacy: true };
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return { status: 'unset', migratedFromLegacy: false };
+}
+
 export const ConsentProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [consentStatus, setConsentStatus] = useState<ConsentStatus>('unset');
-  const [isBannerOpen, setIsBannerOpen] = useState(false);
+  const [consentStatus, setConsentStatus] = useState<ConsentStatus>(() => readInitialConsentState().status);
+  const [isBannerOpen, setIsBannerOpen] = useState<boolean>(() => readInitialConsentState().status === 'unset');
 
   useEffect(() => {
     try {

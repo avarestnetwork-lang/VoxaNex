@@ -368,6 +368,9 @@ export const GLOBAL_ADS_INELIGIBLE_ROUTES = [
   '/guest-entry',
   '/register',
   '/login',
+  '/dashboard',
+  '/user/dashboard',
+  '/profile',
   '/user/login',
   '/user/register',
   '/user/guest-entry',
@@ -396,12 +399,15 @@ export const isEligibleRouteForGlobalAds = (currentRoute: string): boolean => {
       normalized === '/auth' ||
       normalized.startsWith('/auth/') ||
       normalized.includes('/auth/') ||
+      normalized.endsWith('/auth') ||
       normalized === '/checkout' ||
       normalized.startsWith('/checkout/') ||
       normalized.includes('/checkout/') ||
+      normalized.endsWith('/checkout') ||
       normalized === '/payment' ||
       normalized.startsWith('/payment/') ||
-      normalized.includes('/payment/')
+      normalized.includes('/payment/') ||
+      normalized.endsWith('/payment')
   );
 };
 
