@@ -5131,6 +5131,9 @@ async function authorizeConversationAccess(
         supabaseClient
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
+      if (authResult.isGuestCaller) {
+        return jsonResponse({ success: false, error: 'Guests cannot accept calls.' }, 403);
+      }
 
       try {
         const body: any = await request.json();
@@ -5173,6 +5176,9 @@ async function authorizeConversationAccess(
         const call = workerActiveCalls.get(callId);
         if (!call) {
           return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
+        }
+        if (call.initiator.id !== authResult.verifiedUserId && call.callee.id !== authResult.verifiedUserId) {
+          return jsonResponse({ success: false, error: 'Unauthorized: You are not a participant in this call.' }, 403);
         }
 
         call.status = 'rejected';
