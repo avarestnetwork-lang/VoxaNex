@@ -15,15 +15,18 @@ export const EXOCLICK_CONFIG = {
   // Dedicated 300x250 banner zone (eas6a97888e2) - use strictly in containers >= 300x250
   zoneId: '6087300',
   elementClass: 'eas6a97888e2',
-  // User-supplied ExoClick Multi-Format Banner zone (eas6a97888e38)
+  // User-supplied ExoClick Multi-Format Banner zone (eas6a97888e38) - chatroom horizontal/responsive placements
   responsiveBannerZoneId: '6109952',
   responsiveBannerElementClass: 'eas6a97888e38',
+  // User-supplied ExoClick Multi-Format zone (eas6a97888e38) - public non-chat content-gap placements
+  multiFormatZoneId: '6102500',
+  multiFormatElementClass: 'eas6a97888e38',
   // User-supplied ExoClick Sticky Banner zone (eas6a97888e17)
   stickyBannerZoneId: '6110028',
   stickyBannerElementClass: 'eas6a97888e17',
-  // Preserved Video Slider / Multi-Format zone (eas6a97888e38)
-  videoSliderZoneId: '6102500',
-  videoSliderElementClass: 'eas6a97888e38',
+  // ExoClick Video Slider zone (eas6a97888e31)
+  videoSliderZoneId: '6102494',
+  videoSliderElementClass: 'eas6a97888e31',
   // User-supplied ExoClick VAST Video zone
   horizontalVastZoneId: '6109970',
   horizontalVastUrl: 'https://s.magsrv.com/v1/vast.php?idz=6109970',

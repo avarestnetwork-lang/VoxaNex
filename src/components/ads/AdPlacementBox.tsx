@@ -305,7 +305,17 @@ export function ensureHeadScriptOnce(
   }
 
   if (existing) {
-    if (existing.getAttribute('data-ad-script-loaded') === 'true') {
+    const win = typeof window !== 'undefined' ? (window as any) : null;
+    const isAdProviderRuntimeReady =
+      src === EXOCLICK_CONFIG.scriptUrl &&
+      win?.AdProvider &&
+      !Array.isArray(win.AdProvider) &&
+      typeof win.AdProvider.push === 'function';
+
+    if (existing.getAttribute('data-ad-script-loaded') === 'true' || isAdProviderRuntimeReady) {
+      if (isAdProviderRuntimeReady) {
+        existing.setAttribute('data-ad-script-loaded', 'true');
+      }
       options?.onReady?.();
     } else {
       const handleLoad = () => {
@@ -348,6 +358,77 @@ export function ensureHeadScriptOnce(
   );
   document.head.appendChild(script);
   return script;
+}
+
+let exoClickPendingServeOnScriptLoad = false;
+
+/**
+ * Shared single-script ExoClick initialization helper.
+ * Ensures https://a.magsrv.com/ad-provider.js is injected once, avoids duplicate
+ * pre-load { serve: {} } pushes during concurrent component/StrictMode mounts,
+ * and ensures late-mounting slots still execute AdProvider.push({ serve: {} }).
+ */
+export function serveExoClickZones(options?: {
+  isStillValid?: () => boolean;
+  onScriptError?: () => void;
+}): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const win = window as any;
+
+  const isRuntimeLoaded =
+    typeof win.AdProvider === 'object' &&
+    win.AdProvider !== null &&
+    !Array.isArray(win.AdProvider) &&
+    typeof win.AdProvider.push === 'function';
+
+  const pushServeIfValid = () => {
+    if (options?.isStillValid && !options.isStillValid()) return;
+    win.AdProvider = win.AdProvider || [];
+    if (typeof win.AdProvider.push === 'function') {
+      win.AdProvider.push({ serve: {} });
+    }
+  };
+
+  if (isRuntimeLoaded) {
+    ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl, {
+      attrs: { type: 'application/javascript' },
+      isStillValid: options?.isStillValid,
+      onError: options?.onScriptError,
+    });
+    pushServeIfValid();
+    return;
+  }
+
+  const scriptEl = ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl, {
+    attrs: { type: 'application/javascript' },
+    isStillValid: options?.isStillValid,
+    onReady: () => {
+      exoClickPendingServeOnScriptLoad = false;
+      if (
+        typeof win.AdProvider === 'object' &&
+        win.AdProvider !== null &&
+        !Array.isArray(win.AdProvider) &&
+        typeof win.AdProvider.push === 'function'
+      ) {
+        pushServeIfValid();
+      }
+    },
+    onError: () => {
+      exoClickPendingServeOnScriptLoad = false;
+      options?.onScriptError?.();
+    },
+  });
+
+  if (scriptEl && scriptEl.getAttribute('data-ad-script-loaded') === 'true') {
+    pushServeIfValid();
+    return;
+  }
+
+  win.AdProvider = win.AdProvider || [];
+  if (Array.isArray(win.AdProvider) && !exoClickPendingServeOnScriptLoad) {
+    win.AdProvider.push({ serve: {} });
+    exoClickPendingServeOnScriptLoad = true;
+  }
 }
 
 function violatesCreativeBounds(
@@ -932,7 +1013,10 @@ export function resolveEffectiveUnitId({
     if (slotId === 'chatroom-explore-bottom' || sanitizedPrimaryUnit === EXOCLICK_CONFIG.zoneId) {
       return EXOCLICK_CONFIG.zoneId; // 6087300 (300x250)
     }
-    return EXOCLICK_CONFIG.responsiveBannerZoneId; // 6109952 (eas6a97888e38)
+    if (!isLiveChatScreen && posStr === 'content-gap') {
+      return EXOCLICK_CONFIG.multiFormatZoneId; // 6102500 (eas6a97888e38 Multi-Format)
+    }
+    return EXOCLICK_CONFIG.responsiveBannerZoneId; // 6109952 (eas6a97888e38 Multi-Format)
   }
 
   if (provider === 'adsense') {
@@ -1704,22 +1788,18 @@ export const AdPlacementBox: React.FC<AdPlacementBoxProps> = ({
         const elementClass =
           zoneId === EXOCLICK_CONFIG.zoneId
             ? EXOCLICK_CONFIG.elementClass
+            : zoneId === EXOCLICK_CONFIG.multiFormatZoneId
+            ? EXOCLICK_CONFIG.multiFormatElementClass
             : EXOCLICK_CONFIG.responsiveBannerElementClass;
         const domId = `exoclick-ins-${zoneId}-${slotId}`;
         imperativeHostRef.current.innerHTML = `<ins id="${domId}" class="${elementClass}" data-zoneid="${zoneId}" data-keywords="chat,bangla,desi,dating,social,friendship,community,online,international,south-asia,bangladesh,india,usa,united-states,uk,united-kingdom,canada,australia,new-zealand,ireland,germany,france,netherlands,sweden,norway,denmark,switzerland"></ins>`;
 
-        ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl, {
+        serveExoClickZones({
           isStillValid: () => isAttemptCurrent(attemptId, attemptIdRef.current, isMountedRef.current),
-          onError: () => updateStatus('error', attemptId),
+          onScriptError: () => updateStatus('error', attemptId),
         });
 
-        const win = window as any;
-        win.AdProvider = win.AdProvider || [];
-        if (typeof win.AdProvider.push === 'function') {
-          win.AdProvider.push({ serve: {} });
-        }
-
-        startPolling(() => imperativeHostRef.current, 12, 18);
+        startPolling(() => imperativeHostRef.current, 25, 30);
       } catch {
         updateStatus('error', attemptId);
       }

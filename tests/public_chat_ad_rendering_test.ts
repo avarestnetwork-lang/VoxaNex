@@ -147,7 +147,9 @@ async function runAdRenderingTests() {
   assert(EXOCLICK_CONFIG.stickyBannerZoneId === '6110028', '3.7a ExoClick sticky banner zone ID is 6110028');
   assert(EXOCLICK_CONFIG.stickyBannerElementClass === 'eas6a97888e17', '3.7b ExoClick sticky banner class is eas6a97888e17');
   assert(EXOCLICK_CONFIG.horizontalVastZoneId === '6109970', '3.7c ExoClick VAST zone ID is 6109970');
-  assert(EXOCLICK_CONFIG.videoSliderZoneId === '6102500', '3.7d ExoClick Video Slider zone ID 6102500 is preserved');
+  assert(EXOCLICK_CONFIG.videoSliderZoneId === '6102494', '3.7d ExoClick Video Slider zone ID is 6102494');
+  assert(EXOCLICK_CONFIG.videoSliderElementClass === 'eas6a97888e31', '3.7e ExoClick Video Slider class is eas6a97888e31');
+  assert(EXOCLICK_CONFIG.multiFormatZoneId === '6102500', '3.7f ExoClick Multi-Format zone ID 6102500 is configured');
 
   const chatroomRotation = getProviderRotation('top', true, 'public-chatroom-top');
   assert(

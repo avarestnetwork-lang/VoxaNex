@@ -25,7 +25,7 @@ export const CentralizedAdCoordinator: React.FC = () => {
       data-testid="centralized-ad-coordinator"
       className="pointer-events-none fixed inset-0 z-40 overflow-hidden"
     >
-      {/* RIGHT SIDE: ExoClick Video Slider (Zone 6102500 / eas6a97888e38) */}
+      {/* RIGHT SIDE: ExoClick Video Slider (Zone 6102494 / eas6a97888e31) */}
       <div className="pointer-events-auto">
         <ExoClickVideoSlider />
       </div>

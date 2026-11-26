@@ -26,12 +26,22 @@
   }
 }
 
-/* ExoClick Video Slider (6102500) responsive media containment */
-[data-testid="exoclick-video-slider-host"] > div {
+/* ExoClick Video Slider (6102494 / eas6a97888e31) responsive media containment */
+[data-testid="exoclick-video-slider-host"] > div,
+[data-testid="exoclick-video-slider-host"] [id*="-msg-video-slider-content"],
+[data-testid="exoclick-video-slider-host"] .msg-video-slider-container-wrapper {
+  position: relative !important;
+  left: auto !important;
+  right: 0 !important;
+  top: auto !important;
+  bottom: 0 !important;
+  z-index: 1 !important;
   max-width: 100% !important;
   max-height: 100% !important;
   width: 100% !important;
+  height: auto !important;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
 }

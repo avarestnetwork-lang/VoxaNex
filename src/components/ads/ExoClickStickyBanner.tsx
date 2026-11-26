@@ -3,7 +3,7 @@ import { useRouter } from '../../context/RouterContext';
 import { useOptionalConsent } from '../../context/ConsentContext';
 import { useOptionalCall } from '../../context/CallContext';
 import { EXOCLICK_CONFIG, isEligibleRouteForGlobalAds } from '../../config/adsConfig';
-import { ensureHeadScriptOnce } from './AdPlacementBox';
+import { serveExoClickZones } from './AdPlacementBox';
 import { X } from 'lucide-react';
 
 interface ExoClickStickyBannerProps {
@@ -31,6 +31,7 @@ export const ExoClickStickyBanner: React.FC<ExoClickStickyBannerProps> = ({ clas
 
   const [isViewportRestricted, setIsViewportRestricted] = useState<boolean>(false);
   const [hasFilledCreative, setHasFilledCreative] = useState<boolean>(false);
+  const [hasNativeCloseButton, setHasNativeCloseButton] = useState<boolean>(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const isMountedRef = useRef(true);
   const initializedZoneRef = useRef<string | null>(null);
@@ -86,6 +87,7 @@ export const ExoClickStickyBanner: React.FC<ExoClickStickyBannerProps> = ({ clas
 
   const handleDismiss = () => {
     setIsDismissed(true);
+    setHasFilledCreative(false);
     try {
       if (typeof window !== 'undefined' && window.sessionStorage) {
         window.sessionStorage.setItem(STICKY_DISMISS_STORAGE_KEY, 'true');
@@ -102,6 +104,7 @@ export const ExoClickStickyBanner: React.FC<ExoClickStickyBannerProps> = ({ clas
     if (isDismissed || !isEligible) {
       initializedZoneRef.current = null;
       setHasFilledCreative(false);
+      setHasNativeCloseButton(false);
       if (host) {
         host.innerHTML = '';
       }
@@ -111,28 +114,23 @@ export const ExoClickStickyBanner: React.FC<ExoClickStickyBannerProps> = ({ clas
     if (!host) return;
 
     const zoneId = EXOCLICK_CONFIG.stickyBannerZoneId; // 6110028
+    const elementClass = EXOCLICK_CONFIG.stickyBannerElementClass; // eas6a97888e17
     if (
-      initializedZoneRef.current === zoneId &&
-      host.querySelector(`ins[data-zoneid="${zoneId}"]`)
+      initializedZoneRef.current !== zoneId ||
+      !host.querySelector(`ins.${elementClass}[data-zoneid="${zoneId}"]`)
     ) {
-      return;
-    }
+      const domId = `exoclick-sticky-${zoneId}`;
+      host.innerHTML = `<ins id="${domId}" class="${elementClass}" data-zoneid="${zoneId}"></ins>`;
+      initializedZoneRef.current = zoneId;
 
-    const domId = `exoclick-sticky-${zoneId}`;
-    host.innerHTML = `<ins id="${domId}" class="${EXOCLICK_CONFIG.stickyBannerElementClass}" data-zoneid="${zoneId}"></ins>`;
-    initializedZoneRef.current = zoneId;
-
-    ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl, {
-      isStillValid: () => isMountedRef.current && !isDismissed && isEligible,
-      onError: () => {
-        setHasFilledCreative(false);
-      },
-    });
-
-    const win = window as any;
-    win.AdProvider = win.AdProvider || [];
-    if (typeof win.AdProvider.push === 'function') {
-      win.AdProvider.push({ serve: {} });
+      serveExoClickZones({
+        isStillValid: () => isMountedRef.current && !isDismissed && isEligible,
+        onScriptError: () => {
+          if (isMountedRef.current) {
+            setHasFilledCreative(false);
+          }
+        },
+      });
     }
 
     const observer =
@@ -144,6 +142,9 @@ export const ExoClickStickyBanner: React.FC<ExoClickStickyBannerProps> = ({ clas
               stickyBox && containerRef.current.querySelector('img, iframe, video')
             );
             setHasFilledCreative(hasCreative);
+            setHasNativeCloseButton(
+              Boolean(containerRef.current.querySelector('[class*="msg-sticky-close-button"]'))
+            );
           })
         : null;
 
@@ -183,7 +184,7 @@ export const ExoClickStickyBanner: React.FC<ExoClickStickyBannerProps> = ({ clas
       }
       style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
     >
-      {hasFilledCreative && (
+      {hasFilledCreative && !hasNativeCloseButton && (
         <button
           type="button"
           onClick={handleDismiss}

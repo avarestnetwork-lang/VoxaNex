@@ -14,7 +14,7 @@ import {
   isRouteExcludedFromFooterAds,
 } from '../src/config/adsConfig';
 import { isSafeHttpUrl } from '../src/components/ads/HorizontalVastVideoAd';
-import { ensureHeadScriptOnce, resolveEffectiveUnitId } from '../src/components/ads/AdPlacementBox';
+import { ensureHeadScriptOnce, resolveEffectiveUnitId, serveExoClickZones } from '../src/components/ads/AdPlacementBox';
 import { CentralizedAdCoordinator } from '../src/components/ads/CentralizedAdCoordinator';
 import { ConsentProvider } from '../src/context/ConsentContext';
 import { RouterProvider } from '../src/context/RouterContext';
@@ -165,24 +165,26 @@ function runTests() {
   console.log('✅ [PASSED] 2.1 Adsterra remains strictly Footer-only across codebase');
 
   // -------------------------------------------------------------------------
-  // 3. Verified ExoClick Zones (6087300, 6109952, 6110028, 6109970, 6102500)
+  // 3. Verified ExoClick Zones (6087300, 6109952, 6102500, 6110028, 6109970, 6102494)
   // -------------------------------------------------------------------------
-  console.log('\n--- 3. ExoClick 5-Zone Configuration & Class Compatibility ---');
+  console.log('\n--- 3. ExoClick 6-Zone Configuration & Class Compatibility ---');
 
   assert.strictEqual(EXOCLICK_CONFIG.zoneId, '6087300');
   assert.strictEqual(EXOCLICK_CONFIG.elementClass, 'eas6a97888e2');
   assert.strictEqual(EXOCLICK_CONFIG.responsiveBannerZoneId, '6109952');
   assert.strictEqual(EXOCLICK_CONFIG.responsiveBannerElementClass, 'eas6a97888e38');
+  assert.strictEqual(EXOCLICK_CONFIG.multiFormatZoneId, '6102500');
+  assert.strictEqual(EXOCLICK_CONFIG.multiFormatElementClass, 'eas6a97888e38');
   assert.strictEqual(EXOCLICK_CONFIG.stickyBannerZoneId, '6110028');
   assert.strictEqual(EXOCLICK_CONFIG.stickyBannerElementClass, 'eas6a97888e17');
-  assert.strictEqual(EXOCLICK_CONFIG.videoSliderZoneId, '6102500');
-  assert.strictEqual(EXOCLICK_CONFIG.videoSliderElementClass, 'eas6a97888e38');
+  assert.strictEqual(EXOCLICK_CONFIG.videoSliderZoneId, '6102494');
+  assert.strictEqual(EXOCLICK_CONFIG.videoSliderElementClass, 'eas6a97888e31');
   assert.strictEqual(EXOCLICK_CONFIG.horizontalVastZoneId, '6109970');
   assert.strictEqual(EXOCLICK_CONFIG.horizontalVastUrl, 'https://s.magsrv.com/v1/vast.php?idz=6109970');
   assert.strictEqual(EXOCLICK_CONFIG.scriptUrl, 'https://a.magsrv.com/ad-provider.js');
 
   // Old stale VAST ID 6102492 removed
-  assert(!adsConfigSource.includes('6102492') && !adsConfigSource.includes('6102494'));
+  assert(!adsConfigSource.includes('6102492'));
 
   // 6087300 (300x250) used for Explore Bottom & registered at 300x250; never forced into compact bars
   const unit6087300 = VERIFIED_AD_UNITS.find((u) => u.id === '6087300');
@@ -227,6 +229,16 @@ function runTests() {
     }),
     '6109952'
   );
+  assert.strictEqual(
+    resolveEffectiveUnitId({
+      provider: 'exoclick',
+      position: 'content-gap',
+      slotId: 'blog-article-gap',
+      containerWidth: 728,
+      isLiveChatScreen: false,
+    }),
+    '6102500'
+  );
 
   // VAST parser + safe HTTP URL validation
   assert(
@@ -244,10 +256,10 @@ function runTests() {
 
   // Verify DOM verification file for ExoClick domain ownership remains intact
   assert(fs.existsSync(path.resolve('public/28befc4532cb8837aa59edffca607a5a.html')));
-  console.log('✅ [PASSED] 3.1 All 5 ExoClick zones (6087300, 6109952, 6110028, 6109970, 6102500) verified');
+  console.log('✅ [PASSED] 3.1 All 6 ExoClick zones (6102494, 6102500, 6109952, 6110028, 6109970, 6087300) verified');
 
   // -------------------------------------------------------------------------
-  // 4. SSR Render: CentralizedAdCoordinator (Slider 6102500 + Sticky 6110028) & Consent
+  // 4. SSR Render: CentralizedAdCoordinator (Slider 6102494 + Sticky 6110028) & Consent
   // -------------------------------------------------------------------------
   console.log('\n--- 4. Consent Gating, Coordinator SSR & Route Exclusions ---');
 
@@ -286,10 +298,11 @@ function runTests() {
       assert(
         html.includes('data-testid="centralized-ad-coordinator"') &&
           html.includes('data-testid="exoclick-video-slider-container"') &&
-          html.includes('data-exoclick-zone="6102500"') &&
+          html.includes('data-exoclick-zone="6102494"') &&
+          html.includes('data-exoclick-class="eas6a97888e31"') &&
           html.includes('data-testid="exoclick-sticky-banner-container"') &&
           html.includes('data-exoclick-zone="6110028"'),
-        `Consented ${route} mounts ExoClick Video Slider (6102500) and Sticky Banner (6110028)`
+        `Consented ${route} mounts ExoClick Video Slider (6102494) and Sticky Banner (6110028)`
       );
     });
   }
@@ -334,7 +347,7 @@ function runTests() {
   console.log('✅ [PASSED] 4.1 Consent gating, route exclusions, and SSR isolation verified');
 
   // -------------------------------------------------------------------------
-  // 5. Responsive Video Slider (6102500), Sticky Banner (6110028) & User Video Isolation
+  // 5. Responsive Video Slider (6102494), Sticky Banner (6110028) & User Video Isolation
   // -------------------------------------------------------------------------
   console.log('\n--- 5. Responsive Video Slider, Sticky Banner & Call Player Isolation ---');
 
@@ -342,6 +355,9 @@ function runTests() {
     sliderSource.includes('88px+env(safe-area-inset-bottom,0px)') &&
       sliderSource.includes('w-[min(288px,calc(100vw-16px))] sm:w-[300px] lg:w-[320px]') &&
       !sliderSource.includes('min-h-[160px] h-[180px]') &&
+      sliderSource.includes('hasFilledCreative') &&
+      sliderSource.includes('isVisuallyCollapsed') &&
+      sliderSource.includes('serveExoClickZones') &&
       sliderSource.includes('orientationchange') &&
       sliderSource.includes('visualViewport') &&
       sliderSource.includes('hasLiveCall') &&
@@ -349,8 +365,9 @@ function runTests() {
       sliderSource.includes('handleDismiss') &&
       sliderSource.includes('vx_video_slider_dismissed') &&
       sliderSource.includes('toggleMinimize') &&
-      sliderSource.includes('initializedZoneRef'),
-    'ExoClick Video Slider (6102500) adapts cleanly across 320px-1920px viewports with aspect sizing, orientation handling, and call/chat/keyboard isolation'
+      sliderSource.includes('initializedZoneRef') &&
+      indexCssSource.includes('[data-testid="exoclick-video-slider-host"] [id*="-msg-video-slider-content"]'),
+    'ExoClick Video Slider (6102494 / eas6a97888e31) adapts across 320px-1920px, collapses when unfilled, and maintains call/chat/keyboard isolation'
   );
 
   assert(
@@ -381,10 +398,12 @@ function runTests() {
     'CallContext elevates live WebRTC call modal above ads and broadcasts data-vx-call-active'
   );
 
-  // Single-injection test for ensureHeadScriptOnce
+  // Single-injection & deduplicated serve test for ensureHeadScriptOnce + serveExoClickZones
   (() => {
     const prevDoc = (global as any).document;
+    const prevWin = (global as any).window;
     const appendedScripts: any[] = [];
+    (global as any).window = { AdProvider: [] };
     (global as any).document = {
       head: { appendChild: (node: any) => (appendedScripts.push(node), node) },
       querySelector: (selector: string) => appendedScripts.find((s) => `script[src="${s.src}"]` === selector) || null,
@@ -408,8 +427,12 @@ function runTests() {
       const s2 = ensureHeadScriptOnce(EXOCLICK_CONFIG.scriptUrl);
       assert.strictEqual(appendedScripts.length, 1);
       assert.strictEqual(s1, s2);
+      serveExoClickZones();
+      serveExoClickZones();
+      assert.strictEqual((global as any).window.AdProvider.length, 1);
     } finally {
       (global as any).document = prevDoc;
+      (global as any).window = prevWin;
     }
   })();
 
