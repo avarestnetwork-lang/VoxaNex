@@ -5211,6 +5211,9 @@ async function authorizeConversationAccess(
         if (!call) {
           return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
         }
+        if (call.initiator.id !== authResult.verifiedUserId && call.callee.id !== authResult.verifiedUserId) {
+          return jsonResponse({ success: false, error: 'Unauthorized: You are not a participant in this call.' }, 403);
+        }
 
         call.status = 'ended';
         call.endedReason = reason || 'Call ended';
@@ -5248,6 +5251,9 @@ async function authorizeConversationAccess(
         const call = workerActiveCalls.get(callId);
         if (!call) {
           return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
+        }
+        if (call.initiator.id !== authResult.verifiedUserId && call.callee.id !== authResult.verifiedUserId) {
+          return jsonResponse({ success: false, error: 'Unauthorized: You are not a participant in this call.' }, 403);
         }
 
         const signalId = `sig_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
@@ -5303,6 +5309,14 @@ async function authorizeConversationAccess(
       );
       if ('errorResponse' in authResult) return authResult.errorResponse;
 
+      const call = workerActiveCalls.get(callId);
+      if (!call) {
+        return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
+      }
+      if (call.initiator.id !== authResult.verifiedUserId && call.callee.id !== authResult.verifiedUserId) {
+        return jsonResponse({ success: false, error: 'Unauthorized: You are not a participant in this call.' }, 403);
+      }
+
       const signals = workerCallSignals.get(callId) || [];
       return jsonResponse({ success: true, signals });
     }
@@ -5323,6 +5337,9 @@ async function authorizeConversationAccess(
       const call = workerActiveCalls.get(callId);
       if (!call) {
         return jsonResponse({ success: false, error: 'Call session not found.' }, 404);
+      }
+      if (call.initiator.id !== authResult.verifiedUserId && call.callee.id !== authResult.verifiedUserId) {
+        return jsonResponse({ success: false, error: 'Unauthorized: You are not a participant in this call.' }, 403);
       }
       return jsonResponse({ success: true, call });
     }
